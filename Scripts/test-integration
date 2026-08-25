@@ -1,0 +1,6 @@
+#!/bin/zsh
+set -euo pipefail
+
+bin_path="$(swift build --show-bin-path)"
+swift build --product sift
+SIFT_EXECUTABLE="$bin_path/sift" SIFT_RUN_INTEGRATION_TESTS=1 swift test --filter SiftIntegrationTests

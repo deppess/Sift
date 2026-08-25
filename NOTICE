@@ -1,0 +1,5 @@
+Sift is GPL-3.0-or-later.
+
+This initial foundation contains no copied or adapted source code from third-party projects.
+
+Future adaptations from Latest (https://github.com/mangerlahn/Latest), which is GPL-3.0, must preserve applicable notices and add the upstream file path, commit identifier, copyright notice, and material modifications to this file.

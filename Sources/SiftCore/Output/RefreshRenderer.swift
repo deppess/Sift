@@ -1,0 +1,52 @@
+import Foundation
+
+public enum RefreshRenderer {
+    public static func humanReadable(_ summary: RefreshSummary) -> String {
+        var lines = [
+            "Sift refresh",
+            "",
+            "Applications discovered: \(summary.discoveredCount)",
+            "Added: \(summary.addedCount)",
+            "Changed: \(summary.changedCount)",
+            "Unchanged: \(summary.unchangedCount)",
+            "Marked inactive: \(summary.inactiveCount)",
+            "Homebrew packages: \(summary.homebrewDiscoveredCount)",
+            "Targets resolved: \(summary.targetResolvedCount)",
+            "Release notes fetched: \(summary.releaseNotesFetchedCount)",
+            "Warnings: \(summary.warningCount)",
+        ]
+        if !summary.providerResults.isEmpty {
+            lines.append("")
+            lines.append("Providers")
+            lines.append(contentsOf: summary.providerResults.map { "\($0.provider.rawValue)\t\($0.status.rawValue)" })
+        }
+        lines.append("")
+        lines.append(summary.status == .success ? "Refresh completed successfully." : "Refresh completed with incomplete provider data.")
+        return lines.joined(separator: "\n")
+    }
+
+    public static func json(_ summary: RefreshSummary) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return String(decoding: try encoder.encode(summary), as: UTF8.self)
+    }
+}
+
+public enum ApplicationsRenderer {
+    public static func humanReadable(_ applications: [CachedApplication]) -> String {
+        var lines = ["Applications", ""]
+        lines.append(contentsOf: applications.map { application in
+            let version = application.shortVersion ?? application.buildVersion ?? "Unknown version"
+            return "\(application.displayName.terminalInline)\t\(version.terminalInline)"
+        })
+        return lines.joined(separator: "\n")
+    }
+
+    public static func json(_ applications: [CachedApplication]) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return String(decoding: try encoder.encode(applications), as: UTF8.self)
+    }
+}
