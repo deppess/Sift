@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum SiftApplication {
@@ -20,12 +21,19 @@ public enum SiftApplication {
             create: true
         ).appending(path: "Sift", directoryHint: .isDirectory)
 
-        try fileManager.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        var status = stat()
+        if lstat(directory.path, &status) != 0 {
+            guard errno == ENOENT else {
+                throw DatabaseError.unsafeFilesystemPath(directory, message: String(cString: strerror(errno)))
+            }
+            try fileManager.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        }
+        try validateDatabaseParentDirectory(directory)
         return directory.appending(path: "sift.sqlite3", directoryHint: .notDirectory)
     }
 }

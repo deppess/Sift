@@ -4,7 +4,10 @@ public enum HomebrewRenderer {
     public static func humanReadable(_ updates: [HomebrewUpdate]) -> String {
         guard !updates.isEmpty else { return "No updates available for user-installed Homebrew packages." }
         var lines = ["Available updates", ""]
-        lines.append(contentsOf: updates.map { "\($0.name.terminalInline)\t\($0.installedVersion.terminalInline) -> \($0.availableVersion.terminalInline)\t\($0.autoUpdates ? "auto-updates" : $0.kind.rawValue)" })
+        lines.append(contentsOf: updates.map {
+            let status = $0.freshness == .current ? "current" : "\($0.freshness.rawValue); data as of \($0.dataAsOf?.ISO8601Format() ?? "unknown")"
+            return "\($0.name.terminalInline)\t\($0.installedVersion.terminalInline) -> \($0.availableVersion.terminalInline)\t\($0.autoUpdates ? "auto-updates" : $0.kind.rawValue)\t\(status.terminalInline)"
+        })
         return lines.joined(separator: "\n")
     }
 

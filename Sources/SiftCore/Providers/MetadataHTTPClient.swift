@@ -60,14 +60,14 @@ public enum MetadataHTTPError: LocalizedError {
 public final class MetadataHTTPClient: @unchecked Sendable {
     private static let concurrency = DispatchSemaphore(value: 6)
     private static let githubConcurrency = DispatchSemaphore(value: 1)
+    private static let rateLimitLock = NSLock()
+    nonisolated(unsafe) private static var githubBlockedUntil: [String: Date] = [:]
 
     private let database: Database
     private let session: URLSession
     private let delegate: MetadataHTTPSessionDelegate
     private let environment: [String: String]
     private let now: () -> Date
-    private let rateLimitLock = NSLock()
-    private var githubBlockedUntil: Date?
 
     public init(database: Database, configuration: URLSessionConfiguration = .ephemeral, environment: [String: String] = ProcessInfo.processInfo.environment, now: @escaping () -> Date = { .now }) {
         self.database = database
@@ -83,6 +83,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
 
     private func perform(_ url: URL, policy: MetadataHTTPPolicy) throws -> MetadataHTTPResponse {
         guard isAllowed(url, policy: policy) else { throw MetadataHTTPError.unsupportedURL }
+        let deadline = DispatchTime.now() + policy.outerTimeout
         let timestamp = now()
         let cached = try database.cachedMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey)
         let age = cached.map { timestamp.timeIntervalSince($0.validatedAt) }
@@ -91,15 +92,15 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             guard let body = cached.body else { throw MetadataHTTPError.invalidResponse }
             return MetadataHTTPResponse(body: body, linkHeader: cached.linkHeader, validatedAt: cached.validatedAt, fromCache: true)
         }
-        guard Self.concurrency.wait(timeout: .now() + policy.outerTimeout) == .success else { throw MetadataHTTPError.timedOut }
-        defer { Self.concurrency.signal() }
         if policy.serialGitHub {
-            if let retryAt = blockedUntil() { throw MetadataHTTPError.rateLimited(retryAt: retryAt) }
-            guard Self.githubConcurrency.wait(timeout: .now() + policy.outerTimeout) == .success else { throw MetadataHTTPError.timedOut }
+            guard Self.githubConcurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
+            defer { Self.githubConcurrency.signal() }
+            if let retryAt = blockedUntil(for: policy) { throw MetadataHTTPError.rateLimited(retryAt: retryAt) }
         }
-        defer { if policy.serialGitHub { Self.githubConcurrency.signal() } }
+        guard Self.concurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
+        defer { Self.concurrency.signal() }
         var request = URLRequest(url: url)
-        request.timeoutInterval = policy.timeout
+        request.timeoutInterval = min(policy.timeout, remaining(until: deadline))
         request.setValue(policy.accept, forHTTPHeaderField: "Accept")
         for (name, value) in policy.headers { request.setValue(value, forHTTPHeaderField: name) }
         if let token = policy.token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
@@ -109,12 +110,16 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         let task = session.dataTask(with: request)
         delegate.register(task: task, policy: policy, result: result)
         task.resume()
-        guard result.wait(timeout: .now() + policy.outerTimeout) else { task.cancel(); _ = result.waitForCompletion(timeout: .now() + 2); throw MetadataHTTPError.timedOut }
+        guard result.wait(timeout: deadline) else {
+            task.cancel()
+            _ = result.waitForCompletion(timeout: deadline)
+            throw MetadataHTTPError.timedOut
+        }
         let (data, response): (Data, HTTPURLResponse)
         do { (data, response) = try result.value().get() }
         catch {
             task.cancel()
-            _ = result.waitForCompletion(timeout: .now() + 2)
+            _ = result.waitForCompletion(timeout: deadline)
             throw normalizedTransportError(error)
         }
         let validatedAt = now()
@@ -130,7 +135,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             throw MetadataHTTPError.notFound
         }
         if let error = statusError(response, now: validatedAt) {
-            if case let .rateLimited(retryAt) = error { blockGitHub(until: retryAt ?? validatedAt.addingTimeInterval(60)) }
+            if case let .rateLimited(retryAt) = error { blockGitHub(for: policy, until: retryAt ?? validatedAt.addingTimeInterval(60)) }
             throw error
         }
         guard (200...299).contains(response.statusCode) else { throw MetadataHTTPError.transport("Metadata server returned HTTP \(response.statusCode).") }
@@ -141,9 +146,9 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     private func policy(for resource: MetadataResource) -> MetadataHTTPPolicy {
         switch resource {
         case .homebrewTarget:
-            return MetadataHTTPPolicy(cacheKey: "homebrew-target-v2", allowedHosts: ["formulae.brew.sh"], responseLimit: 1_048_576, accept: "application/json", headers: [:], token: nil, serialGitHub: false)
+            return MetadataHTTPPolicy(cacheKey: "homebrew-target-v2", allowedHosts: ["formulae.brew.sh"], responseLimit: 1_048_576, accept: "application/json", headers: [:], token: nil, serialGitHub: false, rateLimitKey: nil)
         case .githubChangelog:
-            return MetadataHTTPPolicy(cacheKey: "github-changelog-v2", allowedHosts: ["raw.githubusercontent.com"], responseLimit: 2_097_152, accept: "text/plain", headers: [:], token: nil, serialGitHub: false)
+            return MetadataHTTPPolicy(cacheKey: "github-changelog-v2", allowedHosts: ["raw.githubusercontent.com"], responseLimit: 2_097_152, accept: "text/plain", headers: [:], token: nil, serialGitHub: false, rateLimitKey: nil)
         case .githubReference, .githubAnnotatedTag, .githubReleaseByTag, .githubReleaseList, .githubCommit, .githubTree, .githubBlob:
             let token = githubToken()
             let name: String
@@ -155,11 +160,11 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             case .githubCommit: name = "github-commit"
             case .githubTree: name = "github-tree"
             case .githubBlob: name = "github-blob"
-            default: fatalError("Non-GitHub API resource")
+            default: name = "github-unsupported"
             }
             let limit = resource == .githubReleaseList || resource == .githubTree || resource == .githubBlob ? 4_194_304 : 2_097_152
             let representation = token.map { "auth-\(tokenFingerprint($0))" } ?? "anonymous"
-            return MetadataHTTPPolicy(cacheKey: "\(name)-v3-\(representation)", allowedHosts: ["api.github.com"], responseLimit: limit, accept: "application/vnd.github+json", headers: ["X-GitHub-Api-Version": "2022-11-28", "User-Agent": "sift-pre-v1"], token: token, serialGitHub: true)
+            return MetadataHTTPPolicy(cacheKey: "\(name)-v3-\(representation)", allowedHosts: ["api.github.com"], responseLimit: limit, accept: "application/vnd.github+json", headers: ["X-GitHub-Api-Version": "2022-11-28", "User-Agent": "sift-pre-v1"], token: token, serialGitHub: true, rateLimitKey: representation)
         }
     }
 
@@ -171,17 +176,22 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         SHA256.hash(data: Data(token.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func blockedUntil() -> Date? {
-        rateLimitLock.withLock {
-            guard let blocked = githubBlockedUntil else { return nil }
-            if blocked <= now() { githubBlockedUntil = nil; return nil }
+    private func blockedUntil(for policy: MetadataHTTPPolicy) -> Date? {
+        guard let key = policy.rateLimitKey else { return nil }
+        return Self.rateLimitLock.withLock {
+            guard let blocked = Self.githubBlockedUntil[key] else { return nil }
+            if blocked <= now() { Self.githubBlockedUntil.removeValue(forKey: key); return nil }
             return blocked
         }
     }
 
-    private func blockGitHub(until retryAt: Date?) {
-        guard let retryAt else { return }
-        rateLimitLock.withLock { if githubBlockedUntil == nil || githubBlockedUntil! < retryAt { githubBlockedUntil = retryAt } }
+    private func blockGitHub(for policy: MetadataHTTPPolicy, until retryAt: Date?) {
+        guard let key = policy.rateLimitKey, let retryAt else { return }
+        Self.rateLimitLock.withLock {
+            if Self.githubBlockedUntil[key] == nil || Self.githubBlockedUntil[key]! < retryAt {
+                Self.githubBlockedUntil[key] = retryAt
+            }
+        }
     }
 
     private func isAllowed(_ url: URL, policy: MetadataHTTPPolicy) -> Bool {
@@ -203,14 +213,38 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     }
 
     private func retryAt(_ response: HTTPURLResponse, now: Date) -> Date? {
-        if let seconds = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init) { return now.addingTimeInterval(seconds) }
-        if let seconds = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init) { return Date(timeIntervalSince1970: seconds) }
-        return nil
+        var candidates: [Date] = []
+        if let retryAfter = response.value(forHTTPHeaderField: "Retry-After") {
+            if let seconds = TimeInterval(retryAfter), seconds >= 0 {
+                candidates.append(now.addingTimeInterval(seconds))
+            } else if let date = httpDate(retryAfter) {
+                candidates.append(date)
+            }
+        }
+        if let seconds = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init) {
+            candidates.append(Date(timeIntervalSince1970: seconds))
+        }
+        return candidates.filter { $0 > now }.max()
     }
 
     private func normalizedTransportError(_ error: Error) -> MetadataHTTPError {
+        if let error = error as? MetadataHTTPError { return error }
         guard let error = error as? URLError else { return .transport(error.localizedDescription) }
         return error.code == .timedOut ? .timedOut : .transport("Metadata transport failed: \(error.code.rawValue).")
+    }
+
+    private func remaining(until deadline: DispatchTime) -> TimeInterval {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard deadline.uptimeNanoseconds > now else { return 0.001 }
+        return TimeInterval(deadline.uptimeNanoseconds - now) / 1_000_000_000
+    }
+
+    private func httpDate(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+        return formatter.date(from: value)
     }
 }
 
@@ -222,6 +256,7 @@ private struct MetadataHTTPPolicy: Sendable {
     let headers: [String: String]
     let token: String?
     let serialGitHub: Bool
+    let rateLimitKey: String?
     let maxAge: TimeInterval = 6 * 60 * 60
     let timeout: TimeInterval = 30
     let outerTimeout: TimeInterval = 35

@@ -48,6 +48,21 @@ public struct HomebrewUpdate: Codable, Equatable, Sendable {
     public let availableVersion: String
     public let sourceURL: String?
     public let autoUpdates: Bool
+    public let freshness: Freshness
+    public let dataAsOf: Date?
+
+    public init(kind: HomebrewPackageKind, name: String, fullName: String, prefix: String, installedVersion: String, availableVersion: String, sourceURL: String?, autoUpdates: Bool, freshness: Freshness = .unknown, dataAsOf: Date? = nil) {
+        self.kind = kind
+        self.name = name
+        self.fullName = fullName
+        self.prefix = prefix
+        self.installedVersion = installedVersion
+        self.availableVersion = availableVersion
+        self.sourceURL = sourceURL
+        self.autoUpdates = autoUpdates
+        self.freshness = freshness
+        self.dataAsOf = dataAsOf
+    }
 }
 
 public struct HomebrewProvider {

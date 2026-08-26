@@ -85,11 +85,11 @@ public enum SiftCLI {
                 }
                 return EXIT_SUCCESS
             case .refresh:
-                fatalError("Refresh commands return before opening a read-only database.")
+                return EXIT_FAILURE
             case .completions:
-                fatalError("Completion commands return before opening a database.")
+                return EXIT_FAILURE
             case .complete:
-                fatalError("Completion commands return before opening a database.")
+                return EXIT_FAILURE
             }
         } catch let error as InvocationError {
             writeError(error.localizedDescription, usage: true)
@@ -124,7 +124,7 @@ public enum SiftCLI {
         case let .apps(.some(selector)), let .show(selector):
             throw InvocationError.missingCatalogItem(selector)
         case .refresh, .completions, .complete:
-            fatalError("Only cache-reading commands may have a missing cache.")
+            return EXIT_FAILURE
         }
     }
 
@@ -140,7 +140,7 @@ public enum SiftCLI {
 
     private static func writeError(_ message: String, usage: Bool = false) {
         let suffix = usage ? "\n\(Invocation.usage)" : ""
-        FileHandle.standardError.write(Data("sift: \(message)\(suffix)\n".utf8))
+        FileHandle.standardError.write(Data("sift: \(message.terminalInline)\(suffix)\n".utf8))
     }
 }
 
@@ -158,7 +158,7 @@ extension String {
     }
 
     var completionSafe: String {
-        unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7F && $0 != "\t" && $0 != "\n" && $0 != "\r" }.map(String.init).joined()
+        terminalInline
     }
 }
 

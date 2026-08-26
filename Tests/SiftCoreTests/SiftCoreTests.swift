@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import SiftCore
@@ -24,6 +25,53 @@ final class SiftCoreTests: XCTestCase {
             guard case .refreshInProgress = error as? DatabaseError else { return XCTFail("Expected refresh lock error, got \(error)") }
         }
         _ = first
+    }
+
+    func testWritableDatabaseRejectsNonStickyWritableParent() throws {
+        let directory = try temporaryDatabaseDirectory(mode: 0o777)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        XCTAssertThrowsError(try Database(url: directory.appending(path: "sift.sqlite3"))) { error in
+            guard case .unsafeFilesystemPath = error as? DatabaseError else { return XCTFail("Expected unsafe parent error, got \(error)") }
+        }
+    }
+
+    func testWritableDatabaseAcceptsStickyParent() throws {
+        let directory = try temporaryDatabaseDirectory(mode: 0o1777)
+        let url = directory.appending(path: "sift.sqlite3")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        _ = try Database(url: url)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int, 0o600)
+    }
+
+    func testDatabaseRejectsSymlinkAndHardlink() throws {
+        let directory = try temporaryDatabaseDirectory(mode: 0o700)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appending(path: "target.sqlite3")
+        try Data().write(to: target)
+        let symlink = directory.appending(path: "symlink.sqlite3")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: target)
+        XCTAssertThrowsError(try Database(url: symlink))
+
+        let hardlink = directory.appending(path: "hardlink.sqlite3")
+        XCTAssertEqual(link(target.path, hardlink.path), 0)
+        XCTAssertThrowsError(try Database(url: hardlink)) { error in
+            guard case .invalidDatabasePath = error as? DatabaseError else { return XCTFail("Expected invalid database path, got \(error)") }
+        }
+    }
+
+    func testRefreshLockRejectsHardlinkedFile() throws {
+        let directory = try temporaryDatabaseDirectory(mode: 0o700)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "sift.sqlite3")
+        let lock = url.appendingPathExtension("refresh.lock")
+        try Data().write(to: lock)
+        XCTAssertEqual(link(lock.path, directory.appending(path: "other.lock").path), 0)
+
+        XCTAssertThrowsError(try Database(url: url)) { error in
+            guard case .refreshLockUnavailable = error as? DatabaseError else { return XCTFail("Expected unsafe lock error, got \(error)") }
+        }
     }
 
     func testFailedRefreshDoesNotAdvanceSuccessfulDataAge() throws {
@@ -196,6 +244,25 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertEqual(dashboard.data.informationalUpdateCount, 1)
     }
 
+    func testHomebrewUpdateFreshnessMarksOldEvidenceStale() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        let formula = homebrewPackage(kind: .formula, name: "example")
+        let observedAt = Date(timeIntervalSince1970: 1_000)
+        let key = HomebrewPackageKey(formula)
+        let results = RefreshProvider.allCases.map {
+            ProviderRefreshResult(provider: $0, status: .success, startedAt: observedAt, finishedAt: observedAt, dataAsOf: observedAt)
+        }
+        let input = RefreshPersistenceInput(startedAt: observedAt, finishedAt: observedAt, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: "2.0", sourceURL: nil))], releaseNoteResults: [:], providerResults: results)
+        _ = try database.applyRefresh(input)
+
+        let update = try XCTUnwrap(database.homebrewUpdates(now: observedAt.addingTimeInterval(120), staleAfter: 120).first)
+        XCTAssertEqual(update.freshness, .stale)
+        XCTAssertEqual(update.dataAsOf, observedAt)
+        XCTAssertTrue(HomebrewRenderer.humanReadable([update]).contains("stale; data as of"))
+    }
+
     func testUnifiedPartialRefreshKeepsMissingNativeApplicationsActive() throws {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
@@ -219,6 +286,23 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertEqual(try database.dashboard(now: finishedAt).data.partialProviderCount, 1)
     }
 
+    func testUnifiedRefreshRejectsReplayedCompletionTime() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        let startedAt = Date(timeIntervalSince1970: 2_000)
+        let finishedAt = Date(timeIntervalSince1970: 2_001)
+        let results = RefreshProvider.allCases.map {
+            ProviderRefreshResult(provider: $0, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt)
+        }
+        let input = RefreshPersistenceInput(startedAt: startedAt, finishedAt: finishedAt, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results)
+
+        _ = try database.applyRefresh(input)
+        XCTAssertThrowsError(try database.applyRefresh(input)) { error in
+            guard case .invalidRefreshInput = error as? DatabaseError else { return XCTFail("Expected refresh ordering error, got \(error)") }
+        }
+    }
+
     func testFreshMetadataCacheAvoidsNetworkAndPreservesPayload() throws {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
@@ -229,6 +313,17 @@ final class SiftCoreTests: XCTestCase {
         let client = MetadataHTTPClient(database: database, now: { timestamp.addingTimeInterval(60) })
 
         XCTAssertEqual(try String(decoding: client.fetch(URL(string: requestURL)!, resource: .homebrewTarget).body, as: UTF8.self), "cached")
+    }
+
+    func testMetadataCachePreservesEmptyBlob() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        let requestURL = "https://formulae.brew.sh/api/formula/empty.json"
+        try database.storeMetadataResponse(url: requestURL, resourceKind: "homebrew-target-v2", statusCode: 200, body: Data(), etag: nil, lastModified: nil, validatedAt: Date(timeIntervalSince1970: 1_000))
+
+        let cached = try database.cachedMetadataResponse(url: requestURL, resourceKind: "homebrew-target-v2")
+        XCTAssertEqual(cached?.body, Data())
     }
 
     func testCachedMetadataNotFoundRemainsExplicitAbsence() throws {
@@ -322,7 +417,41 @@ final class SiftCoreTests: XCTestCase {
             guard case let .rateLimited(retryAt) = error as? MetadataHTTPError else { return XCTFail("Expected rate-limit error, got \(error)") }
             XCTAssertEqual(retryAt, now.addingTimeInterval(60))
         }
-        XCTAssertNil(try database.cachedMetadataResponse(url: requestURL, resourceKind: "github-release-list-v2-anonymous"))
+        XCTAssertNil(try database.cachedMetadataResponse(url: requestURL, resourceKind: "github-release-list-v3-anonymous"))
+    }
+
+    func testGitHubRateLimitParsesHTTPDateAndIsSharedAcrossClients() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        let requestURL = "https://api.github.com/repos/owner/repository/releases"
+        let now = Date(timeIntervalSince1970: 1_000)
+        let retryAt = now.addingTimeInterval(120)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+        var requests = 0
+        MetadataURLProtocol.handler = { _ in
+            requests += 1
+            return (429, nil, ["Retry-After": formatter.string(from: retryAt), "X-RateLimit-Reset": String(Int(now.addingTimeInterval(60).timeIntervalSince1970))])
+        }
+        defer { MetadataURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MetadataURLProtocol.self]
+        let environment = ["GITHUB_TOKEN": "http-date-test-token"]
+        let first = MetadataHTTPClient(database: database, configuration: configuration, environment: environment, now: { now })
+        let second = MetadataHTTPClient(database: database, configuration: configuration, environment: environment, now: { now })
+
+        XCTAssertThrowsError(try first.fetch(URL(string: requestURL)!, resource: .githubReleaseList)) { error in
+            guard case let .rateLimited(actualRetryAt) = error as? MetadataHTTPError else { return XCTFail("Expected rate-limit error, got \(error)") }
+            XCTAssertEqual(actualRetryAt, retryAt)
+        }
+        XCTAssertThrowsError(try second.fetch(URL(string: requestURL)!, resource: .githubReleaseList)) { error in
+            guard case let .rateLimited(actualRetryAt) = error as? MetadataHTTPError else { return XCTFail("Expected shared rate-limit error, got \(error)") }
+            XCTAssertEqual(actualRetryAt, retryAt)
+        }
+        XCTAssertEqual(requests, 1)
     }
 
     func testGitHubSourceParsesExactArchiveAndReleaseTags() {
@@ -345,6 +474,13 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/../archive/v1.2.3.tar.gz")!))
         XCTAssertNil(GitHubSource.parse(URL(string: "http://github.com/owner/repository/archive/v1.2.3.tar.gz")!))
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/.git/archive/v1.2.3.tar.gz")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://user@github.com/owner/repository")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com:443/owner/repository")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository?ref=v1")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository#v1")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/own%C3%A9r/repository")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository/archive/refs/tags/%2E%2E.tar.gz")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository/releases/download/v1/%1Bunsafe.zip")!))
     }
 
     func testGitHubTagResolverUsesOneExactVersionCandidate() throws {
@@ -497,7 +633,15 @@ final class SiftCoreTests: XCTestCase {
         let output = HomebrewRenderer.show(notes)
 
         XCTAssertFalse(output.unicodeScalars.contains { $0 == "\u{1B}" || $0 == "\r" })
-        XCTAssertTrue(output.contains("- Safe\n[31mnot terminal formatting"))
+        XCTAssertTrue(output.contains("- Safe\nnot terminal formatting"))
+    }
+
+    func testTerminalSanitizerRemovesWholeEscapeSequences() {
+        let text = "safe\u{1B}[31mcolored\u{1B}]8;;https://attacker.example\u{7}link\u{1B}Ppayload\u{1B}\\done\u{9B}2J"
+
+        XCTAssertEqual(text.terminalText, "safecoloredlinkdone")
+        XCTAssertEqual("one\n\u{1B}]0;title\u{7}two".terminalInline, "one two")
+        XCTAssertEqual("one\u{9D}title\u{1B}\\two".terminalText, "onetwo")
     }
 
     func testCommandRunnerStopsOversizedStreamingOutput() throws {
@@ -528,6 +672,13 @@ final class SiftCoreTests: XCTestCase {
 
     private func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory.appending(path: "sift-test-\(UUID().uuidString).sqlite3")
+    }
+
+    private func temporaryDatabaseDirectory(mode: mode_t) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "sift-test-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        XCTAssertEqual(chmod(directory.path, mode), 0)
+        return directory
     }
 
     private func removeDatabase(at url: URL) {

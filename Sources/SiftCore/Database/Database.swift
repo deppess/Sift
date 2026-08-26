@@ -1,10 +1,61 @@
 import CSQLite
+import Darwin
 import Foundation
+
+func validateDatabaseParentDirectory(_ url: URL) throws {
+    var status = stat()
+    guard lstat(url.path, &status) == 0 else {
+        if errno == ENOENT { throw DatabaseError.missingDatabaseDirectory(url) }
+        throw DatabaseError.unsafeFilesystemPath(url, message: String(cString: strerror(errno)))
+    }
+    guard (status.st_mode & S_IFMT) == S_IFDIR else {
+        throw DatabaseError.unsafeFilesystemPath(url, message: "parent is not a real directory")
+    }
+    let mode = status.st_mode
+    let isPrivate = status.st_uid == getuid() && (mode & (S_IWGRP | S_IWOTH)) == 0
+    guard isPrivate || (mode & S_ISVTX) != 0 else {
+        throw DatabaseError.unsafeFilesystemPath(url, message: "parent is writable by other users without the sticky bit")
+    }
+}
+
+func validateDatabaseFile(_ url: URL) throws {
+    var status = stat()
+    guard lstat(url.path, &status) == 0,
+          (status.st_mode & S_IFMT) == S_IFREG,
+          status.st_uid == getuid(),
+          status.st_nlink == 1 else {
+        throw DatabaseError.invalidDatabasePath(url)
+    }
+}
+
+private func createOrValidateDatabaseFile(_ url: URL) throws {
+    var status = stat()
+    if lstat(url.path, &status) == 0 {
+        try validateDatabaseFile(url)
+        return
+    }
+    guard errno == ENOENT else { throw DatabaseError.invalidDatabasePath(url) }
+    let descriptor = open(url.path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0o600)
+    if descriptor >= 0 {
+        guard fchmod(descriptor, 0o600) == 0 else {
+            let error = errno
+            close(descriptor)
+            throw DatabaseError.sqlite(message: "Unable to secure database file at \(url.path): \(String(cString: strerror(error))).")
+        }
+        close(descriptor)
+        return
+    }
+    guard errno == EEXIST else {
+        throw DatabaseError.sqlite(message: "Unable to create database file at \(url.path): \(String(cString: strerror(errno))).")
+    }
+    try validateDatabaseFile(url)
+}
 
 public enum DatabaseError: Error, LocalizedError {
     case sqlite(message: String)
     case invalidDatabasePath(URL)
     case missingDatabaseDirectory(URL)
+    case unsafeFilesystemPath(URL, message: String)
     case unsupportedSchemaVersion(Int)
     case obsoleteSchema
     case refreshInProgress(URL)
@@ -16,6 +67,7 @@ public enum DatabaseError: Error, LocalizedError {
         case let .sqlite(message): message
         case let .invalidDatabasePath(url): "Database path is not a regular file path: \(url.path)"
         case let .missingDatabaseDirectory(url): "Database parent directory does not exist: \(url.path)"
+        case let .unsafeFilesystemPath(url, message): "Unsafe filesystem path \(url.path): \(message)"
         case let .unsupportedSchemaVersion(version): "Database schema version \(version) is newer than this version of Sift supports."
         case .obsoleteSchema: "This is an obsolete pre-release Sift database. Remove it and run Sift again."
         case let .refreshInProgress(url): "Another refresh is already running for database: \(url.deletingPathExtension().path)"
@@ -43,10 +95,12 @@ public final class Database: @unchecked Sendable {
     }
 
     public static func readOnly(url: URL) throws -> Database {
-        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else { throw DatabaseError.invalidDatabasePath(url) }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw DatabaseError.invalidDatabasePath(url) }
+        guard url.isFileURL else { throw DatabaseError.invalidDatabasePath(url) }
+        try validateDatabaseParentDirectory(url.deletingLastPathComponent())
+        try validateDatabaseFile(url)
         var handle: OpaquePointer?
+        // SQLite opens auxiliary journal files independently; validate the final path
+        // first because SQLITE_OPEN_NOFOLLOW rejects normal read-only journal access.
         guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let handle else {
             let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "Unable to open SQLite database."
             sqlite3_close(handle)
@@ -71,21 +125,10 @@ public final class Database: @unchecked Sendable {
     public init(url: URL) throws {
         guard url.isFileURL, !url.hasDirectoryPath else { throw DatabaseError.invalidDatabasePath(url) }
         let parent = url.deletingLastPathComponent()
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: parent.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw DatabaseError.missingDatabaseDirectory(parent)
-        }
+        try validateDatabaseParentDirectory(parent)
         let refreshLock = try RefreshDatabaseLock(databaseURL: url)
 
-        if FileManager.default.fileExists(atPath: url.path) {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard values.isRegularFile == true, values.isSymbolicLink != true else { throw DatabaseError.invalidDatabasePath(url) }
-        } else {
-            guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-                throw DatabaseError.sqlite(message: "Unable to create database file at \(url.path).")
-            }
-        }
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try createOrValidateDatabaseFile(url)
 
         var database: OpaquePointer?
         guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let database else {
@@ -189,10 +232,12 @@ public final class Database: @unchecked Sendable {
                   sqlite3_bind_text(statement, 2, resourceKind, -1, sqliteTransient) == SQLITE_OK else { throw errorFromHandle() }
             if try stepRow(statement) {
                 let body: Data?
-                if let bytes = sqlite3_column_blob(statement, 1) {
+                if sqlite3_column_type(statement, 1) == SQLITE_NULL {
+                    body = nil
+                } else if let bytes = sqlite3_column_blob(statement, 1) {
                     body = Data(bytes: bytes, count: Int(sqlite3_column_bytes(statement, 1)))
                 } else {
-                    body = nil
+                    body = Data()
                 }
                 response = CachedMetadataResponse(statusCode: Int(sqlite3_column_int(statement, 0)), body: body, etag: optionalText(statement, column: 2), lastModified: optionalText(statement, column: 3), linkHeader: optionalText(statement, column: 5), validatedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)))
             }
@@ -209,7 +254,14 @@ public final class Database: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         try withStatement("INSERT INTO metadata_http_cache (request_url, resource_kind, status_code, body, etag, last_modified, validated_at, link_header) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(request_url, resource_kind) DO UPDATE SET status_code = excluded.status_code, body = excluded.body, etag = excluded.etag, last_modified = excluded.last_modified, validated_at = excluded.validated_at, link_header = excluded.link_header;") { statement in
-            let bodyResult: Int32 = body.map { sqlite3_bind_blob(statement, 4, ($0 as NSData).bytes, Int32($0.count), sqliteTransient) } ?? sqlite3_bind_null(statement, 4)
+            let bodyResult: Int32
+            if let body {
+                bodyResult = body.isEmpty
+                    ? sqlite3_bind_zeroblob(statement, 4, 0)
+                    : sqlite3_bind_blob(statement, 4, (body as NSData).bytes, Int32(body.count), sqliteTransient)
+            } else {
+                bodyResult = sqlite3_bind_null(statement, 4)
+            }
             guard sqlite3_bind_text(statement, 1, url, -1, sqliteTransient) == SQLITE_OK,
                   sqlite3_bind_text(statement, 2, resourceKind, -1, sqliteTransient) == SQLITE_OK,
                   sqlite3_bind_int(statement, 3, Int32(statusCode)) == SQLITE_OK,
@@ -302,6 +354,9 @@ public final class Database: @unchecked Sendable {
         var inactive = 0
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
+            if let latest = try latestSession(), input.finishedAt <= latest.finishedAt {
+                throw DatabaseError.invalidRefreshInput("refresh completion is not newer than the latest persisted refresh")
+            }
             let sessionID = try insertSession(startedAt: input.startedAt, finishedAt: input.finishedAt, status: status)
             let nativeCounts = try applyNativeInventoryLocked(input.nativeInventory, sessionID: sessionID, observedAt: input.finishedAt)
             added = nativeCounts.added
@@ -607,16 +662,42 @@ public final class Database: @unchecked Sendable {
         } catch { try? execute("ROLLBACK;"); throw error }
     }
 
-    public func homebrewUpdates() throws -> [HomebrewUpdate] {
+    public func homebrewUpdates(now: Date = .now, staleAfter: TimeInterval = 24 * 60 * 60) throws -> [HomebrewUpdate] {
         lock.lock()
         defer { lock.unlock() }
         var updates: [HomebrewUpdate] = []
-        try withStatement("SELECT kind, name, full_name, prefix, installed_version, available_version, source_url, auto_updates FROM homebrew_packages WHERE active = 1 AND ownership IN ('explicitlyRequested', 'installedCask') AND available_version IS NOT NULL AND available_version != installed_version AND (target_status IN ('unknown', 'resolved') OR (target_status = 'transientFailure' AND target_for_installed_version = installed_version)) ORDER BY name COLLATE NOCASE;") { statement in
+        let providerStatus = try homebrewProviderStatuses()
+        try withStatement("SELECT kind, name, full_name, prefix, installed_version, available_version, source_url, auto_updates, last_seen_at, target_last_success_at, target_status FROM homebrew_packages WHERE active = 1 AND ownership IN ('explicitlyRequested', 'installedCask') AND available_version IS NOT NULL AND available_version != installed_version AND (target_status IN ('unknown', 'resolved') OR (target_status = 'transientFailure' AND target_for_installed_version = installed_version)) ORDER BY name COLLATE NOCASE;") { statement in
             while try stepRow(statement) {
-                updates.append(HomebrewUpdate(kind: HomebrewPackageKind(rawValue: String(cString: sqlite3_column_text(statement, 0))) ?? .formula, name: String(cString: sqlite3_column_text(statement, 1)), fullName: String(cString: sqlite3_column_text(statement, 2)), prefix: String(cString: sqlite3_column_text(statement, 3)), installedVersion: String(cString: sqlite3_column_text(statement, 4)), availableVersion: String(cString: sqlite3_column_text(statement, 5)), sourceURL: optionalText(statement, column: 6), autoUpdates: sqlite3_column_int(statement, 7) == 1))
+                let inventoryAsOf = sqlite3_column_type(statement, 8) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 8))
+                let targetAsOf = sqlite3_column_type(statement, 9) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 9))
+                let dataAsOf = [inventoryAsOf, targetAsOf].compactMap { $0 }.min()
+                let targetStatus = String(cString: sqlite3_column_text(statement, 10))
+                let freshness: Freshness
+                if targetStatus == "transientFailure" || providerStatus.contains(where: { $0 != .success }) {
+                    freshness = dataAsOf == nil ? .unknown : .stale
+                } else if targetStatus != "resolved" || dataAsOf == nil {
+                    freshness = .unknown
+                } else if now.timeIntervalSince(dataAsOf!) >= staleAfter {
+                    freshness = .stale
+                } else {
+                    freshness = .current
+                }
+                updates.append(HomebrewUpdate(kind: HomebrewPackageKind(rawValue: String(cString: sqlite3_column_text(statement, 0))) ?? .formula, name: String(cString: sqlite3_column_text(statement, 1)), fullName: String(cString: sqlite3_column_text(statement, 2)), prefix: String(cString: sqlite3_column_text(statement, 3)), installedVersion: String(cString: sqlite3_column_text(statement, 4)), availableVersion: String(cString: sqlite3_column_text(statement, 5)), sourceURL: optionalText(statement, column: 6), autoUpdates: sqlite3_column_int(statement, 7) == 1, freshness: freshness, dataAsOf: dataAsOf))
             }
         }
         return updates
+    }
+
+    private func homebrewProviderStatuses() throws -> [ProviderRefreshStatus] {
+        var statuses: [ProviderRefreshStatus] = []
+        try withStatement("SELECT latest_status FROM provider_state WHERE provider IN ('homebrew-inventory', 'homebrew-targets');") { statement in
+            while try stepRow(statement) {
+                guard let text = sqlite3_column_text(statement, 0), let status = ProviderRefreshStatus(rawValue: String(cString: text)) else { continue }
+                statuses.append(status)
+            }
+        }
+        return statuses
     }
 
     public func storeReleaseNotes(_ notes: HomebrewReleaseNotes, prefix: String, kind: HomebrewPackageKind) throws {

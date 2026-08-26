@@ -23,9 +23,14 @@ public struct GitHubSource: Equatable, Sendable {
 
     public static func parse(_ url: URL) -> GitHubSource? {
         guard url.scheme?.lowercased() == "https",
-              let host = url.host?.lowercased(),
-              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        let path = components.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+               let host = url.host?.lowercased(),
+               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+               components.user == nil, components.password == nil, components.port == nil,
+               components.query == nil, components.fragment == nil,
+               host.unicodeScalars.allSatisfy({ $0.value < 0x80 }) else { return nil }
+        let encodedPath = components.percentEncodedPath
+        guard encodedPath.hasPrefix("/"), !encodedPath.contains("//") else { return nil }
+        let path = encodedPath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         switch host {
         case "github.com":
             return parseGitHubPath(path)
@@ -47,12 +52,13 @@ public struct GitHubSource: Equatable, Sendable {
             return tagged(repository, encodedTag: suffix.dropFirst().joined(separator: "/"), archive: true)
         }
         if suffix.starts(with: ["releases", "download"]) {
-            return tagged(repository, encodedTag: suffix.dropFirst(2).first ?? "", archive: false)
+            guard suffix.count == 4, isAssetSegment(suffix[3]) else { return nil }
+            return tagged(repository, encodedTag: suffix[2], archive: false)
         }
         if suffix.starts(with: ["releases", "tag"]) {
             return tagged(repository, encodedTag: suffix.dropFirst(2).joined(separator: "/"), archive: false)
         }
-        return GitHubSource(repository: repository, tag: nil)
+        return nil
     }
 
     private static func parseCodeloadPath(_ path: [String]) -> GitHubSource? {
@@ -63,6 +69,7 @@ public struct GitHubSource: Equatable, Sendable {
 
     private static func repository(from path: [String]) -> GitHubRepository? {
         guard path.count >= 2,
+              isRepositorySegment(path[0]), isRepositorySegment(path[1]),
               let owner = decode(path[0]),
               let name = decode(path[1]),
               isPathComponent(owner), isPathComponent(name) else { return nil }
@@ -84,10 +91,19 @@ public struct GitHubSource: Equatable, Sendable {
     }
 
     private static func isPathComponent(_ value: String) -> Bool {
-        !value.isEmpty && value != "." && value != ".." && !value.contains("/") && !value.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+        !value.isEmpty && value != "." && value != ".." && value.unicodeScalars.allSatisfy { $0.value < 0x80 && ($0.value == 0x2D || $0.value == 0x2E || ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A)) }
     }
 
     private static func isTag(_ value: String) -> Bool {
-        !value.hasPrefix("/") && !value.hasSuffix("/") && !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) && !value.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+        !value.hasPrefix("/") && !value.hasSuffix("/") && !value.contains("@{") && !value.hasSuffix(".") && value.unicodeScalars.allSatisfy { $0.value >= 0x21 && $0.value < 0x7F && !"~^:?*[\\\\".unicodeScalars.contains($0) } && !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("..") })
+    }
+
+    private static func isRepositorySegment(_ value: String) -> Bool {
+        !value.contains("%") && isPathComponent(value)
+    }
+
+    private static func isAssetSegment(_ value: String) -> Bool {
+        guard let decoded = decode(value), decoded != ".", decoded != ".." else { return false }
+        return decoded.unicodeScalars.allSatisfy { $0.value >= 0x21 && $0.value < 0x7F && $0 != "/" && $0 != "\\" }
     }
 }
