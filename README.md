@@ -1,8 +1,8 @@
 # Sift
 
-Sift is a macOS-native command-line observer for installed software, available updates, observed version changes, and trustworthy release notes.
+Sift is a macOS-native command-line observer for installed software, available updates, observed version changes, and cached release notes.
 
-The project is in its foundation phase. It creates and reads its SQLite cache, exposes a **pre-v1** JSON dashboard envelope, and inventories native macOS application bundles during `refresh`.
+`refresh` inventories native application bundles and detected Homebrew prefixes, resolves Homebrew update targets, and stores available Homebrew release notes. Other commands read the cache.
 
 ## Build And Run
 
@@ -13,15 +13,14 @@ swift run sift --json
 swift run sift refresh
 swift run sift apps
 swift test
-```
-
-The XCTest suite covers the database dashboard, refresh freshness semantics, JSON encoding, and command return codes. `swift run SiftVerification` remains available as a dependency-free smoke check.
-
-Run the opt-in local integration suite for real process, SQLite, permission, schema, and concurrency checks. It uses only unique temporary directories and never touches the default Sift database:
-
-```sh
 ./Scripts/test-integration
+./Scripts/test-security
+./Scripts/benchmark
 ```
+
+`swift test` runs the unit suite. `./Scripts/test-integration` runs the opt-in process, SQLite, permission, schema, and concurrency checks in unique temporary directories. `./Scripts/test-security` deterministically repeats the security regression and integration tests; it is not a fuzz harness. `./Scripts/benchmark` builds release configuration and reports repeated core-test timings. Set `SIFT_SECURITY_ITERATIONS` or `SIFT_BENCHMARK_ITERATIONS` to adjust runs; `SIFT_SECURITY_SEED` labels a security run.
+
+`swift run SiftVerification` remains available as a dependency-free smoke check.
 
 Use an isolated database while developing:
 
@@ -29,9 +28,9 @@ Use an isolated database while developing:
 swift run sift --database /tmp/sift.sqlite3
 ```
 
-`sift --help` writes usage to standard output and exits successfully. Argument errors exit with status 2. Dashboard data is always standard output; diagnostics are always standard error. Custom database parent directories must already exist.
+`sift --help` writes usage to standard output and exits successfully. Argument errors exit with status 2. Dashboard data is always standard output; diagnostics are always standard error. A custom database parent directory must already exist, be a real directory, and either be private to the current user or sticky; database files must be user-owned regular single-link files.
 
-`refresh` performs a read-only native application inventory of standard macOS application roots. It reads bundle `Info.plist` metadata only: it does not launch applications, run subprocesses, or perform network requests. `apps` displays that cached inventory without scanning again.
+`refresh` reads native bundle `Info.plist` metadata without launching applications, inventories Homebrew through detected `brew` executables, resolves Homebrew targets, and fetches release notes when applicable. `sift`, `apps`, `updates`, `show`, and dynamic completion lookups are cache-only: they do not run providers, make network requests, or write the database. Cached dashboard and Homebrew update output mark data stale after 24 hours; a failed or partial refresh preserves prior cached data and reports the incomplete state.
 
 ## Naming Conflict
 

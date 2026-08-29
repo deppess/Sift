@@ -29,19 +29,19 @@ enum SiftVerification {
     private static func verifyRefreshOutcomes() throws {
         let database = try Database(url: temporaryDatabaseURL())
         let successfulDate = Date(timeIntervalSince1970: 1_000)
-        try database.recordRefresh(at: successfulDate, providerOutcomes: [NativeApplicationProvider.identifier: .success])
-        try database.recordRefresh(at: Date(timeIntervalSince1970: 2_000), providerOutcomes: [NativeApplicationProvider.identifier: .failure(message: "offline")])
+        _ = try database.applyRefresh(refreshInput(at: successfulDate))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), providerStatuses: Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, .failure) })))
         let dashboard = try database.dashboard(now: Date(timeIntervalSince1970: 2_100), staleAfter: 1_500)
         try require(dashboard.lastAttemptAt == Date(timeIntervalSince1970: 2_000), "The latest attempt timestamp must advance after failure.")
-        try require(dashboard.dataAsOf == nil, "Aggregate freshness must remain unknown until every provider has usable data.")
+        try require(dashboard.dataAsOf == successfulDate, "Failed providers must preserve the last successful data timestamp.")
         try require(dashboard.latestRefreshStatus == .failure, "A fully failed run must be visible.")
     }
 
     private static func verifyStalenessBoundary() throws {
         let database = try Database(url: temporaryDatabaseURL())
         let date = Date(timeIntervalSince1970: 1_000)
-        try database.recordRefresh(at: date, providerOutcomes: [NativeApplicationProvider.identifier: .success])
-        try require(try database.dashboard(now: date.addingTimeInterval(120), staleAfter: 120).freshness == .unknown, "Aggregate freshness must remain unknown until every provider has usable data.")
+        _ = try database.applyRefresh(refreshInput(at: date))
+        try require(try database.dashboard(now: date.addingTimeInterval(120), staleAfter: 120).freshness == .stale, "Aggregate freshness must become stale at the configured boundary.")
     }
 
     private static func verifyJSON() throws {
@@ -56,13 +56,21 @@ enum SiftVerification {
     private static func verifyNativeInventory() throws {
         let database = try Database(url: temporaryDatabaseURL())
         let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.example", displayName: "Example", shortVersion: "1.0", buildVersion: "1")
-        let first = try database.applyNativeInventory(NativeInventoryResult(applications: [application]))
-        let second = try database.applyNativeInventory(NativeInventoryResult(applications: [application]))
+        let first = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [application])))
+        let second = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), nativeInventory: NativeInventoryResult(applications: [application])))
         try require(first.addedCount == 1 && second.changedCount == 0, "Repeated native inventory must not create a false transition.")
     }
 
     private static func temporaryDatabaseURL() -> URL {
         FileManager.default.temporaryDirectory.appending(path: "sift-verification-\(UUID().uuidString).sqlite3")
+    }
+
+    private static func refreshInput(at date: Date, nativeInventory: NativeInventoryResult = NativeInventoryResult(applications: []), providerStatuses: [RefreshProvider: ProviderRefreshStatus] = [:]) -> RefreshPersistenceInput {
+        let providerResults = RefreshProvider.allCases.map { provider in
+            let status = providerStatuses[provider] ?? .success
+            return ProviderRefreshResult(provider: provider, status: status, startedAt: date, finishedAt: date, dataAsOf: status == .success ? date : nil)
+        }
+        return RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: nativeInventory, homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: providerResults)
     }
 
     private static func require(_ condition: Bool, _ message: String) throws {

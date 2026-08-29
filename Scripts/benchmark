@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+iterations=${SIFT_BENCHMARK_ITERATIONS:-5}
+
+case "$iterations" in
+    ''|*[!0-9]*)
+        printf '%s\n' "SIFT_BENCHMARK_ITERATIONS must be a positive integer." >&2
+        exit 2
+        ;;
+esac
+
+if [ "$iterations" -lt 1 ]; then
+    printf '%s\n' "SIFT_BENCHMARK_ITERATIONS must be a positive integer." >&2
+    exit 2
+fi
+
+swift build -c release
+run=1
+while [ "$run" -le "$iterations" ]; do
+    started=$(date +%s)
+    swift test --filter SiftCoreTests >/dev/null
+    finished=$(date +%s)
+    printf '{"scenario":"core-tests","iteration":%s,"elapsedSeconds":%s}\n' "$run" "$((finished - started))"
+    run=$((run + 1))
+done

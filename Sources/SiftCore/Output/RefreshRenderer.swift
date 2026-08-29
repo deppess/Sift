@@ -32,21 +32,3 @@ public enum RefreshRenderer {
         return String(decoding: try encoder.encode(summary), as: UTF8.self)
     }
 }
-
-public enum ApplicationsRenderer {
-    public static func humanReadable(_ applications: [CachedApplication]) -> String {
-        var lines = ["Applications", ""]
-        lines.append(contentsOf: applications.map { application in
-            let version = application.shortVersion ?? application.buildVersion ?? "Unknown version"
-            return "\(application.displayName.terminalInline)\t\(version.terminalInline)"
-        })
-        return lines.joined(separator: "\n")
-    }
-
-    public static func json(_ applications: [CachedApplication]) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return String(decoding: try encoder.encode(applications), as: UTF8.self)
-    }
-}

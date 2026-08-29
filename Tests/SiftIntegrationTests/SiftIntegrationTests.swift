@@ -28,7 +28,7 @@ final class SiftIntegrationTests: XCTestCase {
         let database = root.appending(path: "unused.sqlite3")
         let help = try Self.run(executable: executable, ["--help", "--database", database.path])
         XCTAssertEqual(help.status, 0)
-        XCTAssertEqual(help.stdout, "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--no-color] [--database <path>]\n")
+        XCTAssertEqual(help.stdout, "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--full] [--no-color] [--database <path>]\n")
         XCTAssertEqual(help.stderr, "")
         XCTAssertFalse(FileManager.default.fileExists(atPath: database.path))
 

@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+iterations=${SIFT_SECURITY_ITERATIONS:-1}
+seed=${SIFT_SECURITY_SEED:-sift-security-default}
+
+case "$iterations" in
+    ''|*[!0-9]*)
+        printf '%s\n' "SIFT_SECURITY_ITERATIONS must be a positive integer." >&2
+        exit 2
+        ;;
+esac
+
+if [ "$iterations" -lt 1 ]; then
+    printf '%s\n' "SIFT_SECURITY_ITERATIONS must be a positive integer." >&2
+    exit 2
+fi
+
+printf 'Security seed: %s\n' "$seed"
+run=1
+while [ "$run" -le "$iterations" ]; do
+    swift test --filter SiftCLITests
+    swift test --filter SiftCoreTests
+    run=$((run + 1))
+done
+
+./Scripts/test-integration

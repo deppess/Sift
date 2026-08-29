@@ -26,17 +26,18 @@ public struct RefreshCoordinator {
         let homebrewFinishedAt = now
         let hasActiveHomebrewPackages = try database.hasActiveHomebrewPackages()
         let retainedHomebrewData = homebrew.availability == .absent && hasActiveHomebrewPackages
+        let actionablePackages = homebrew.availability == .detected ? homebrew.packages.filter { $0.ownership != .dependency } : []
 
         let targetStartedAt = now
         var targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:]
-        for package in homebrew.packages where homebrew.availability == .detected && package.ownership != .dependency {
+        for package in actionablePackages {
             targetResults[HomebrewPackageKey(package)] = homebrewAPI.resolveTarget(for: package)
         }
         let targetFinishedAt = now
 
         let notesStartedAt = now
         var noteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution] = [:]
-        for package in homebrew.packages where homebrew.availability == .detected && package.ownership != .dependency {
+        for package in actionablePackages {
             let key = HomebrewPackageKey(package)
             guard case let .resolved(target)? = targetResults[key], target.version != package.installedVersion else { continue }
             if package.kind == .formula,

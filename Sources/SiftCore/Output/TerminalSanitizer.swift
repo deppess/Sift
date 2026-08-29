@@ -19,7 +19,7 @@ public extension String {
                         index += 1
                         if (0x40...0x7E).contains(value) { break }
                     }
-                case 0x5D, 0x50, 0x5E, 0x5F: // OSC, DCS, PM, APC: terminate at BEL or ST
+                case 0x58, 0x5D, 0x50, 0x5E, 0x5F: // SOS, OSC, DCS, PM, APC: terminate at BEL or ST
                     index += 1
                     while index < scalars.count {
                         if scalars[index].value == 0x07 {
@@ -55,7 +55,7 @@ public extension String {
                     }
                     index += 1
                 }
-            } else if scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7F && !(0x80...0x9F).contains(scalar.value)) {
+            } else if scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7F && !(0x80...0x9F).contains(scalar.value) && !isInvisibleFormatControl(scalar)) {
                 result.append(scalar)
                 index += 1
             } else {
@@ -63,6 +63,15 @@ public extension String {
             }
         }
         return String(result)
+    }
+
+    private func isInvisibleFormatControl(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x061C, 0x200B...0x200F, 0x202A...0x202E, 0x2060, 0x2066...0x2069, 0xFEFF:
+            true
+        default:
+            false
+        }
     }
 
     var terminalInline: String {

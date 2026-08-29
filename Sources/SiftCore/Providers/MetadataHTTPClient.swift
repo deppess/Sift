@@ -112,14 +112,14 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         task.resume()
         guard result.wait(timeout: deadline) else {
             task.cancel()
-            _ = result.waitForCompletion(timeout: deadline)
+            _ = result.waitForCompletion(timeout: .now() + 2)
             throw MetadataHTTPError.timedOut
         }
         let (data, response): (Data, HTTPURLResponse)
         do { (data, response) = try result.value().get() }
         catch {
             task.cancel()
-            _ = result.waitForCompletion(timeout: deadline)
+            _ = result.waitForCompletion(timeout: .now() + 2)
             throw normalizedTransportError(error)
         }
         let validatedAt = now()
@@ -179,8 +179,8 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     private func blockedUntil(for policy: MetadataHTTPPolicy) -> Date? {
         guard let key = policy.rateLimitKey else { return nil }
         return Self.rateLimitLock.withLock {
+            Self.githubBlockedUntil = Self.githubBlockedUntil.filter { $0.value > now() }
             guard let blocked = Self.githubBlockedUntil[key] else { return nil }
-            if blocked <= now() { Self.githubBlockedUntil.removeValue(forKey: key); return nil }
             return blocked
         }
     }
@@ -224,7 +224,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         if let seconds = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init) {
             candidates.append(Date(timeIntervalSince1970: seconds))
         }
-        return candidates.filter { $0 > now }.max()
+        return candidates.filter { $0 > now }.map { min($0, now.addingTimeInterval(60 * 60)) }.max()
     }
 
     private func normalizedTransportError(_ error: Error) -> MetadataHTTPError {

@@ -36,7 +36,7 @@ public struct HomebrewAPI: HomebrewTargetResolving {
     public func target(for package: HomebrewPackage) throws -> HomebrewTarget? {
         guard package.tap == "homebrew/core" || package.tap == "homebrew/cask" || package.tap == nil else { return nil }
         let kind = package.kind == .formula ? "formula" : "cask"
-        guard let url = URL(string: "https://formulae.brew.sh/api/\(kind)/\(package.name).json") else { return nil }
+        guard let url = packageURL(kind: kind, name: package.name) else { return nil }
         let data = try fetch(url)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         if package.kind == .formula {
@@ -70,6 +70,22 @@ public struct HomebrewAPI: HomebrewTargetResolving {
     private func fetch(_ url: URL) throws -> Data {
         guard let metadataClient else { throw HomebrewAPIError.metadataClientUnavailable }
         return try metadataClient.fetch(url, resource: .homebrewTarget).body
+    }
+
+    private func packageURL(kind: String, name: String) -> URL? {
+        guard !name.isEmpty, name != ".", name != "..", name.unicodeScalars.allSatisfy(isSafePackageNameScalar) else { return nil }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "formulae.brew.sh"
+        components.percentEncodedPath = "/api/\(kind)/\(name).json"
+        return components.url
+    }
+
+    private func isSafePackageNameScalar(_ scalar: UnicodeScalar) -> Bool {
+        scalar.value == 0x40 || scalar.value == 0x2B || scalar.value == 0x2D || scalar.value == 0x2E ||
+            (0x30...0x39).contains(scalar.value) ||
+            (0x41...0x5A).contains(scalar.value) ||
+            (0x61...0x7A).contains(scalar.value)
     }
 }
 

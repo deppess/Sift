@@ -149,7 +149,7 @@ enum CompletionInstaller {
     }
 
     private static func configuredDirectory(_ path: String?, default fallback: URL, name: String, fileManager: FileManager) throws -> URL {
-        guard let path else { return fallback }
+        guard let path else { return try configuredDirectory(fallback.path, name: name, fileManager: fileManager) }
         return try configuredDirectory(path, name: name, fileManager: fileManager)
     }
 
@@ -157,11 +157,7 @@ enum CompletionInstaller {
         guard !path.isEmpty, path.hasPrefix("/"), !path.split(separator: "/").contains("..") else { throw CompletionInstallError.unsafePath(name) }
         let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
         try validateExistingPathComponents(directory, fileManager: fileManager)
-        if let attributes = try? fileManager.attributesOfItem(atPath: directory.path) {
-            let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
-            guard let owner = (attributes[.ownerAccountID] as? NSNumber)?.intValue,
-                  mode & 0o022 == 0, owner == Int(getuid()) else { throw CompletionInstallError.unsafePath(name) }
-        }
+        if let status = try lstatStatus(at: directory.path) { try validatePrivateDirectory(status, at: name) }
         return directory
     }
 
@@ -170,27 +166,52 @@ enum CompletionInstaller {
         var current = URL(fileURLWithPath: "/", isDirectory: true)
         for component in directory.standardizedFileURL.pathComponents.dropFirst() {
             current.append(path: component, directoryHint: .isDirectory)
-            if (try? fileManager.attributesOfItem(atPath: current.path)) == nil {
+            if try lstatStatus(at: current.path) == nil {
                 try fileManager.createDirectory(at: current, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
                 try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: current.path)
             }
         }
         try validateExistingPathComponents(directory, fileManager: fileManager)
+        guard let status = try lstatStatus(at: directory.path) else { throw CompletionInstallError.unsafePath(directory.path) }
+        try validatePrivateDirectory(status, at: directory.path)
     }
 
     private static func validateExistingPathComponents(_ path: URL, fileManager: FileManager) throws {
         var current = URL(fileURLWithPath: "/", isDirectory: true)
         for component in path.standardizedFileURL.pathComponents.dropFirst() {
             current.append(path: component, directoryHint: .isDirectory)
-            guard let attributes = try? fileManager.attributesOfItem(atPath: current.path) else { break }
-            guard attributes[.type] as? FileAttributeType == .typeDirectory else { throw CompletionInstallError.unsafePath(current.path) }
+            guard let status = try lstatStatus(at: current.path) else { break }
+            guard fileType(status) == S_IFDIR else { throw CompletionInstallError.unsafePath(current.path) }
         }
     }
 
     private static func validateDestination(_ destination: URL, fileManager: FileManager) throws {
-        guard let attributes = try? fileManager.attributesOfItem(atPath: destination.path) else { return }
-        let links = (attributes[.referenceCount] as? NSNumber)?.intValue ?? 0
-        guard attributes[.type] as? FileAttributeType == .typeRegular, links == 1 else { throw CompletionInstallError.unsafePath(destination.path) }
+        guard let status = try lstatStatus(at: destination.path) else { return }
+        guard fileType(status) == S_IFREG,
+              status.st_nlink == 1,
+              status.st_uid == getuid(),
+              permissions(status) == 0o600 else { throw CompletionInstallError.unsafePath(destination.path) }
+    }
+
+    private static func lstatStatus(at path: String) throws -> stat? {
+        var status = stat()
+        guard lstat(path, &status) != 0 else { return status }
+        guard errno == ENOENT else { throw CompletionInstallError.unsafePath(path) }
+        return nil
+    }
+
+    private static func fileType(_ status: stat) -> mode_t {
+        mode_t(status.st_mode) & S_IFMT
+    }
+
+    private static func permissions(_ status: stat) -> mode_t {
+        mode_t(status.st_mode) & 0o777
+    }
+
+    private static func validatePrivateDirectory(_ status: stat, at path: String) throws {
+        guard fileType(status) == S_IFDIR,
+              status.st_uid == getuid(),
+              permissions(status) == 0o700 else { throw CompletionInstallError.unsafePath(path) }
     }
 
     private static func shellQuote(_ value: String) -> String {

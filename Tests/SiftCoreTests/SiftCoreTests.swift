@@ -79,15 +79,15 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let successfulDate = Date(timeIntervalSince1970: 1_000)
-        try database.recordRefresh(at: successfulDate, providerOutcomes: [NativeApplicationProvider.identifier: .success])
-        try database.recordRefresh(at: Date(timeIntervalSince1970: 2_000), providerOutcomes: [NativeApplicationProvider.identifier: .failure(message: "offline")])
+        _ = try database.applyRefresh(refreshInput(at: successfulDate))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), providerStatuses: Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, .failure) })))
 
         let dashboard = try database.dashboard(now: Date(timeIntervalSince1970: 2_100), staleAfter: 1_500)
         XCTAssertEqual(dashboard.lastAttemptAt, Date(timeIntervalSince1970: 2_000))
-        XCTAssertNil(dashboard.dataAsOf)
+        XCTAssertEqual(dashboard.dataAsOf, successfulDate)
         XCTAssertEqual(dashboard.latestRefreshStatus, .failure)
-        XCTAssertEqual(dashboard.freshness, .unknown)
-        XCTAssertEqual(dashboard.data.failedProviderCount, 1)
+        XCTAssertEqual(dashboard.freshness, .current)
+        XCTAssertEqual(dashboard.data.failedProviderCount, RefreshProvider.allCases.count)
     }
 
     func testNativeInventoryIsIdempotentAndRecordsBuildTransitions() throws {
@@ -95,18 +95,17 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let first = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: "100", classification: .user, discoveryRoot: "/Applications")
-        let firstSummary = try database.applyNativeInventory(NativeInventoryResult(applications: [first]), startedAt: Date(timeIntervalSince1970: 1_000), finishedAt: Date(timeIntervalSince1970: 1_001))
+        let firstSummary = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_001), nativeInventory: NativeInventoryResult(applications: [first])))
         XCTAssertEqual(firstSummary.addedCount, 1)
         XCTAssertEqual(firstSummary.changedCount, 0)
 
-        let repeated = try database.applyNativeInventory(NativeInventoryResult(applications: [first]), startedAt: Date(timeIntervalSince1970: 2_000), finishedAt: Date(timeIntervalSince1970: 2_001))
+        let repeated = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_001), nativeInventory: NativeInventoryResult(applications: [first])))
         XCTAssertEqual(repeated.addedCount, 0)
         XCTAssertEqual(repeated.changedCount, 0)
 
         let updated = NativeApplication(path: first.path, bundleIdentifier: first.bundleIdentifier, displayName: first.displayName, shortVersion: "1.0", buildVersion: "101")
-        let changed = try database.applyNativeInventory(NativeInventoryResult(applications: [updated]), startedAt: Date(timeIntervalSince1970: 3_000), finishedAt: Date(timeIntervalSince1970: 3_001))
+        let changed = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 3_001), nativeInventory: NativeInventoryResult(applications: [updated])))
         XCTAssertEqual(changed.changedCount, 1)
-        XCTAssertEqual(try database.cachedApplications().first?.buildVersion, "101")
     }
 
     func testCompleteNativeInventoryMarksMissingApplicationInactive() throws {
@@ -114,10 +113,10 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: nil, displayName: "Example", shortVersion: nil, buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        _ = try database.applyNativeInventory(NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path]), finishedAt: Date(timeIntervalSince1970: 1_000))
-        let summary = try database.applyNativeInventory(NativeInventoryResult(applications: [], scannedRoots: ["/Applications"]), finishedAt: Date(timeIntervalSince1970: 2_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path])))
+        let summary = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), nativeInventory: NativeInventoryResult(applications: [], scannedRoots: ["/Applications"])))
         XCTAssertEqual(summary.inactiveCount, 1)
-        XCTAssertFalse(try database.cachedApplications().first?.active ?? true)
+        XCTAssertEqual(try database.catalogItems(includeAll: true).first?.active, false)
     }
 
     func testStalenessBeginsAtConfiguredBoundary() throws {
@@ -125,9 +124,9 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let refreshedAt = Date(timeIntervalSince1970: 1_000)
-        try database.recordRefresh(at: refreshedAt, providerOutcomes: [NativeApplicationProvider.identifier: .success])
+        _ = try database.applyRefresh(refreshInput(at: refreshedAt))
 
-        XCTAssertEqual(try database.dashboard(now: refreshedAt.addingTimeInterval(120), staleAfter: 120).freshness, .unknown)
+        XCTAssertEqual(try database.dashboard(now: refreshedAt.addingTimeInterval(120), staleAfter: 120).freshness, .stale)
     }
 
     func testJSONIsDecodableAndContainsExplicitNulls() throws {
@@ -168,23 +167,27 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let notes = HomebrewReleaseNotes(name: "yazi", installedVersion: "25.5.31", availableVersion: "26.8.15", content: "## [v26.8.15]\n- Drag and drop", sourceURL: "https://example.test/changelog", coverage: "complete")
-        try database.storeReleaseNotes(notes, prefix: "/opt/homebrew", kind: .formula)
-        XCTAssertEqual(try database.homebrewReleaseNotes(named: "yazi"), notes)
+        let package = homebrewPackage(kind: .formula, name: "yazi")
+        let key = HomebrewPackageKey(package)
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: notes.availableVersion, sourceURL: notes.sourceURL))], releaseNoteResults: [key: .resolved(notes)]))
+        XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: notes.installedVersion, availableVersion: notes.availableVersion), notes)
     }
 
     func testCompleteHomebrewPrefixMarksMissingPackageAndArtifactInactive() throws {
         let url = temporaryDatabaseURL()
-        defer { removeDatabase(at: url) }
-        let database = try Database(url: url)
-        let cask = homebrewPackage(kind: .cask, name: "example", artifacts: ["/Applications/Example.app"])
-        let first = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])])
-        try database.applyHomebrewPackages(first, targets: [:], observedAt: Date(timeIntervalSince1970: 1_000))
+        do {
+            let database = try Database(url: url)
+            let cask = homebrewPackage(kind: .cask, name: "example", artifacts: ["/Applications/Example.app"])
+            let first = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])])
+            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: first, targetResults: [HomebrewPackageKey(cask): .unavailable("not checked")]))
 
-        let empty = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [], complete: true, warnings: [])])
-        try database.applyHomebrewPackages(empty, targets: [:], observedAt: Date(timeIntervalSince1970: 2_000))
+            let empty = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [], complete: true, warnings: [])])
+            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), homebrewInventory: empty))
 
-        XCTAssertTrue(try database.catalogItems().isEmpty)
-        XCTAssertEqual(try database.catalogItems(includeAll: true).first?.active, false)
+            XCTAssertTrue(try database.catalogItems().isEmpty)
+            XCTAssertEqual(try database.catalogItems(includeAll: true).first?.active, false)
+        }
+        removeDatabase(at: url)
     }
 
     func testPartialHomebrewPrefixRetainsPreviouslyObservedPackages() throws {
@@ -192,9 +195,9 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let formula = homebrewPackage(kind: .formula, name: "example")
-        try database.applyHomebrewPackages(HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])]), targets: [:], observedAt: Date(timeIntervalSince1970: 1_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])]), targetResults: [HomebrewPackageKey(formula): .unavailable("not checked")]))
 
-        try database.applyHomebrewPackages(HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [], complete: false, warnings: ["offline"])]), targets: [:], observedAt: Date(timeIntervalSince1970: 2_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [], complete: false, warnings: ["offline"])])))
 
         XCTAssertEqual(try database.catalogItems().map(\.name), ["example"])
     }
@@ -204,14 +207,14 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let native = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        _ = try database.applyNativeInventory(NativeInventoryResult(applications: [native], scannedRoots: ["/Applications"], candidatePaths: [native.path]), finishedAt: Date(timeIntervalSince1970: 1_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [native], scannedRoots: ["/Applications"], candidatePaths: [native.path])))
 
         let cask = homebrewPackage(kind: .cask, name: "example", artifacts: [native.path])
-        try database.applyHomebrewPackages(HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]), targets: [:], observedAt: Date(timeIntervalSince1970: 2_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]), targetResults: [HomebrewPackageKey(cask): .unavailable("not checked")]))
         XCTAssertFalse(try database.catalogItems().contains { $0.kind == .nativeApp })
 
         let movedCask = homebrewPackage(kind: .cask, name: "example", artifacts: ["/Applications/Renamed.app"])
-        try database.applyHomebrewPackages(HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: movedCask.prefix, packages: [movedCask], complete: true, warnings: [])]), targets: [:], observedAt: Date(timeIntervalSince1970: 3_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 3_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: movedCask.prefix, packages: [movedCask], complete: true, warnings: [])]), targetResults: [HomebrewPackageKey(movedCask): .unavailable("not checked")]))
         XCTAssertTrue(try database.catalogItems().contains { $0.kind == .nativeApp })
     }
 
@@ -220,8 +223,8 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let cask = homebrewPackage(kind: .cask, name: "example", autoUpdates: true)
-        let key = "\(cask.prefix)|\(cask.kind.rawValue)|\(cask.fullName)"
-        try database.applyHomebrewPackages(HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]), targets: [key: HomebrewTarget(version: "2.0", sourceURL: nil)])
+        let key = HomebrewPackageKey(cask)
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: "2.0", sourceURL: nil))]))
 
         XCTAssertEqual(try database.homebrewUpdates().first?.autoUpdates, true)
         XCTAssertEqual(try database.catalogItems().first?.autoUpdates, true)
@@ -235,9 +238,9 @@ final class SiftCoreTests: XCTestCase {
         let cask = homebrewPackage(kind: .cask, name: "cask", autoUpdates: true)
         let packages = [formula, cask]
         let targets = Dictionary(uniqueKeysWithValues: packages.map { package in
-            ("\(package.prefix)|\(package.kind.rawValue)|\(package.fullName)", HomebrewTarget(version: "2.0", sourceURL: nil))
+            (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
         })
-        try database.applyHomebrewPackages(HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: packages, complete: true, warnings: [])]), targets: targets)
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: packages, complete: true, warnings: [])]), targetResults: targets))
 
         let dashboard = try database.dashboard()
         XCTAssertEqual(dashboard.data.availableUpdateCount, 1)
@@ -268,7 +271,7 @@ final class SiftCoreTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        _ = try database.applyNativeInventory(NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path]), finishedAt: Date(timeIntervalSince1970: 1_000))
+        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path])))
 
         let startedAt = Date(timeIntervalSince1970: 2_000)
         let finishedAt = Date(timeIntervalSince1970: 2_001)
@@ -282,7 +285,7 @@ final class SiftCoreTests: XCTestCase {
 
         XCTAssertEqual(summary.status, .partial)
         XCTAssertEqual(summary.providerResults.count, 4)
-        XCTAssertTrue(try database.cachedApplications().first?.active ?? false)
+        XCTAssertEqual(try database.catalogItems(includeAll: true).first?.active, true)
         XCTAssertEqual(try database.dashboard(now: finishedAt).data.partialProviderCount, 1)
     }
 
@@ -460,6 +463,10 @@ final class SiftCoreTests: XCTestCase {
             GitHubSource(repository: GitHubRepository(owner: "owner", name: "repository"), tag: "v1.2.3")
         )
         XCTAssertEqual(
+            GitHubSource.parse(URL(string: "https://github.com/owner/repository_name/archive/v1.2.3.tar.gz")!),
+            GitHubSource(repository: GitHubRepository(owner: "owner", name: "repository_name"), tag: "v1.2.3")
+        )
+        XCTAssertEqual(
             GitHubSource.parse(URL(string: "https://github.com/owner/repository/releases/download/release%2F1.2.3/app.zip")!),
             GitHubSource(repository: GitHubRepository(owner: "owner", name: "repository"), tag: "release/1.2.3")
         )
@@ -479,6 +486,7 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository?ref=v1")!))
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository#v1")!))
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/own%C3%A9r/repository")!))
+        XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner_name/repository")!))
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository/archive/refs/tags/%2E%2E.tar.gz")!))
         XCTAssertNil(GitHubSource.parse(URL(string: "https://github.com/owner/repository/releases/download/v1/%1Bunsafe.zip")!))
     }
@@ -633,15 +641,53 @@ final class SiftCoreTests: XCTestCase {
         let output = HomebrewRenderer.show(notes)
 
         XCTAssertFalse(output.unicodeScalars.contains { $0 == "\u{1B}" || $0 == "\r" })
-        XCTAssertTrue(output.contains("- Safe\nnot terminal formatting"))
+        XCTAssertTrue(output.contains("Safe\nnot terminal formatting"))
+    }
+
+    func testCompactReleaseNotesCollapseInstallAndDownloadSections() {
+        let notes = HomebrewReleaseNotes(name: "example", installedVersion: "1.0", availableVersion: "2.0", content: "## Bug fixes\n- Fix an important issue\n\n## Install example\n```sh\ncurl example\n```\n\n## Download example\n| File | Platform |\n| --- | --- |", sourceURL: "https://example.test/release", coverage: "targetOnly")
+
+        let compact = HomebrewRenderer.show(notes)
+        XCTAssertTrue(compact.contains("Bug fixes"))
+        XCTAssertTrue(compact.contains("Fix an important issue"))
+        XCTAssertTrue(compact.contains("omitted"))
+        XCTAssertFalse(compact.contains("curl example"))
+
+        let full = HomebrewRenderer.show(notes, full: true)
+        XCTAssertTrue(full.contains("curl example"))
     }
 
     func testTerminalSanitizerRemovesWholeEscapeSequences() {
-        let text = "safe\u{1B}[31mcolored\u{1B}]8;;https://attacker.example\u{7}link\u{1B}Ppayload\u{1B}\\done\u{9B}2J"
+        let text = "safe\u{1B}[31mcolored\u{1B}]8;;https://attacker.example\u{7}link\u{1B}Ppayload\u{1B}\\done\u{1B}Xhidden\u{1B}\\after\u{9B}2J"
 
-        XCTAssertEqual(text.terminalText, "safecoloredlinkdone")
+        XCTAssertEqual(text.terminalText, "safecoloredlinkdoneafter")
         XCTAssertEqual("one\n\u{1B}]0;title\u{7}two".terminalInline, "one two")
         XCTAssertEqual("one\u{9D}title\u{1B}\\two".terminalText, "onetwo")
+    }
+
+    func testTerminalSanitizerRemovesBidiAndZeroWidthControls() {
+        XCTAssertEqual("visible \u{202E}text\u{2066}!\u{200B}\u{200D}\u{FEFF}".terminalText, "visible text!")
+        XCTAssertEqual("cafe \u{2615} \u{1F642}".terminalText, "cafe \u{2615} \u{1F642}")
+    }
+
+    func testHomebrewAPIUsesOnlySafePackagePathComponents() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        MetadataURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.scheme, "https")
+            XCTAssertEqual(request.url?.host, "formulae.brew.sh")
+            XCTAssertEqual(request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.percentEncodedPath, "/api/formula/openssl@3.json")
+            return (200, Data("{\"versions\":{\"stable\":\"3.0\"}}".utf8), [:])
+        }
+        defer { MetadataURLProtocol.handler = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MetadataURLProtocol.self]
+        let api = HomebrewAPI(metadataClient: MetadataHTTPClient(database: database, configuration: configuration))
+
+        XCTAssertEqual(try api.target(for: homebrewPackage(kind: .formula, name: "openssl@3"))?.version, "3.0")
+        XCTAssertNil(try api.target(for: homebrewPackage(kind: .formula, name: "openssl@3/../../attacker")))
+        XCTAssertNil(try api.target(for: homebrewPackage(kind: .formula, name: "..")))
     }
 
     func testCommandRunnerStopsOversizedStreamingOutput() throws {
@@ -649,6 +695,19 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertThrowsError(try runner.run(executable: URL(filePath: "/usr/bin/yes"), arguments: [], environment: ProcessInfo.processInfo.environment, timeout: 5, outputLimit: 1_024)) { error in
             XCTAssertEqual((error as? CommandRunnerError)?.errorDescription, CommandRunnerError.outputTooLarge(URL(filePath: "/usr/bin/yes")).errorDescription)
         }
+    }
+
+    func testCommandRunnerKillsOutputProducingDescendant() throws {
+        let pidFile = FileManager.default.temporaryDirectory.appending(path: "sift-command-runner-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let script = "trap '' TERM; sleep 0.1; (trap '' TERM; printf '%s' \"$$\" > \"$1\"; while :; do printf x; done) & wait"
+
+        XCTAssertThrowsError(try CommandRunner().run(executable: URL(filePath: "/bin/sh"), arguments: ["-c", script, "sh", pidFile.path], environment: ProcessInfo.processInfo.environment, timeout: 5, outputLimit: 1_024)) { error in
+            XCTAssertEqual((error as? CommandRunnerError)?.errorDescription, CommandRunnerError.outputTooLarge(URL(filePath: "/bin/sh")).errorDescription)
+        }
+        let childPID = try XCTUnwrap(Int32(String(decoding: try Data(contentsOf: pidFile), as: UTF8.self)))
+        XCTAssertEqual(kill(childPID, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
     }
 
     func testCommandRunnerReturnsNonzeroStatus() throws {
@@ -661,6 +720,14 @@ final class SiftCoreTests: XCTestCase {
 
     private func homebrewPackage(kind: HomebrewPackageKind, name: String, artifacts: [String] = [], autoUpdates: Bool = false) -> HomebrewPackage {
         HomebrewPackage(prefix: "/opt/homebrew", kind: kind, name: name, fullName: name, tap: kind == .formula ? "homebrew/core" : "homebrew/cask", ownership: kind == .formula ? .explicitlyRequested : .installedCask, installedVersion: "1.0", sourceURL: nil, homepage: nil, artifactPaths: artifacts, autoUpdates: autoUpdates)
+    }
+
+    private func refreshInput(at date: Date, nativeInventory: NativeInventoryResult = NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory = HomebrewInventory(prefixes: []), targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:], releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution] = [:], providerStatuses: [RefreshProvider: ProviderRefreshStatus] = [:]) -> RefreshPersistenceInput {
+        let providerResults = RefreshProvider.allCases.map { provider in
+            let status = providerStatuses[provider] ?? .success
+            return ProviderRefreshResult(provider: provider, status: status, startedAt: date, finishedAt: date, dataAsOf: status == .success ? date : nil)
+        }
+        return RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: nativeInventory, homebrewInventory: homebrewInventory, targetResults: targetResults, releaseNoteResults: releaseNoteResults, providerResults: providerResults)
     }
 
     private func makeApplication(at url: URL, metadata: [String: String]) throws {
@@ -682,7 +749,7 @@ final class SiftCoreTests: XCTestCase {
     }
 
     private func removeDatabase(at url: URL) {
-        for suffix in ["", "-wal", "-shm", "-journal"] { try? FileManager.default.removeItem(atPath: url.path + suffix) }
+        for suffix in ["", "-wal", "-shm", "-journal", ".refresh.lock"] { try? FileManager.default.removeItem(atPath: url.path + suffix) }
     }
 }
 

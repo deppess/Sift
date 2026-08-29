@@ -12,9 +12,9 @@ Sift is an observer. It does not install updates, run in the background, inspect
 - Target macOS 15 and later. macOS 26 is the primary development platform.
 - Use Swift 6 and Swift Package Manager.
 - Persist state in SQLite at `~/Library/Application Support/Sift/sift.sqlite3` by default.
-- `sift` reads only cached state. It never starts subprocesses or performs network requests.
-- `sift refresh` is the only v1 command allowed to discover software, run provider commands, or fetch metadata.
-- Cached output warns when its last successful refresh is stale; it never refreshes implicitly.
+- `sift`, `apps`, `updates`, `show`, and dynamic completion lookups read only cached state. They never run providers, make network requests, or write the database.
+- `sift refresh` is the only implemented command allowed to discover software, run provider commands, or fetch metadata.
+- Cached dashboard and Homebrew update output mark data stale after 24 hours; no command refreshes implicitly. Failed or partial refreshes preserve cached data and surface their incomplete status.
 - Human-readable output is compact. Detailed provenance and release notes belong in detail commands.
 - JSON is explicitly pre-v1 until native inventory and refresh semantics are settled. It becomes a stable, versioned machine-readable contract at v1.
 
@@ -26,12 +26,12 @@ An unrelated `sift` formula already exists in Homebrew Core and installs an exec
 
 ## Scope
 
-V1 providers, in implementation order:
+Implemented providers and refresh work:
 
 1. Native `.app` bundle inventory.
 2. Every detected Homebrew prefix, including formulae and casks.
-3. Sparkle update feeds advertised by installed applications.
-4. Built-in Mac App Store metadata lookup using exact bundle identifiers.
+3. Homebrew target resolution for non-dependency packages.
+4. Homebrew release-note retrieval for resolved updates.
 
 Sift stores all Homebrew formulae but defaults dashboard output to requested formulae. It inventories unsupported, system-managed, and Setapp applications so that the inventory is honest even when Sift cannot determine an update source.
 
@@ -44,6 +44,7 @@ Explicitly deferred from v1:
 - npm, uv, pipx, Cargo, mise, and other package managers
 - project dependency scanning
 - generic web scraping and AI summaries
+- Sparkle update feeds and Mac App Store metadata lookup
 - Linux support
 
 ## Evidence Model
@@ -80,18 +81,11 @@ When reconciliation is uncertain, retain separate records and surface that uncer
 
 ## Release Notes
 
-Sift uses authoritative sources in this order:
-
-1. Sparkle appcast notes for the selected release.
-2. App Store release notes for the exact store version.
-3. Provider metadata that identifies an exact upstream release.
-4. Unknown.
-
-Each note records a source URL and one confidence value: `exact`, `strong`, `inferred`, or `unknown`. V1 does not scrape arbitrary pages or manufacture a summary.
+Implemented Homebrew notes use provider metadata that identifies an exact upstream release; unavailable notes remain unknown. Sparkle appcasts and App Store notes are deferred. Sift does not scrape arbitrary pages or manufacture a summary.
 
 ## Persistence
 
-The initial schema contains:
+The current SQLite schema is version 11. Its core tables include:
 
 - `schema_migrations`
 - `settings`
@@ -105,19 +99,19 @@ The initial schema contains:
 
 Observations are immutable. Refreshes must be idempotent: a repeated observation of the same installation and version cannot create a false transition. Database migrations run in transactions and all SQL values use bound parameters.
 
+Schema 12 is intentionally deferred; no schema-12 migration or data model is implemented.
+
 ## CLI Contract
 
-Commands planned for v1:
+Implemented commands:
 
 ```text
 sift
 sift refresh
-sift recent
 sift show <software>
 sift apps
-sift brew
-sift providers
-sift doctor
+sift updates
+sift completions <fish|bash|zsh>
 ```
 
 Initial global options:
@@ -128,7 +122,7 @@ Initial global options:
 --database <path>
 ```
 
-The foundation implements cache-only `sift` and `sift apps`, plus `sift refresh` for read-only native `.app` bundle inventory. Native discovery scans bounded standard application roots, reads `Info.plist` metadata without executing applications, and records immutable version observations. Commands are added only when they have real data behind them.
+`refresh` scans bounded native application roots, reads `Info.plist` metadata without executing applications, inventories detected Homebrew prefixes, resolves targets, and caches release notes. Cache-reading commands do not scan, invoke providers, fetch metadata, or write the database. Dynamic completion reads the existing cache when present and otherwise returns no matches.
 
 The pre-v1 JSON envelope is:
 
@@ -159,6 +153,7 @@ The pre-v1 JSON envelope is:
 - Bound redirect count, request duration, and HTTP concurrency.
 - Sanitize terminal control characters from provider and release-note content.
 - Use restrictive permissions for Sift's state directory and database.
+- For custom databases, require an existing real parent directory that is private to the current user or sticky; reject symlinks and unsafe database files. Database files must be user-owned, regular, single-link files and are created or tightened to mode `0600`.
 - Record partial provider failures without discarding successful provider data.
 - Never execute provider metadata, feed content, or release-note content.
 
@@ -168,14 +163,12 @@ Sift is GPL-3.0-or-later. Selected macOS application, Sparkle, App Store, and Ho
 
 ## Delivery Milestones
 
-1. Foundation: executable, database migrations, cache-only dashboard, JSON contract, and tests.
-2. Native inventory: discover application bundles and persist observations.
-3. Homebrew: all prefixes, formulae, casks, requested classification, and authoritative artifact reconciliation.
-4. History: transitions, availability, recent views, and stale-cache behavior.
-5. Sparkle: secure appcast retrieval, channel/version selection, notes, and caching.
-6. App Store: exact bundle lookup and cached release notes.
-7. Reconciliation and UX: detail views, diagnostics, provenance display, and output polish.
-8. Release hardening: fixtures, integration tests, Apple Silicon/Intel validation, documentation, archives, and optional signing/notarization.
+1. Foundation, native inventory, and Homebrew inventory/targets/notes are implemented.
+2. History and stale-cache behavior are implemented for cached dashboard and Homebrew updates.
+3. Sparkle: secure appcast retrieval, channel/version selection, notes, and caching.
+4. App Store: exact bundle lookup and cached release notes.
+5. Reconciliation and UX: detail views, diagnostics, provenance display, and output polish.
+6. Release hardening: fixtures, deterministic security regression/integration runs, benchmarks, Apple Silicon/Intel validation, documentation, archives, and optional signing/notarization.
 
 ## Definition Of Done For V1
 

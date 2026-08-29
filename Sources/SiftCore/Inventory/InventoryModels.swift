@@ -95,17 +95,6 @@ public struct RefreshSummary: Codable, Equatable, Sendable {
     }
 }
 
-public struct CachedApplication: Codable, Equatable, Sendable {
-    public let displayName: String
-    public let bundleIdentifier: String?
-    public let path: String
-    public let shortVersion: String?
-    public let buildVersion: String?
-    public let active: Bool
-    public let classification: ApplicationClassification
-    public let lastObservedAt: Date
-}
-
 public enum CatalogKind: String, Codable, Equatable, Sendable {
     case nativeApp
     case homebrewFormula

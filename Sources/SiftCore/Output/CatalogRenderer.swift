@@ -13,17 +13,16 @@ public enum CatalogRenderer {
     }
 
     public static func detail(_ item: CatalogItem, notes: HomebrewReleaseNotes?) -> String {
-        var lines = [item.name.terminalInline, "", "Selector: \(item.selector.terminalInline)", "Kind: \(item.kind.rawValue)"]
-        if let prefix = item.prefix { lines.append("Prefix: \(prefix.terminalInline)") }
-        if let tap = item.tap { lines.append("Tap: \(tap.terminalInline)") }
-        if let path = item.path { lines.append("Path: \(path.terminalInline)") }
-        lines.append("")
-        lines.append("Installed: \((item.installedVersion ?? "Unknown").terminalInline)")
-        lines.append("Available: \((item.availableVersion ?? item.installedVersion ?? "Unknown").terminalInline)")
-        lines.append(item.updateAvailable ? "Status: \(item.autoUpdates ? "self-updating cask" : "update available")" : "Status: current")
-        if let notes { lines.append("Changes: \(notes.coverage). Run 'sift show \(item.selector)' for full notes.") }
-        else if !item.updateAvailable { lines.append("No version gap; no changelog was fetched.") }
-        else { lines.append("Release notes are not cached yet.") }
+        let installed = (item.installedVersion ?? "Unknown").terminalInline
+        let available = (item.availableVersion ?? item.installedVersion ?? "Unknown").terminalInline
+        let version = item.updateAvailable ? "\(installed) -> \(available)" : installed
+        let kind = item.kind == .homebrewFormula ? "Homebrew formula" : item.kind == .homebrewCask ? "Homebrew cask" : "Native app"
+        let status = item.updateAvailable ? (item.autoUpdates ? "self-updating" : "update available") : "current"
+        var lines = ["\(item.name.terminalInline)  \(version)", "\(kind) · \(status)"]
+        if let prefix = item.prefix { lines.append("Prefix: \(prefix.terminalInline)\(item.tap.map { " · \($0.terminalInline)" } ?? "")") }
+        else if let path = item.path { lines.append("Path: \(path.terminalInline)") }
+        if let notes { lines.append("Notes: \(notes.coverage == "complete" ? "complete range" : "target release") · sift show \(item.selector.terminalInline) --full") }
+        else if item.updateAvailable { lines.append("Notes: unavailable") }
         return lines.joined(separator: "\n")
     }
 

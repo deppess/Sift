@@ -32,6 +32,16 @@ private func createOrValidateDatabaseFile(_ url: URL) throws {
     var status = stat()
     if lstat(url.path, &status) == 0 {
         try validateDatabaseFile(url)
+        let descriptor = open(url.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw DatabaseError.invalidDatabasePath(url) }
+        defer { close(descriptor) }
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & S_IFMT) == S_IFREG,
+              status.st_uid == getuid(),
+              status.st_nlink == 1,
+              fchmod(descriptor, 0o600) == 0 else {
+            throw DatabaseError.invalidDatabasePath(url)
+        }
         return
     }
     guard errno == ENOENT else { throw DatabaseError.invalidDatabasePath(url) }
@@ -75,12 +85,6 @@ public enum DatabaseError: Error, LocalizedError {
         case let .invalidRefreshInput(message): "Invalid refresh input: \(message)"
         }
     }
-}
-
-public enum ProviderRunOutcome: Sendable {
-    case success
-    case partial(message: String)
-    case failure(message: String)
 }
 
 public final class Database: @unchecked Sendable {
@@ -274,75 +278,6 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    public func recordRefresh(at date: Date = .now, providerOutcomes: [String: ProviderRunOutcome]) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !providerOutcomes.isEmpty else { throw DatabaseError.sqlite(message: "A refresh must include at least one provider outcome.") }
-        let outcomes = providerOutcomes
-        let status: RefreshStatus
-        let successes = outcomes.values.filter { if case .success = $0 { true } else { false } }.count
-        let usable = outcomes.values.filter { outcome in
-            switch outcome { case .success, .partial: true; case .failure: false }
-        }.count
-        if successes == outcomes.count { status = .success } else if usable == 0 { status = .failure } else { status = .partial }
-        try execute("BEGIN IMMEDIATE TRANSACTION;")
-        do {
-            let sessionID = try insertSession(startedAt: date, finishedAt: date, status: status)
-            for (provider, outcome) in outcomes {
-                try insertProviderRun(sessionID: sessionID, provider: provider, date: date, outcome: outcome)
-            }
-            try execute("COMMIT;")
-        } catch {
-            try? execute("ROLLBACK;")
-            throw error
-        }
-    }
-
-    public func applyNativeInventory(_ inventory: NativeInventoryResult, startedAt: Date = .now, finishedAt: Date = .now) throws -> RefreshSummary {
-        lock.lock()
-        defer { lock.unlock() }
-        let provider = "native-apps"
-        let status: RefreshStatus = inventory.complete ? .success : .partial
-        var added = 0
-        var changed = 0
-        var unchanged = 0
-        var inactive = 0
-        let seenIDs = inventory.candidatePaths.union(inventory.applications.map(\.path))
-
-        try execute("BEGIN IMMEDIATE TRANSACTION;")
-        do {
-            let sessionID = try insertSession(startedAt: startedAt, finishedAt: finishedAt, status: status)
-            for application in inventory.applications {
-                let softwareID = try resolveSoftware(application, createdAt: finishedAt)
-                let installation = try resolveInstallation(application, softwareID: softwareID, observedAt: finishedAt)
-                if installation.isNew { added += 1 }
-                let previous = try latestObservation(for: installation.id)
-                try insertObservation(sessionID: sessionID, installationID: installation.id, application: application, observedAt: finishedAt)
-                if let previous, versionsDiffer(previous, application) {
-                    changed += 1
-                    try insertTransition(installationID: installation.id, previous: previous, application: application, observedAt: finishedAt)
-                } else if !installation.isNew {
-                    unchanged += 1
-                }
-            }
-            if inventory.complete {
-                for (id, nativeID) in try activeInstallations(provider: provider, roots: inventory.scannedRoots) where !seenIDs.contains(String(nativeID.dropFirst(5))) {
-                    try withStatement("UPDATE installations SET active = 0 WHERE id = ?;") { statement in
-                        guard sqlite3_bind_int64(statement, 1, id) == SQLITE_OK, sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
-                    }
-                    inactive += 1
-                }
-            }
-            try insertProviderRun(sessionID: sessionID, provider: provider, date: finishedAt, outcome: inventory.complete ? .success : .failure(message: inventory.warnings.joined(separator: "\n")))
-            try updateProviderState(provider: provider, attemptAt: finishedAt, successAt: inventory.complete ? finishedAt : nil, status: status)
-            try execute("COMMIT;")
-        } catch {
-            try? execute("ROLLBACK;")
-            throw error
-        }
-        return RefreshSummary(startedAt: startedAt, finishedAt: finishedAt, status: status, discoveredCount: inventory.applications.count, addedCount: added, changedCount: changed, unchangedCount: unchanged, inactiveCount: inactive, warningCount: inventory.warnings.count)
-    }
-
     public func applyRefresh(_ input: RefreshPersistenceInput) throws -> RefreshSummary {
         lock.lock()
         defer { lock.unlock() }
@@ -511,39 +446,6 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    public func cachedApplications(includeAll: Bool = true) throws -> [CachedApplication] {
-        lock.lock()
-        defer { lock.unlock() }
-        var applications: [CachedApplication] = []
-        try withStatement("""
-            SELECT software.display_name, software.bundle_identifier, installations.normalized_path,
-                   observations.short_version, observations.build_version, installations.active, installations.classification, observations.observed_at
-            FROM installations
-            JOIN software ON software.id = installations.software_id
-            JOIN observations ON observations.id = (
-                SELECT id FROM observations WHERE installation_id = installations.id ORDER BY observed_at DESC, id DESC LIMIT 1
-            )
-            WHERE installations.provider = 'native-apps'
-              AND (? = 1 OR (installations.active = 1 AND installations.classification IN ('user', 'system')))
-            ORDER BY software.display_name COLLATE NOCASE, installations.normalized_path;
-            """) { statement in
-            guard sqlite3_bind_int(statement, 1, includeAll ? 1 : 0) == SQLITE_OK else { throw errorFromHandle() }
-            while try stepRow(statement) {
-                applications.append(CachedApplication(
-                    displayName: String(cString: sqlite3_column_text(statement, 0)),
-                    bundleIdentifier: optionalText(statement, column: 1),
-                    path: String(cString: sqlite3_column_text(statement, 2)),
-                    shortVersion: optionalText(statement, column: 3),
-                    buildVersion: optionalText(statement, column: 4),
-                    active: sqlite3_column_int(statement, 5) == 1,
-                    classification: ApplicationClassification(rawValue: String(cString: sqlite3_column_text(statement, 6))) ?? .unknown,
-                    lastObservedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 7))
-                ))
-            }
-        }
-        return applications
-    }
-
     public func catalogItems(includeAll: Bool = false) throws -> [CatalogItem] {
         lock.lock()
         defer { lock.unlock() }
@@ -606,62 +508,6 @@ public final class Database: @unchecked Sendable {
         return folded.isEmpty ? .missing : .ambiguous(folded)
     }
 
-    public func applyHomebrewPackages(_ inventory: HomebrewInventory, targets: [String: HomebrewTarget], observedAt: Date = .now) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        try execute("BEGIN IMMEDIATE TRANSACTION;")
-        do {
-            for package in inventory.packages {
-                let key = "\(package.prefix)|\(package.kind.rawValue)|\(package.fullName)"
-                let target = targets[key]
-                try withStatement("INSERT INTO homebrew_packages (prefix, kind, name, full_name, tap, ownership, installed_version, available_version, source_url, homepage, observed_at, active, last_seen_at, auto_updates) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(prefix, kind, full_name) DO UPDATE SET name = excluded.name, tap = excluded.tap, ownership = excluded.ownership, installed_version = excluded.installed_version, available_version = COALESCE(excluded.available_version, homebrew_packages.available_version), source_url = excluded.source_url, homepage = excluded.homepage, observed_at = excluded.observed_at, active = 1, last_seen_at = excluded.last_seen_at, auto_updates = excluded.auto_updates;") { statement in
-                    guard sqlite3_bind_text(statement, 1, package.prefix, -1, sqliteTransient) == SQLITE_OK,
-                          sqlite3_bind_text(statement, 2, package.kind.rawValue, -1, sqliteTransient) == SQLITE_OK,
-                          sqlite3_bind_text(statement, 3, package.name, -1, sqliteTransient) == SQLITE_OK,
-                          sqlite3_bind_text(statement, 4, package.fullName, -1, sqliteTransient) == SQLITE_OK,
-                          bindOptionalText(statement, index: 5, value: package.tap),
-                          sqlite3_bind_text(statement, 6, package.ownership.rawValue, -1, sqliteTransient) == SQLITE_OK,
-                          sqlite3_bind_text(statement, 7, package.installedVersion, -1, sqliteTransient) == SQLITE_OK,
-                          bindOptionalText(statement, index: 8, value: target?.version),
-                          bindOptionalText(statement, index: 9, value: target?.sourceURL ?? package.sourceURL),
-                          bindOptionalText(statement, index: 10, value: package.homepage),
-                           sqlite3_bind_double(statement, 11, observedAt.timeIntervalSince1970) == SQLITE_OK,
-                           sqlite3_bind_double(statement, 12, observedAt.timeIntervalSince1970) == SQLITE_OK,
-                           sqlite3_bind_int(statement, 13, package.autoUpdates ? 1 : 0) == SQLITE_OK,
-                          sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
-                }
-                for path in package.artifactPaths {
-                    try withStatement("""
-                        INSERT INTO cask_artifacts (homebrew_package_id, normalized_path, active, last_seen_at)
-                        SELECT id, ?, 1, ? FROM homebrew_packages WHERE prefix = ? AND kind = ? AND full_name = ?
-                        ON CONFLICT(homebrew_package_id, normalized_path) DO UPDATE SET active = 1, last_seen_at = excluded.last_seen_at;
-                        """) { statement in
-                        guard sqlite3_bind_text(statement, 1, path, -1, sqliteTransient) == SQLITE_OK,
-                              sqlite3_bind_double(statement, 2, observedAt.timeIntervalSince1970) == SQLITE_OK,
-                              sqlite3_bind_text(statement, 3, package.prefix, -1, sqliteTransient) == SQLITE_OK,
-                              sqlite3_bind_text(statement, 4, package.kind.rawValue, -1, sqliteTransient) == SQLITE_OK,
-                              sqlite3_bind_text(statement, 5, package.fullName, -1, sqliteTransient) == SQLITE_OK,
-                              sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
-                    }
-                }
-            }
-            for scope in inventory.prefixes where scope.complete {
-                try withStatement("UPDATE homebrew_packages SET active = 0 WHERE prefix = ? AND last_seen_at < ?;") { statement in
-                    guard sqlite3_bind_text(statement, 1, scope.prefix, -1, sqliteTransient) == SQLITE_OK,
-                          sqlite3_bind_double(statement, 2, observedAt.timeIntervalSince1970) == SQLITE_OK,
-                          sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
-                }
-                try withStatement("UPDATE cask_artifacts SET active = 0 WHERE homebrew_package_id IN (SELECT id FROM homebrew_packages WHERE prefix = ? AND (active = 0 OR (kind = 'cask' AND last_seen_at = ?))) AND last_seen_at < ?;") { statement in
-                    guard sqlite3_bind_text(statement, 1, scope.prefix, -1, sqliteTransient) == SQLITE_OK,
-                          sqlite3_bind_double(statement, 2, observedAt.timeIntervalSince1970) == SQLITE_OK,
-                          sqlite3_bind_double(statement, 3, observedAt.timeIntervalSince1970) == SQLITE_OK,
-                          sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
-                }
-            }
-            try execute("COMMIT;")
-        } catch { try? execute("ROLLBACK;"); throw error }
-    }
-
     public func homebrewUpdates(now: Date = .now, staleAfter: TimeInterval = 24 * 60 * 60) throws -> [HomebrewUpdate] {
         lock.lock()
         defer { lock.unlock() }
@@ -690,14 +536,17 @@ public final class Database: @unchecked Sendable {
     }
 
     private func homebrewProviderStatuses() throws -> [ProviderRefreshStatus] {
-        var statuses: [ProviderRefreshStatus] = []
-        try withStatement("SELECT latest_status FROM provider_state WHERE provider IN ('homebrew-inventory', 'homebrew-targets');") { statement in
+        var states: [RefreshProvider: ProviderRefreshStatus] = [:]
+        try withStatement("SELECT latest_status, provider FROM provider_state WHERE provider IN ('homebrew-inventory', 'homebrew-targets');") { statement in
             while try stepRow(statement) {
-                guard let text = sqlite3_column_text(statement, 0), let status = ProviderRefreshStatus(rawValue: String(cString: text)) else { continue }
-                statuses.append(status)
+                guard let text = sqlite3_column_text(statement, 0),
+                      let status = ProviderRefreshStatus(rawValue: String(cString: text)),
+                      let providerText = sqlite3_column_text(statement, 1),
+                      let provider = RefreshProvider(rawValue: String(cString: providerText)) else { continue }
+                states[provider] = status
             }
         }
-        return statuses
+        return [.homebrewInventory, .homebrewTargets].map { states[$0] ?? .never }
     }
 
     public func storeReleaseNotes(_ notes: HomebrewReleaseNotes, prefix: String, kind: HomebrewPackageKind) throws {
@@ -714,17 +563,6 @@ public final class Database: @unchecked Sendable {
                   sqlite3_bind_double(statement, 9, Date.now.timeIntervalSince1970) == SQLITE_OK,
                   sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
         }
-    }
-
-    public func homebrewReleaseNotes(named name: String) throws -> HomebrewReleaseNotes? {
-        lock.lock(); defer { lock.unlock() }
-        var result: HomebrewReleaseNotes?
-        try withStatement("SELECT full_name, installed_version, available_version, content, source_url, coverage FROM homebrew_release_notes WHERE full_name = ? OR full_name LIKE ? ORDER BY fetched_at DESC LIMIT 1;") { statement in
-            guard sqlite3_bind_text(statement, 1, name, -1, sqliteTransient) == SQLITE_OK,
-                  sqlite3_bind_text(statement, 2, "%/\(name)", -1, sqliteTransient) == SQLITE_OK else { throw errorFromHandle() }
-            if try stepRow(statement) { result = HomebrewReleaseNotes(name: String(cString: sqlite3_column_text(statement, 0)), installedVersion: String(cString: sqlite3_column_text(statement, 1)), availableVersion: String(cString: sqlite3_column_text(statement, 2)), content: String(cString: sqlite3_column_text(statement, 3)), sourceURL: String(cString: sqlite3_column_text(statement, 4)), coverage: String(cString: sqlite3_column_text(statement, 5))) }
-        }
-        return result
     }
 
     public func homebrewReleaseNotes(prefix: String, kind: HomebrewPackageKind, fullName: String, installedVersion: String, availableVersion: String) throws -> HomebrewReleaseNotes? {
@@ -1143,15 +981,6 @@ public final class Database: @unchecked Sendable {
         return result
     }
 
-    private func latestSuccessfulProviderRun() throws -> Date? {
-        var result: Date?
-        try withStatement("SELECT MAX(finished_at) FROM provider_runs WHERE provider = 'native-apps' AND status = 'success';") { statement in
-            guard try stepRow(statement), sqlite3_column_type(statement, 0) != SQLITE_NULL else { return }
-            result = Date(timeIntervalSince1970: sqlite3_column_double(statement, 0))
-        }
-        return result
-    }
-
     private func providerRefreshResults() throws -> [ProviderRefreshResult] {
         var states: [String: ProviderRefreshResult] = [:]
         try withStatement("SELECT provider, last_attempt_at, last_success_at, latest_status, data_as_of FROM provider_state;") { statement in
@@ -1179,26 +1008,6 @@ public final class Database: @unchecked Sendable {
         }
         guard let handle else { throw DatabaseError.sqlite(message: "Database is closed.") }
         return sqlite3_last_insert_rowid(handle)
-    }
-
-    private func insertProviderRun(sessionID: Int64, provider: String, date: Date, outcome: ProviderRunOutcome) throws {
-        let status: String
-        let error: String?
-        switch outcome {
-        case .success: status = "success"; error = nil
-        case let .partial(message): status = "partial"; error = String(message.prefix(4_096))
-        case let .failure(message): status = "failure"; error = String(message.prefix(4_096))
-        }
-        try withStatement("INSERT INTO provider_runs (refresh_session_id, provider, started_at, finished_at, status, error_message, warning_count, data_as_of) VALUES (?, ?, ?, ?, ?, ?, 0, ?);") { statement in
-            guard sqlite3_bind_int64(statement, 1, sessionID) == SQLITE_OK,
-                  sqlite3_bind_text(statement, 2, provider, -1, sqliteTransient) == SQLITE_OK,
-                  sqlite3_bind_double(statement, 3, date.timeIntervalSince1970) == SQLITE_OK,
-                  sqlite3_bind_double(statement, 4, date.timeIntervalSince1970) == SQLITE_OK,
-                  sqlite3_bind_text(statement, 5, status, -1, sqliteTransient) == SQLITE_OK,
-                   bindOptionalText(statement, index: 6, value: error),
-                   bindOptionalDouble(statement, index: 7, value: status == "success" ? date.timeIntervalSince1970 : nil),
-                  sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
-        }
     }
 
     private func insertProviderRun(sessionID: Int64, result: ProviderRefreshResult) throws {

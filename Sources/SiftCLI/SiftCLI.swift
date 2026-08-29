@@ -56,7 +56,7 @@ public enum SiftCLI {
             case let .apps(selector):
                 let items = try database.catalogItems(includeAll: invocation.includeAll)
                 if let selector {
-                    switch try database.resolveCatalogItem(selector, includeAll: invocation.includeAll) {
+                    switch resolveCatalogItem(selector, in: items) {
                     case let .item(item):
                         let notes = try releaseNotes(for: item, database: database)
                         print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: notes))
@@ -76,7 +76,7 @@ public enum SiftCLI {
                 case let .item(item):
                     let notes = try releaseNotes(for: item, database: database)
                     if let notes {
-                        print(invocation.json ? try CatalogRenderer.json(notes) : HomebrewRenderer.show(notes))
+                        print(invocation.json ? try CatalogRenderer.json(notes) : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: !invocation.noColor)))
                     } else {
                         print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: nil))
                     }
@@ -138,6 +138,14 @@ public enum SiftCLI {
         return try database.homebrewReleaseNotes(prefix: prefix, kind: kind, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion)
     }
 
+    private static func resolveCatalogItem(_ selector: String, in items: [CatalogItem]) -> CatalogResolution {
+        let exact = items.filter { $0.selector == selector || $0.aliases.contains(selector) }
+        if exact.count == 1 { return .item(exact[0]) }
+        if exact.count > 1 { return .ambiguous(exact) }
+        let folded = items.filter { $0.name.caseInsensitiveCompare(selector) == .orderedSame || $0.aliases.contains { $0.caseInsensitiveCompare(selector) == .orderedSame } }
+        return folded.count == 1 ? .item(folded[0]) : folded.isEmpty ? .missing : .ambiguous(folded)
+    }
+
     private static func writeError(_ message: String, usage: Bool = false) {
         let suffix = usage ? "\n\(Invocation.usage)" : ""
         FileHandle.standardError.write(Data("sift: \(message.terminalInline)\(suffix)\n".utf8))
@@ -165,13 +173,15 @@ extension String {
 private struct Invocation {
     enum Command { case dashboard, refresh, apps(String?), updates, show(String), completions(CompletionShell), complete(String, String) }
 
-    static let usage = "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--no-color] [--database <path>]"
+    static let usage = "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--full] [--no-color] [--database <path>]"
 
     let command: Command
     let json: Bool
     let databaseURL: URL?
     let help: Bool
     let includeAll: Bool
+    let full: Bool
+    let noColor: Bool
     let installCompletions: Bool
 
     init(arguments: [String]) throws {
@@ -181,6 +191,8 @@ private struct Invocation {
         var databaseURL: URL?
         var help = false
         var includeAll = false
+        var full = false
+        var noColor = false
         var installCompletions = false
         var index = 0
 
@@ -193,7 +205,11 @@ private struct Invocation {
                 guard !json else { throw InvocationError.duplicateOption("--json") }
                 json = true
             case "--no-color":
-                break
+                guard !noColor else { throw InvocationError.duplicateOption("--no-color") }
+                noColor = true
+            case "--full":
+                guard !full else { throw InvocationError.duplicateOption("--full") }
+                full = true
             case "--all":
                 guard !includeAll else { throw InvocationError.duplicateOption("--all") }
                 includeAll = true
@@ -253,6 +269,8 @@ private struct Invocation {
         self.databaseURL = databaseURL
         self.help = help
         self.includeAll = includeAll
+        self.full = full
+        self.noColor = noColor
         self.installCompletions = installCompletions
     }
 }
@@ -264,7 +282,6 @@ private enum InvocationError: LocalizedError {
     case unrecognizedArgument(String)
     case invalidCompletionShell
     case missingShowPackage
-    case noCachedReleaseNotes(String)
     case missingCatalogItem(String)
     case ambiguousSelector(String, [String])
     case invalidCompletionRequest
@@ -277,7 +294,6 @@ private enum InvocationError: LocalizedError {
         case let .unrecognizedArgument(argument): "Unrecognized argument: \(argument)."
         case .invalidCompletionShell: "completions requires one of: fish, bash, zsh."
         case .missingShowPackage: "show requires a package name."
-        case let .noCachedReleaseNotes(name): "No cached release notes for \(name). Run 'sift refresh' after an update becomes available."
         case let .missingCatalogItem(selector): "No cached software matches \(selector). Run 'sift refresh' to update the catalog."
         case let .ambiguousSelector(selector, matches): "\(selector) matches multiple records: \(matches.joined(separator: ", "))."
         case .invalidCompletionRequest: "__complete requires a target command."

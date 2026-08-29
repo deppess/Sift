@@ -69,12 +69,12 @@ public struct GitHubSource: Equatable, Sendable {
 
     private static func repository(from path: [String]) -> GitHubRepository? {
         guard path.count >= 2,
-              isRepositorySegment(path[0]), isRepositorySegment(path[1]),
+              isOwnerSegment(path[0]), isRepositorySegment(path[1]),
               let owner = decode(path[0]),
               let name = decode(path[1]),
-              isPathComponent(owner), isPathComponent(name) else { return nil }
+               isPathComponent(owner), isRepositoryName(name) else { return nil }
         let repository = name.hasSuffix(".git") ? String(name.dropLast(4)) : name
-        guard isPathComponent(repository) else { return nil }
+        guard isRepositoryName(repository) else { return nil }
         return GitHubRepository(owner: owner, name: repository)
     }
 
@@ -99,7 +99,20 @@ public struct GitHubSource: Equatable, Sendable {
     }
 
     private static func isRepositorySegment(_ value: String) -> Bool {
+        !value.contains("%") && isRepositoryName(value)
+    }
+
+    private static func isOwnerSegment(_ value: String) -> Bool {
         !value.contains("%") && isPathComponent(value)
+    }
+
+    private static func isRepositoryName(_ value: String) -> Bool {
+        !value.isEmpty && value != "." && value != ".." && value.unicodeScalars.allSatisfy {
+            $0.value == 0x5F || $0.value == 0x2D || $0.value == 0x2E ||
+                (0x30...0x39).contains($0.value) ||
+                (0x41...0x5A).contains($0.value) ||
+                (0x61...0x7A).contains($0.value)
+        }
     }
 
     private static func isAssetSegment(_ value: String) -> Bool {

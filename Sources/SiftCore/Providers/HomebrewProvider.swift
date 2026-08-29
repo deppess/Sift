@@ -101,7 +101,7 @@ public struct HomebrewProvider {
 
     private func executables() -> [URL] {
         var urls = [URL(filePath: "/opt/homebrew/bin/brew"), URL(filePath: "/usr/local/bin/brew")]
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        if let path = environment["PATH"] {
             urls += path.split(separator: ":").map { URL(filePath: String($0)).appending(path: "brew") }
         }
         var seen = Set<String>()
