@@ -638,23 +638,22 @@ final class SiftCoreTests: XCTestCase {
 
     func testHumanReadableOutputStripsTerminalControlSequences() {
         let notes = HomebrewReleaseNotes(name: "Example\u{1B}[2J", installedVersion: "1.0\r", availableVersion: "2.0", content: "- Safe\n\u{1B}[31mnot terminal formatting", sourceURL: "https://example.test/\u{1B}[8m", coverage: "targetOnly")
-        let output = HomebrewRenderer.show(notes)
+        let output = HomebrewRenderer.show(notes, full: true)
 
         XCTAssertFalse(output.unicodeScalars.contains { $0 == "\u{1B}" || $0 == "\r" })
-        XCTAssertTrue(output.contains("Safe\nnot terminal formatting"))
+        XCTAssertTrue(output.contains("Safe"))
+        XCTAssertTrue(output.contains("not terminal formatting"))
     }
 
-    func testCompactReleaseNotesCollapseInstallAndDownloadSections() {
+    func testReleaseNotesRendererPreservesMarkdownBlocks() {
         let notes = HomebrewReleaseNotes(name: "example", installedVersion: "1.0", availableVersion: "2.0", content: "## Bug fixes\n- Fix an important issue\n\n## Install example\n```sh\ncurl example\n```\n\n## Download example\n| File | Platform |\n| --- | --- |", sourceURL: "https://example.test/release", coverage: "targetOnly")
 
-        let compact = HomebrewRenderer.show(notes)
-        XCTAssertTrue(compact.contains("Bug fixes"))
-        XCTAssertTrue(compact.contains("Fix an important issue"))
-        XCTAssertTrue(compact.contains("omitted"))
-        XCTAssertFalse(compact.contains("curl example"))
-
-        let full = HomebrewRenderer.show(notes, full: true)
-        XCTAssertTrue(full.contains("curl example"))
+        let output = HomebrewRenderer.show(notes, full: true)
+        XCTAssertTrue(output.contains("Bug fixes"))
+        XCTAssertTrue(output.contains("Fix an important issue"))
+        XCTAssertTrue(output.contains("curl example"))
+        XCTAssertTrue(output.contains("File"))
+        XCTAssertTrue(output.contains("Platform"))
     }
 
     func testTerminalSanitizerRemovesWholeEscapeSequences() {

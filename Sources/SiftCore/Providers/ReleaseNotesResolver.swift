@@ -13,11 +13,13 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
     private let metadataClient: MetadataHTTPClient?
     private let tagResolver: GitHubTagResolver
     private let releaseResolver: GitHubReleaseResolver
+    private let compareResolver: GitHubCompareResolver
 
     public init(metadataClient: MetadataHTTPClient? = nil) {
         self.metadataClient = metadataClient
         tagResolver = GitHubTagResolver(metadataClient: metadataClient)
         releaseResolver = GitHubReleaseResolver(metadataClient: metadataClient)
+        compareResolver = GitHubCompareResolver(metadataClient: metadataClient)
     }
 
     public func resolve(package: HomebrewPackage, target: HomebrewTarget) -> HomebrewReleaseNotes? {
@@ -48,7 +50,7 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
               let identity = try tagResolver.resolve(repository: github.repository, sourceTag: github.tag, upstreamVersion: target.upstreamVersion) else { return nil }
         let tag = identity.tag
         if let release = try releaseResolver.release(repository: github.repository, tag: tag),
-           !release.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+           isMeaningfulReleaseBody(release.body) {
             return HomebrewReleaseNotes(
                 name: package.fullName,
                 installedVersion: package.installedVersion,
@@ -59,10 +61,22 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
             )
         }
         guard let url = URL(string: "https://raw.githubusercontent.com/\(github.repository.path)/\(identity.commitSHA)/CHANGELOG.md") else { return nil }
-        let document = try fetch(url)
-        let content = extractRange(document, target: target.upstreamVersion, installed: HomebrewVersion.upstreamVersion(from: package.installedVersion))
-        guard !content.isEmpty else { return nil }
-        return HomebrewReleaseNotes(name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: content, sourceURL: url.absoluteString, coverage: containsHeading(document, version: HomebrewVersion.upstreamVersion(from: package.installedVersion)) ? "complete" : "targetOnly")
+        let document: String?
+        do {
+            document = try fetch(url)
+        } catch MetadataHTTPError.notFound {
+            document = nil
+        }
+        if let document {
+            let content = extractRange(document, target: target.upstreamVersion, installed: HomebrewVersion.upstreamVersion(from: package.installedVersion))
+            if !content.isEmpty {
+                return HomebrewReleaseNotes(name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: content, sourceURL: url.absoluteString, coverage: containsHeading(document, version: HomebrewVersion.upstreamVersion(from: package.installedVersion)) ? "complete" : "targetOnly")
+            }
+        }
+        guard let installed = try tagResolver.resolve(repository: github.repository, sourceTag: nil, upstreamVersion: HomebrewVersion.upstreamVersion(from: package.installedVersion)),
+              let comparison = try compareResolver.compare(repository: github.repository, installedCommit: installed.commitSHA, targetCommit: identity.commitSHA),
+              !comparison.commits.isEmpty else { return nil }
+        return HomebrewReleaseNotes(name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: comparisonMarkdown(comparison), sourceURL: comparison.sourceURL, coverage: "repositoryCommits")
     }
 
     private func extractRange(_ document: String, target: String, installed: String) -> String {
@@ -95,5 +109,28 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
         let data = try metadataClient.fetch(url, resource: .githubChangelog).body
         guard let text = String(data: data, encoding: .utf8) else { throw MetadataHTTPError.invalidResponse }
         return text
+    }
+
+    private func isMeaningfulReleaseBody(_ body: String) -> Bool {
+        let lines = body.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+        guard lines.count == 1 else { return true }
+        let normalized = lines[0].replacingOccurrences(of: "*", with: "").lowercased()
+        return !(normalized.hasPrefix("full changelog:") && normalized.contains("github.com/") && normalized.contains("/compare/"))
+    }
+
+    private func comparisonMarkdown(_ comparison: GitHubComparison) -> String {
+        var counts: [(title: String, count: Int)] = []
+        for commit in comparison.commits {
+            if let index = counts.firstIndex(where: { $0.title == commit.title }) {
+                counts[index].count += 1
+            } else {
+                counts.append((commit.title, 1))
+            }
+        }
+        let entries = counts.map { "- \($0.title)\($0.count > 1 ? " × \($0.count)" : "")" }
+        return "## Repository changes (\(comparison.commits.count) commits)\n\(entries.joined(separator: "\n"))"
     }
 }

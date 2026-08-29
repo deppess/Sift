@@ -2,4 +2,10 @@ Sift is GPL-3.0-or-later.
 
 This initial foundation contains no copied or adapted source code from third-party projects.
 
+Sift links swift-markdown 0.7.3 (https://github.com/swiftlang/swift-markdown),
+licensed under Apache-2.0 with Runtime Library Exception. Its pinned dependency
+swift-cmark 0.8.0 (https://github.com/swiftlang/swift-cmark) carries its own
+upstream license and notice files. Sift uses these libraries for parsing
+untrusted GitHub-flavored Markdown; it does not include copied source files.
+
 Future adaptations from Latest (https://github.com/mangerlahn/Latest), which is GPL-3.0, must preserve applicable notices and add the upstream file path, commit identifier, copyright notice, and material modifications to this file.

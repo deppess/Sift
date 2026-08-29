@@ -9,9 +9,12 @@ let package = Package(
         .executable(name: "sift", targets: ["Sift"]),
         .library(name: "SiftCore", targets: ["SiftCore"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.7.3"),
+    ],
     targets: [
         .systemLibrary(name: "CSQLite"),
-        .target(name: "SiftCore", dependencies: ["CSQLite"]),
+        .target(name: "SiftCore", dependencies: ["CSQLite", .product(name: "Markdown", package: "swift-markdown")]),
         .target(name: "SiftCLI", dependencies: ["SiftCore"]),
         .executableTarget(name: "Sift", dependencies: ["SiftCLI"]),
         .executableTarget(name: "SiftVerification", dependencies: ["SiftCore", "SiftCLI"], path: "Tests/Verification"),
