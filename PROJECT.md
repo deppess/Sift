@@ -30,7 +30,7 @@ Implemented providers and refresh work:
 
 1. Native `.app` bundle inventory.
 2. Every detected Homebrew prefix, including formulae and casks.
-3. Homebrew target resolution for non-dependency packages.
+3. Homebrew update resolution from the selected Homebrew installation's `outdated` snapshot.
 4. Homebrew release-note retrieval for resolved updates.
 
 Sift stores all Homebrew formulae but defaults dashboard output to requested formulae. It inventories unsupported, system-managed, and Setapp applications so that the inventory is honest even when Sift cannot determine an update source.
@@ -85,7 +85,7 @@ Implemented Homebrew notes use provider metadata that identifies an exact upstre
 
 ## Persistence
 
-The current SQLite schema is version 11. Its core tables include:
+The current SQLite schema is version 12. Its core tables include:
 
 - `schema_migrations`
 - `settings`
@@ -99,7 +99,7 @@ The current SQLite schema is version 11. Its core tables include:
 
 Observations are immutable. Refreshes must be idempotent: a repeated observation of the same installation and version cannot create a false transition. Database migrations run in transactions and all SQL values use bound parameters.
 
-Schema 12 is intentionally deferred; no schema-12 migration or data model is implemented.
+Schema 12 corrects release-evidence identity so it is keyed by an exact installed-to-target version pair.
 
 ## CLI Contract
 

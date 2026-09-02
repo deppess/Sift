@@ -164,13 +164,30 @@ final class SiftCoreTests: XCTestCase {
 
     func testHomebrewReleaseNotesAreCachedByTargetVersion() throws {
         let url = temporaryDatabaseURL()
-        defer { removeDatabase(at: url) }
-        let database = try Database(url: url)
-        let notes = HomebrewReleaseNotes(name: "yazi", installedVersion: "25.5.31", availableVersion: "26.8.15", content: "## [v26.8.15]\n- Drag and drop", sourceURL: "https://example.test/changelog", coverage: "complete")
-        let package = homebrewPackage(kind: .formula, name: "yazi")
-        let key = HomebrewPackageKey(package)
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: notes.availableVersion, sourceURL: notes.sourceURL))], releaseNoteResults: [key: .resolved(notes)]))
-        XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: notes.installedVersion, availableVersion: notes.availableVersion), notes)
+        do {
+            let database = try Database(url: url)
+            let notes = HomebrewReleaseNotes(name: "yazi", installedVersion: "25.5.31", availableVersion: "26.8.15", content: "## [v26.8.15]\n- Drag and drop", sourceURL: "https://example.test/changelog", coverage: "complete")
+            let package = homebrewPackage(kind: .formula, name: "yazi")
+            let key = HomebrewPackageKey(package)
+            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: notes.availableVersion, sourceURL: notes.sourceURL))], releaseNoteResults: [key: .resolved(notes)]))
+            XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: notes.installedVersion, availableVersion: notes.availableVersion), notes)
+        }
+        removeDatabase(at: url)
+    }
+
+    func testHomebrewReleaseNotesKeepDistinctInstalledRangesForSameTarget() throws {
+        let url = temporaryDatabaseURL()
+        do {
+            let database = try Database(url: url)
+            let package = homebrewPackage(kind: .formula, name: "example")
+            let first = HomebrewReleaseNotes(name: package.fullName, installedVersion: "1.0", availableVersion: "2.0", content: "from 1.0", sourceURL: "https://example.test/one", coverage: "repositoryCommits")
+            let second = HomebrewReleaseNotes(name: package.fullName, installedVersion: "1.5", availableVersion: "2.0", content: "from 1.5", sourceURL: "https://example.test/two", coverage: "repositoryCommits")
+            try database.storeReleaseNotes(first, prefix: package.prefix, kind: package.kind)
+            try database.storeReleaseNotes(second, prefix: package.prefix, kind: package.kind)
+            XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: "1.0", availableVersion: "2.0"), first)
+            XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: "1.5", availableVersion: "2.0"), second)
+        }
+        removeDatabase(at: url)
     }
 
     func testCompleteHomebrewPrefixMarksMissingPackageAndArtifactInactive() throws {
@@ -230,7 +247,7 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertEqual(try database.catalogItems().first?.autoUpdates, true)
     }
 
-    func testDashboardCountsActionableHomebrewUpdatesButNotAutoUpdatingCasks() throws {
+    func testDashboardCountsHomebrewCandidatesIncludingAutoUpdatingCasks() throws {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
@@ -243,8 +260,8 @@ final class SiftCoreTests: XCTestCase {
         _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: packages, complete: true, warnings: [])]), targetResults: targets))
 
         let dashboard = try database.dashboard()
-        XCTAssertEqual(dashboard.data.availableUpdateCount, 1)
-        XCTAssertEqual(dashboard.data.informationalUpdateCount, 1)
+        XCTAssertEqual(dashboard.data.availableUpdateCount, 2)
+        XCTAssertEqual(dashboard.data.informationalUpdateCount, 0)
     }
 
     func testHomebrewUpdateFreshnessMarksOldEvidenceStale() throws {
@@ -263,7 +280,7 @@ final class SiftCoreTests: XCTestCase {
         let update = try XCTUnwrap(database.homebrewUpdates(now: observedAt.addingTimeInterval(120), staleAfter: 120).first)
         XCTAssertEqual(update.freshness, .stale)
         XCTAssertEqual(update.dataAsOf, observedAt)
-        XCTAssertTrue(HomebrewRenderer.humanReadable([update]).contains("stale; data as of"))
+        XCTAssertTrue(HomebrewRenderer.humanReadable([update]).contains("Snapshot is stale"))
     }
 
     func testUnifiedPartialRefreshKeepsMissingNativeApplicationsActive() throws {
@@ -667,26 +684,6 @@ final class SiftCoreTests: XCTestCase {
     func testTerminalSanitizerRemovesBidiAndZeroWidthControls() {
         XCTAssertEqual("visible \u{202E}text\u{2066}!\u{200B}\u{200D}\u{FEFF}".terminalText, "visible text!")
         XCTAssertEqual("cafe \u{2615} \u{1F642}".terminalText, "cafe \u{2615} \u{1F642}")
-    }
-
-    func testHomebrewAPIUsesOnlySafePackagePathComponents() throws {
-        let url = temporaryDatabaseURL()
-        defer { removeDatabase(at: url) }
-        let database = try Database(url: url)
-        MetadataURLProtocol.handler = { request in
-            XCTAssertEqual(request.url?.scheme, "https")
-            XCTAssertEqual(request.url?.host, "formulae.brew.sh")
-            XCTAssertEqual(request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.percentEncodedPath, "/api/formula/openssl@3.json")
-            return (200, Data("{\"versions\":{\"stable\":\"3.0\"}}".utf8), [:])
-        }
-        defer { MetadataURLProtocol.handler = nil }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MetadataURLProtocol.self]
-        let api = HomebrewAPI(metadataClient: MetadataHTTPClient(database: database, configuration: configuration))
-
-        XCTAssertEqual(try api.target(for: homebrewPackage(kind: .formula, name: "openssl@3"))?.version, "3.0")
-        XCTAssertNil(try api.target(for: homebrewPackage(kind: .formula, name: "openssl@3/../../attacker")))
-        XCTAssertNil(try api.target(for: homebrewPackage(kind: .formula, name: "..")))
     }
 
     func testCommandRunnerStopsOversizedStreamingOutput() throws {

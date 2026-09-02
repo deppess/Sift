@@ -21,7 +21,34 @@ public struct HomebrewPrefixInventory: Sendable {
     public let prefix: String
     public let packages: [HomebrewPackage]
     public let complete: Bool
+    public let outdatedCandidates: [HomebrewOutdatedCandidate]
+    public let outdatedComplete: Bool
     public let warnings: [String]
+
+    public init(prefix: String, packages: [HomebrewPackage], complete: Bool, outdatedCandidates: [HomebrewOutdatedCandidate] = [], outdatedComplete: Bool = false, warnings: [String]) {
+        self.prefix = prefix
+        self.packages = packages
+        self.complete = complete
+        self.outdatedCandidates = outdatedCandidates
+        self.outdatedComplete = outdatedComplete
+        self.warnings = warnings
+    }
+}
+
+public struct HomebrewOutdatedCandidate: Sendable, Equatable {
+    public let kind: HomebrewPackageKind
+    public let name: String
+    public let installedVersion: String
+    public let availableVersion: String
+    public let pinned: Bool
+
+    public init(kind: HomebrewPackageKind, name: String, installedVersion: String, availableVersion: String, pinned: Bool) {
+        self.kind = kind
+        self.name = name
+        self.installedVersion = installedVersion
+        self.availableVersion = availableVersion
+        self.pinned = pinned
+    }
 }
 
 public enum HomebrewAvailability: String, Codable, Sendable { case detected, absent }
@@ -48,10 +75,11 @@ public struct HomebrewUpdate: Codable, Equatable, Sendable {
     public let availableVersion: String
     public let sourceURL: String?
     public let autoUpdates: Bool
+    public let ownership: HomebrewOwnership
     public let freshness: Freshness
     public let dataAsOf: Date?
 
-    public init(kind: HomebrewPackageKind, name: String, fullName: String, prefix: String, installedVersion: String, availableVersion: String, sourceURL: String?, autoUpdates: Bool, freshness: Freshness = .unknown, dataAsOf: Date? = nil) {
+    public init(kind: HomebrewPackageKind, name: String, fullName: String, prefix: String, installedVersion: String, availableVersion: String, sourceURL: String?, autoUpdates: Bool, ownership: HomebrewOwnership = .explicitlyRequested, freshness: Freshness = .unknown, dataAsOf: Date? = nil) {
         self.kind = kind
         self.name = name
         self.fullName = fullName
@@ -60,6 +88,7 @@ public struct HomebrewUpdate: Codable, Equatable, Sendable {
         self.availableVersion = availableVersion
         self.sourceURL = sourceURL
         self.autoUpdates = autoUpdates
+        self.ownership = ownership
         self.freshness = freshness
         self.dataAsOf = dataAsOf
     }
@@ -72,6 +101,13 @@ public struct HomebrewProvider {
     public init(runner: CommandRunner = CommandRunner()) {
         self.runner = runner
         self.environment = ProcessInfo.processInfo.environment.merging(["HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ANALYTICS": "1", "HOMEBREW_NO_ENV_HINTS": "1", "LC_ALL": "C"]) { _, replacement in replacement }
+    }
+
+    public func update() throws {
+        for executable in executables() {
+            let result = try runner.run(executable: executable, arguments: ["update"], environment: environment, timeout: 120)
+            guard result.status == 0 else { throw ProviderError.commandFailed }
+        }
     }
 
     public func discover() -> HomebrewInventory {
@@ -87,7 +123,14 @@ public struct HomebrewProvider {
                 discoveredPrefix = prefix
                 let result = try runner.run(executable: executable, arguments: ["info", "--json=v2", "--installed"], environment: environment)
                 guard result.status == 0 else { throw ProviderError.commandFailed }
-                prefixes.append(HomebrewPrefixInventory(prefix: prefix, packages: try parseInventory(result.stdout, prefix: prefix), complete: true, warnings: []))
+                let packages = try parseInventory(result.stdout, prefix: prefix)
+                do {
+                    let outdated = try runner.run(executable: executable, arguments: ["outdated", "--json=v2"], environment: environment)
+                    guard outdated.status == 0 else { throw ProviderError.commandFailed }
+                    prefixes.append(HomebrewPrefixInventory(prefix: prefix, packages: packages, complete: true, outdatedCandidates: try parseOutdated(outdated.stdout), outdatedComplete: true, warnings: []))
+                } catch {
+                    prefixes.append(HomebrewPrefixInventory(prefix: prefix, packages: packages, complete: true, warnings: ["Homebrew outdated snapshot at \(executable.path): \(error.localizedDescription)"]))
+                }
             } catch {
                 // A failed prefix must remain distinct from a complete empty inventory.
                 let prefix = discoveredPrefix ?? executable.deletingLastPathComponent().deletingLastPathComponent().path
@@ -139,6 +182,22 @@ public struct HomebrewProvider {
         return formulae + casks
     }
 
+    private func parseOutdated(_ data: Data) throws -> [HomebrewOutdatedCandidate] {
+        guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ProviderError.invalidOutdated }
+        func candidates(_ key: String, kind: HomebrewPackageKind) throws -> [HomebrewOutdatedCandidate] {
+            guard let entries = document[key] as? [[String: Any]] else { throw ProviderError.invalidOutdated }
+            return try entries.map { entry in
+                guard let name = entry["name"] as? String, !name.isEmpty,
+                      let versions = entry["installed_versions"] as? [String], versions.count == 1,
+                      let installedVersion = versions.first, !installedVersion.isEmpty,
+                      let availableVersion = entry["current_version"] as? String, !availableVersion.isEmpty,
+                      let pinned = entry["pinned"] as? Bool else { throw ProviderError.invalidOutdated }
+                return HomebrewOutdatedCandidate(kind: kind, name: name, installedVersion: installedVersion, availableVersion: availableVersion, pinned: pinned)
+            }
+        }
+        return try candidates("formulae", kind: .formula) + candidates("casks", kind: .cask)
+    }
+
     private func appArtifactNames(_ artifact: [String: Any]) -> [String]? {
         if let names = artifact["app"] as? [String] { return names.allSatisfy { !$0.isEmpty && $0.hasSuffix(".app") } ? names : nil }
         if let name = artifact["app"] as? String { return !name.isEmpty && name.hasSuffix(".app") ? [name] : nil }
@@ -160,11 +219,13 @@ public struct HomebrewProvider {
     private enum ProviderError: LocalizedError {
         case commandFailed
         case invalidInventory
+        case invalidOutdated
 
         var errorDescription: String? {
             switch self {
             case .commandFailed: "Homebrew returned a nonzero status."
             case .invalidInventory: "Homebrew returned an incomplete installed-package inventory."
+            case .invalidOutdated: "Homebrew returned an incomplete outdated-package snapshot."
             }
         }
     }

@@ -1,5 +1,6 @@
 import Foundation
 import SiftCore
+import Darwin
 
 public enum SiftCLI {
     public static func run(arguments: [String]) -> Int32 {
@@ -39,7 +40,8 @@ public enum SiftCLI {
             if case .refresh = invocation.command {
                 let databaseURL = try invocation.databaseURL ?? SiftApplication.defaultDatabaseURL()
                 let database = try Database(url: databaseURL)
-                let summary = try RefreshCoordinator(database: database).refresh()
+                let updateHomebrew = try refreshHomebrewUpdatePreference(invocation)
+                let summary = try RefreshCoordinator(database: database).refresh(updateHomebrew: updateHomebrew)
                 print(invocation.json ? try RefreshRenderer.json(summary) : RefreshRenderer.humanReadable(summary))
                 return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
             }
@@ -128,6 +130,17 @@ public enum SiftCLI {
         }
     }
 
+    private static func refreshHomebrewUpdatePreference(_ invocation: Invocation) throws -> Bool {
+        if let update = invocation.updateHomebrew { return update }
+        guard !invocation.json, isatty(STDIN_FILENO) == 1 else { return false }
+        FileHandle.standardError.write(Data("Update Homebrew metadata before refreshing? [y/N] ".utf8))
+        guard let response = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return false }
+        guard response.isEmpty || response == "y" || response == "yes" || response == "n" || response == "no" else {
+            throw InvocationError.invalidHomebrewUpdateResponse
+        }
+        return response == "y" || response == "yes"
+    }
+
     private static func releaseNotes(for item: CatalogItem, database: Database) throws -> HomebrewReleaseNotes? {
         guard let prefix = item.prefix,
               let fullName = item.fullName,
@@ -173,7 +186,7 @@ extension String {
 private struct Invocation {
     enum Command { case dashboard, refresh, apps(String?), updates, show(String), completions(CompletionShell), complete(String, String) }
 
-    static let usage = "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--full] [--no-color] [--database <path>]"
+    static let usage = "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--full] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
 
     let command: Command
     let json: Bool
@@ -183,6 +196,7 @@ private struct Invocation {
     let full: Bool
     let noColor: Bool
     let installCompletions: Bool
+    let updateHomebrew: Bool?
 
     init(arguments: [String]) throws {
         var command: Command = .dashboard
@@ -194,6 +208,7 @@ private struct Invocation {
         var full = false
         var noColor = false
         var installCompletions = false
+        var updateHomebrew: Bool?
         var index = 0
 
         while index < arguments.count {
@@ -213,6 +228,12 @@ private struct Invocation {
             case "--all":
                 guard !includeAll else { throw InvocationError.duplicateOption("--all") }
                 includeAll = true
+            case "--update-homebrew":
+                guard updateHomebrew == nil else { throw InvocationError.duplicateOption(argument) }
+                updateHomebrew = true
+            case "--no-update-homebrew":
+                guard updateHomebrew == nil else { throw InvocationError.duplicateOption(argument) }
+                updateHomebrew = false
             case "--completions":
                 guard !installCompletions else { throw InvocationError.duplicateOption("--completions") }
                 installCompletions = true
@@ -272,6 +293,7 @@ private struct Invocation {
         self.full = full
         self.noColor = noColor
         self.installCompletions = installCompletions
+        self.updateHomebrew = updateHomebrew
     }
 }
 
@@ -281,6 +303,7 @@ private enum InvocationError: LocalizedError {
     case duplicateCommand
     case unrecognizedArgument(String)
     case invalidCompletionShell
+    case invalidHomebrewUpdateResponse
     case missingShowPackage
     case missingCatalogItem(String)
     case ambiguousSelector(String, [String])
@@ -293,6 +316,7 @@ private enum InvocationError: LocalizedError {
         case .duplicateCommand: "Only one command may be specified."
         case let .unrecognizedArgument(argument): "Unrecognized argument: \(argument)."
         case .invalidCompletionShell: "completions requires one of: fish, bash, zsh."
+        case .invalidHomebrewUpdateResponse: "Respond with y or n."
         case .missingShowPackage: "show requires a package name."
         case let .missingCatalogItem(selector): "No cached software matches \(selector). Run 'sift refresh' to update the catalog."
         case let .ambiguousSelector(selector, matches): "\(selector) matches multiple records: \(matches.joined(separator: ", "))."

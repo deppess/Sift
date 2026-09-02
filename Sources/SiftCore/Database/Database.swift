@@ -88,7 +88,7 @@ public enum DatabaseError: Error, LocalizedError {
 }
 
 public final class Database: @unchecked Sendable {
-    private static let schemaVersion = 11
+    private static let schemaVersion = 12
     private var handle: OpaquePointer?
     private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let lock = NSRecursiveLock()
@@ -175,21 +175,11 @@ public final class Database: @unchecked Sendable {
             let homebrewAvailableUpdateCount = try scalarInt("""
                 SELECT COUNT(*) FROM homebrew_packages
                 WHERE active = 1
-                  AND ownership IN ('explicitlyRequested', 'installedCask')
-                  AND auto_updates = 0
                   AND available_version IS NOT NULL
                   AND available_version != installed_version
                   AND (target_status IN ('unknown', 'resolved') OR (target_status = 'transientFailure' AND target_for_installed_version = installed_version));
                 """)
-            let informationalUpdateCount = try scalarInt("""
-                SELECT COUNT(*) FROM homebrew_packages
-                WHERE active = 1
-                  AND ownership = 'installedCask'
-                  AND auto_updates = 1
-                  AND available_version IS NOT NULL
-                  AND available_version != installed_version
-                  AND (target_status IN ('unknown', 'resolved') OR (target_status = 'transientFailure' AND target_for_installed_version = installed_version));
-                """)
+            let informationalUpdateCount = 0
             let cutoff = now.addingTimeInterval(-7 * 24 * 60 * 60).timeIntervalSince1970
             let recentTransitionCount = try scalarInt(
                 "SELECT COUNT(DISTINCT installation_id) FROM version_transitions WHERE observed_at >= ? AND observed_at <= ?;",
@@ -432,7 +422,7 @@ public final class Database: @unchecked Sendable {
     }
 
     private func storeReleaseNotesLocked(_ notes: HomebrewReleaseNotes, prefix: String, kind: HomebrewPackageKind, fetchedAt: Date) throws {
-        try withStatement("INSERT INTO homebrew_release_notes (prefix, kind, full_name, installed_version, available_version, content, source_url, coverage, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(prefix, kind, full_name, available_version) DO UPDATE SET content = excluded.content, source_url = excluded.source_url, coverage = excluded.coverage, fetched_at = excluded.fetched_at;") { statement in
+        try withStatement("INSERT INTO homebrew_release_notes (prefix, kind, full_name, installed_version, available_version, content, source_url, coverage, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(prefix, kind, full_name, installed_version, available_version) DO UPDATE SET content = excluded.content, source_url = excluded.source_url, coverage = excluded.coverage, fetched_at = excluded.fetched_at;") { statement in
             guard sqlite3_bind_text(statement, 1, prefix, -1, sqliteTransient) == SQLITE_OK,
                   sqlite3_bind_text(statement, 2, kind.rawValue, -1, sqliteTransient) == SQLITE_OK,
                   sqlite3_bind_text(statement, 3, notes.name, -1, sqliteTransient) == SQLITE_OK,
@@ -513,12 +503,12 @@ public final class Database: @unchecked Sendable {
         defer { lock.unlock() }
         var updates: [HomebrewUpdate] = []
         let providerStatus = try homebrewProviderStatuses()
-        try withStatement("SELECT kind, name, full_name, prefix, installed_version, available_version, source_url, auto_updates, last_seen_at, target_last_success_at, target_status FROM homebrew_packages WHERE active = 1 AND ownership IN ('explicitlyRequested', 'installedCask') AND available_version IS NOT NULL AND available_version != installed_version AND (target_status IN ('unknown', 'resolved') OR (target_status = 'transientFailure' AND target_for_installed_version = installed_version)) ORDER BY name COLLATE NOCASE;") { statement in
+        try withStatement("SELECT kind, name, full_name, prefix, installed_version, available_version, source_url, auto_updates, ownership, last_seen_at, target_last_success_at, target_status FROM homebrew_packages WHERE active = 1 AND available_version IS NOT NULL AND available_version != installed_version AND target_status = 'resolved' ORDER BY name COLLATE NOCASE;") { statement in
             while try stepRow(statement) {
-                let inventoryAsOf = sqlite3_column_type(statement, 8) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 8))
-                let targetAsOf = sqlite3_column_type(statement, 9) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 9))
+                let inventoryAsOf = sqlite3_column_type(statement, 9) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 9))
+                let targetAsOf = sqlite3_column_type(statement, 10) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 10))
                 let dataAsOf = [inventoryAsOf, targetAsOf].compactMap { $0 }.min()
-                let targetStatus = String(cString: sqlite3_column_text(statement, 10))
+                let targetStatus = String(cString: sqlite3_column_text(statement, 11))
                 let freshness: Freshness
                 if targetStatus == "transientFailure" || providerStatus.contains(where: { $0 != .success }) {
                     freshness = dataAsOf == nil ? .unknown : .stale
@@ -529,7 +519,7 @@ public final class Database: @unchecked Sendable {
                 } else {
                     freshness = .current
                 }
-                updates.append(HomebrewUpdate(kind: HomebrewPackageKind(rawValue: String(cString: sqlite3_column_text(statement, 0))) ?? .formula, name: String(cString: sqlite3_column_text(statement, 1)), fullName: String(cString: sqlite3_column_text(statement, 2)), prefix: String(cString: sqlite3_column_text(statement, 3)), installedVersion: String(cString: sqlite3_column_text(statement, 4)), availableVersion: String(cString: sqlite3_column_text(statement, 5)), sourceURL: optionalText(statement, column: 6), autoUpdates: sqlite3_column_int(statement, 7) == 1, freshness: freshness, dataAsOf: dataAsOf))
+                updates.append(HomebrewUpdate(kind: HomebrewPackageKind(rawValue: String(cString: sqlite3_column_text(statement, 0))) ?? .formula, name: String(cString: sqlite3_column_text(statement, 1)), fullName: String(cString: sqlite3_column_text(statement, 2)), prefix: String(cString: sqlite3_column_text(statement, 3)), installedVersion: String(cString: sqlite3_column_text(statement, 4)), availableVersion: String(cString: sqlite3_column_text(statement, 5)), sourceURL: optionalText(statement, column: 6), autoUpdates: sqlite3_column_int(statement, 7) == 1, ownership: HomebrewOwnership(rawValue: String(cString: sqlite3_column_text(statement, 8))) ?? .dependency, freshness: freshness, dataAsOf: dataAsOf))
             }
         }
         return updates
@@ -551,7 +541,7 @@ public final class Database: @unchecked Sendable {
 
     public func storeReleaseNotes(_ notes: HomebrewReleaseNotes, prefix: String, kind: HomebrewPackageKind) throws {
         lock.lock(); defer { lock.unlock() }
-        try withStatement("INSERT INTO homebrew_release_notes (prefix, kind, full_name, installed_version, available_version, content, source_url, coverage, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(prefix, kind, full_name, available_version) DO UPDATE SET content = excluded.content, source_url = excluded.source_url, coverage = excluded.coverage, fetched_at = excluded.fetched_at;") { statement in
+        try withStatement("INSERT INTO homebrew_release_notes (prefix, kind, full_name, installed_version, available_version, content, source_url, coverage, fetched_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(prefix, kind, full_name, installed_version, available_version) DO UPDATE SET content = excluded.content, source_url = excluded.source_url, coverage = excluded.coverage, fetched_at = excluded.fetched_at;") { statement in
             guard sqlite3_bind_text(statement, 1, prefix, -1, sqliteTransient) == SQLITE_OK,
                   sqlite3_bind_text(statement, 2, kind.rawValue, -1, sqliteTransient) == SQLITE_OK,
                   sqlite3_bind_text(statement, 3, notes.name, -1, sqliteTransient) == SQLITE_OK,
@@ -928,6 +918,28 @@ public final class Database: @unchecked Sendable {
                     INSERT INTO schema_migrations (version) VALUES (11);
                     """)
             }
+            if version < 12 {
+                try execute("""
+                    CREATE TABLE homebrew_release_notes_new (
+                        id INTEGER PRIMARY KEY,
+                        prefix TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        full_name TEXT NOT NULL,
+                        installed_version TEXT NOT NULL,
+                        available_version TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        source_url TEXT NOT NULL,
+                        coverage TEXT NOT NULL,
+                        fetched_at REAL NOT NULL,
+                        UNIQUE(prefix, kind, full_name, installed_version, available_version)
+                    );
+                    INSERT INTO homebrew_release_notes_new (id, prefix, kind, full_name, installed_version, available_version, content, source_url, coverage, fetched_at)
+                    SELECT id, prefix, kind, full_name, installed_version, available_version, content, source_url, coverage, fetched_at FROM homebrew_release_notes;
+                    DROP TABLE homebrew_release_notes;
+                    ALTER TABLE homebrew_release_notes_new RENAME TO homebrew_release_notes;
+                    INSERT INTO schema_migrations (version) VALUES (12);
+                    """)
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -966,8 +978,8 @@ public final class Database: @unchecked Sendable {
                 guard package.prefix == prefix.prefix, packages.insert(key).inserted, !package.name.isEmpty, !package.fullName.isEmpty, !package.installedVersion.isEmpty else { throw DatabaseError.invalidRefreshInput("invalid or duplicate Homebrew package") }
             }
         }
-        let expectedTargets = Set(input.homebrewInventory.packages.filter { $0.ownership != .dependency }.map(HomebrewPackageKey.init))
-        guard Set(input.targetResults.keys) == expectedTargets else { throw DatabaseError.invalidRefreshInput("target results do not match non-dependency packages") }
+        let expectedTargets = Set(input.homebrewInventory.packages.map(HomebrewPackageKey.init))
+        guard Set(input.targetResults.keys) == expectedTargets else { throw DatabaseError.invalidRefreshInput("target results do not match Homebrew packages") }
         guard Set(input.releaseNoteResults.keys).isSubset(of: expectedTargets) else { throw DatabaseError.invalidRefreshInput("release notes contain an unknown package") }
     }
 

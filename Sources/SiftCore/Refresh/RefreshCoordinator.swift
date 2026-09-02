@@ -4,40 +4,46 @@ public struct RefreshCoordinator {
     private let database: Database
     private let nativeProvider: NativeApplicationProvider
     private let homebrewProvider: HomebrewProvider
-    private let homebrewAPI: any HomebrewTargetResolving
     private let releaseNotes: any HomebrewReleaseNotesResolving
 
-    public init(database: Database, nativeProvider: NativeApplicationProvider = NativeApplicationProvider(), homebrewProvider: HomebrewProvider = HomebrewProvider(), homebrewAPI: (any HomebrewTargetResolving)? = nil, releaseNotes: (any HomebrewReleaseNotesResolving)? = nil) {
+    public init(database: Database, nativeProvider: NativeApplicationProvider = NativeApplicationProvider(), homebrewProvider: HomebrewProvider = HomebrewProvider(), releaseNotes: (any HomebrewReleaseNotesResolving)? = nil) {
         self.database = database
         self.nativeProvider = nativeProvider
         self.homebrewProvider = homebrewProvider
         let metadataClient = MetadataHTTPClient(database: database)
-        self.homebrewAPI = homebrewAPI ?? HomebrewAPI(metadataClient: metadataClient)
         self.releaseNotes = releaseNotes ?? ReleaseNotesResolver(metadataClient: metadataClient)
     }
 
-    public func refresh(now: Date = .now) throws -> RefreshSummary {
+    public func refresh(now: Date = .now, updateHomebrew: Bool = false) throws -> RefreshSummary {
         let nativeStartedAt = now
         let native = nativeProvider.discover()
         let nativeFinishedAt = now
 
-        let homebrewStartedAt = now
+        let homebrewStartedAt = Date.now
+        if updateHomebrew { try homebrewProvider.update() }
         let homebrew = homebrewProvider.discover()
-        let homebrewFinishedAt = now
+        let homebrewFinishedAt = Date.now
         let hasActiveHomebrewPackages = try database.hasActiveHomebrewPackages()
         let retainedHomebrewData = homebrew.availability == .absent && hasActiveHomebrewPackages
-        let actionablePackages = homebrew.availability == .detected ? homebrew.packages.filter { $0.ownership != .dependency } : []
+        let packages = homebrew.availability == .detected ? homebrew.packages : []
 
-        let targetStartedAt = now
+        let targetStartedAt = Date.now
         var targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:]
-        for package in actionablePackages {
-            targetResults[HomebrewPackageKey(package)] = homebrewAPI.resolveTarget(for: package)
+        for package in packages {
+            let candidate = homebrew.prefixes.first(where: { $0.prefix == package.prefix })?.outdatedCandidates.first {
+                $0.kind == package.kind && $0.name == package.name && $0.installedVersion == package.installedVersion
+            }
+            if let candidate {
+                targetResults[HomebrewPackageKey(package)] = .resolved(HomebrewTarget(version: candidate.availableVersion, sourceURL: package.sourceURL))
+            } else {
+                targetResults[HomebrewPackageKey(package)] = .unavailable("Homebrew does not report this package as outdated.")
+            }
         }
-        let targetFinishedAt = now
+        let targetFinishedAt = Date.now
 
-        let notesStartedAt = now
+        let notesStartedAt = Date.now
         var noteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution] = [:]
-        for package in actionablePackages {
+        for package in packages {
             let key = HomebrewPackageKey(package)
             guard case let .resolved(target)? = targetResults[key], target.version != package.installedVersion else { continue }
             if package.kind == .formula,
@@ -45,14 +51,16 @@ public struct RefreshCoordinator {
                 noteResults[key] = .unavailable("This update changes only Homebrew's packaging revision.")
                 continue
             }
-            noteResults[key] = releaseNotes.resolveReleaseNotes(for: package, target: target)
+            if try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version) == nil {
+                noteResults[key] = releaseNotes.resolveReleaseNotes(for: package, target: target)
+            }
         }
-        let notesFinishedAt = now
+        let notesFinishedAt = Date.now
 
         let providerResults = [
             ProviderRefreshResult(provider: .nativeApplications, status: native.complete ? .success : .partial, message: native.warnings.nonEmptyJoined, warningCount: native.warnings.count, startedAt: nativeStartedAt, finishedAt: nativeFinishedAt, dataAsOf: native.complete ? nativeFinishedAt : nil),
             ProviderRefreshResult(provider: .homebrewInventory, status: inventoryStatus(homebrew, retainedData: retainedHomebrewData), message: homebrewMessage(homebrew, retainedData: retainedHomebrewData), warningCount: homebrew.warnings.count + (homebrew.availability == .absent ? 1 : 0), startedAt: homebrewStartedAt, finishedAt: homebrewFinishedAt, dataAsOf: homebrew.availability == .absent ? (retainedHomebrewData ? nil : homebrewFinishedAt) : homebrew.prefixes.allSatisfy(\.complete) ? homebrewFinishedAt : nil),
-            ProviderRefreshResult(provider: .homebrewTargets, status: retainedHomebrewData ? .partial : resolutionStatus(targetResults.values), message: retainedHomebrewData ? "Cached Homebrew target data was retained because Homebrew is not available." : transientMessages(targetResults.values), warningCount: retainedHomebrewData ? 1 : transientCount(targetResults.values), startedAt: targetStartedAt, finishedAt: targetFinishedAt, dataAsOf: retainedHomebrewData ? nil : targetResults.values.contains { if case .transientFailure = $0 { true } else { false } } ? nil : targetFinishedAt),
+            ProviderRefreshResult(provider: .homebrewTargets, status: retainedHomebrewData || homebrew.prefixes.contains(where: { !$0.outdatedComplete }) ? .partial : resolutionStatus(targetResults.values), message: retainedHomebrewData ? "Cached Homebrew target data was retained because Homebrew is not available." : homebrew.prefixes.contains(where: { !$0.outdatedComplete }) ? "Homebrew did not return a complete outdated-package snapshot." : transientMessages(targetResults.values), warningCount: retainedHomebrewData ? 1 : homebrew.prefixes.contains(where: { !$0.outdatedComplete }) ? 1 : transientCount(targetResults.values), startedAt: targetStartedAt, finishedAt: targetFinishedAt, dataAsOf: retainedHomebrewData || homebrew.prefixes.contains(where: { !$0.outdatedComplete }) ? nil : targetFinishedAt),
             ProviderRefreshResult(provider: .homebrewReleaseNotes, status: retainedHomebrewData ? .partial : resolutionStatus(noteResults.values), message: retainedHomebrewData ? "Cached Homebrew release notes were retained because Homebrew is not available." : transientMessages(noteResults.values), warningCount: retainedHomebrewData ? 1 : transientCount(noteResults.values), startedAt: notesStartedAt, finishedAt: notesFinishedAt, dataAsOf: retainedHomebrewData ? nil : noteResults.values.contains { if case .transientFailure = $0 { true } else { false } } ? nil : notesFinishedAt),
         ]
         return try database.applyRefresh(RefreshPersistenceInput(startedAt: now, finishedAt: notesFinishedAt, nativeInventory: native, homebrewInventory: homebrew, targetResults: targetResults, releaseNoteResults: noteResults, providerResults: providerResults))

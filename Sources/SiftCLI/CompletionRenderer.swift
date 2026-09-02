@@ -32,7 +32,7 @@ enum CompletionRenderer {
                 COMPREPLY=()
                 current="${COMP_WORDS[COMP_CWORD]}"
                 previous="${COMP_WORDS[COMP_CWORD-1]}"
-                words="refresh apps updates show --help -h --completions --json --all --no-color --database"
+                words="refresh apps updates show --help -h --completions --json --all --no-color --update-homebrew --no-update-homebrew --database"
                 if [[ "${COMP_WORDS[1]}" == "apps" || "${COMP_WORDS[1]}" == "show" ]]; then
                     while IFS=$'\t' read -r value description; do
                         COMPREPLY[${#COMPREPLY[@]}]="$value"
