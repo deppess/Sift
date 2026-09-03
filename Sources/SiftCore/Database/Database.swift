@@ -88,7 +88,7 @@ public enum DatabaseError: Error, LocalizedError {
 }
 
 public final class Database: @unchecked Sendable {
-    private static let schemaVersion = 12
+    private static let schemaVersion = 13
     private var handle: OpaquePointer?
     private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let lock = NSRecursiveLock()
@@ -179,6 +179,7 @@ public final class Database: @unchecked Sendable {
                   AND available_version != installed_version
                   AND (target_status IN ('unknown', 'resolved') OR (target_status = 'transientFailure' AND target_for_installed_version = installed_version));
                 """)
+            let managedAvailableUpdateCount = try scalarInt("SELECT COUNT(*) FROM managed_packages WHERE active = 1 AND available_version IS NOT NULL AND available_version != installed_version;")
             let informationalUpdateCount = 0
             let cutoff = now.addingTimeInterval(-7 * 24 * 60 * 60).timeIntervalSince1970
             let recentTransitionCount = try scalarInt(
@@ -209,7 +210,7 @@ public final class Database: @unchecked Sendable {
                 dataAsOf: dataAsOf,
                 freshness: freshness,
                 latestRefreshStatus: session?.status ?? .never,
-                data: DashboardData(availableUpdateCount: nativeAvailableUpdateCount + homebrewAvailableUpdateCount, informationalUpdateCount: informationalUpdateCount, recentTransitionCount: recentTransitionCount, partialProviderCount: partialProviderCount, failedProviderCount: failedProviderCount, providerResults: providerResults)
+                data: DashboardData(availableUpdateCount: nativeAvailableUpdateCount + homebrewAvailableUpdateCount + managedAvailableUpdateCount, informationalUpdateCount: informationalUpdateCount, recentTransitionCount: recentTransitionCount, partialProviderCount: partialProviderCount, failedProviderCount: failedProviderCount, providerResults: providerResults)
             )
         } catch {
             try? execute("ROLLBACK;")
@@ -292,6 +293,7 @@ public final class Database: @unchecked Sendable {
                 if case let .resolved(target) = resolution { (key.stringValue, target) } else { nil }
             })
             try applyHomebrewPackagesLocked(input.homebrewInventory, targets: resolvedTargets, observedAt: input.finishedAt)
+            for inventory in input.managedPackageInventories { try applyManagedPackageInventoryLocked(inventory, observedAt: input.finishedAt) }
             try applyTargetResults(input.targetResults, observedAt: input.finishedAt)
             for (key, resolution) in input.releaseNoteResults {
                 if case let .resolved(notes) = resolution {
@@ -382,6 +384,29 @@ public final class Database: @unchecked Sendable {
             try withStatement("UPDATE cask_artifacts SET active = 0 WHERE homebrew_package_id IN (SELECT id FROM homebrew_packages WHERE prefix = ? AND (active = 0 OR (kind = 'cask' AND last_seen_at = ?))) AND last_seen_at < ?;") { statement in
                 guard sqlite3_bind_text(statement, 1, scope.prefix, -1, sqliteTransient) == SQLITE_OK,
                       sqlite3_bind_double(statement, 2, observedAt.timeIntervalSince1970) == SQLITE_OK,
+                      sqlite3_bind_double(statement, 3, observedAt.timeIntervalSince1970) == SQLITE_OK,
+                      sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
+            }
+        }
+    }
+
+    private func applyManagedPackageInventoryLocked(_ inventory: ManagedPackageInventory, observedAt: Date) throws {
+        for scope in inventory.scopes {
+            for package in scope.packages {
+                try withStatement("INSERT INTO managed_packages (provider, scope, name, installed_version, available_version, active, observed_at, last_seen_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(provider, scope, name) DO UPDATE SET installed_version = excluded.installed_version, available_version = excluded.available_version, active = 1, observed_at = excluded.observed_at, last_seen_at = excluded.last_seen_at;") { statement in
+                    guard sqlite3_bind_text(statement, 1, inventory.provider.rawValue, -1, sqliteTransient) == SQLITE_OK,
+                          sqlite3_bind_text(statement, 2, scope.scope, -1, sqliteTransient) == SQLITE_OK,
+                          sqlite3_bind_text(statement, 3, package.name, -1, sqliteTransient) == SQLITE_OK,
+                          sqlite3_bind_text(statement, 4, package.installedVersion, -1, sqliteTransient) == SQLITE_OK,
+                          bindOptionalText(statement, index: 5, value: package.availableVersion),
+                          sqlite3_bind_double(statement, 6, observedAt.timeIntervalSince1970) == SQLITE_OK,
+                          sqlite3_bind_double(statement, 7, observedAt.timeIntervalSince1970) == SQLITE_OK,
+                          sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
+                }
+            }
+            try withStatement("UPDATE managed_packages SET active = 0 WHERE provider = ? AND scope = ? AND last_seen_at < ?;") { statement in
+                guard sqlite3_bind_text(statement, 1, inventory.provider.rawValue, -1, sqliteTransient) == SQLITE_OK,
+                      sqlite3_bind_text(statement, 2, scope.scope, -1, sqliteTransient) == SQLITE_OK,
                       sqlite3_bind_double(statement, 3, observedAt.timeIntervalSince1970) == SQLITE_OK,
                       sqlite3_step(statement) == SQLITE_DONE else { throw errorFromHandle() }
             }
@@ -523,6 +548,26 @@ public final class Database: @unchecked Sendable {
             }
         }
         return updates
+    }
+
+    public func updates(now: Date = .now, staleAfter: TimeInterval = 24 * 60 * 60) throws -> [UnifiedUpdate] {
+        let homebrew = try homebrewUpdates(now: now, staleAfter: staleAfter).map {
+            UnifiedUpdate(provider: "homebrew", scope: $0.prefix, name: $0.name, installedVersion: $0.installedVersion, availableVersion: $0.availableVersion, freshness: $0.freshness, dataAsOf: $0.dataAsOf)
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        var managed: [UnifiedUpdate] = []
+        try withStatement("SELECT provider, scope, name, installed_version, available_version, last_seen_at FROM managed_packages WHERE active = 1 AND available_version IS NOT NULL AND available_version != installed_version ORDER BY name COLLATE NOCASE, provider, scope;") { statement in
+            while try stepRow(statement) {
+                let dataAsOf = Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))
+                let freshness: Freshness = now.timeIntervalSince(dataAsOf) >= staleAfter ? .stale : .current
+                managed.append(UnifiedUpdate(provider: String(cString: sqlite3_column_text(statement, 0)), scope: String(cString: sqlite3_column_text(statement, 1)), name: String(cString: sqlite3_column_text(statement, 2)), installedVersion: String(cString: sqlite3_column_text(statement, 3)), availableVersion: String(cString: sqlite3_column_text(statement, 4)), freshness: freshness, dataAsOf: dataAsOf))
+            }
+        }
+        return (homebrew + managed).sorted {
+            let comparison = $0.name.localizedCaseInsensitiveCompare($1.name)
+            return comparison == .orderedSame ? $0.provider < $1.provider : comparison == .orderedAscending
+        }
     }
 
     private func homebrewProviderStatuses() throws -> [ProviderRefreshStatus] {
@@ -940,6 +985,25 @@ public final class Database: @unchecked Sendable {
                     INSERT INTO schema_migrations (version) VALUES (12);
                     """)
             }
+            if version < 13 {
+                try execute("""
+                    CREATE TABLE managed_packages (
+                        id INTEGER PRIMARY KEY,
+                        provider TEXT NOT NULL,
+                        scope TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        installed_version TEXT NOT NULL,
+                        available_version TEXT,
+                        metadata TEXT,
+                        active INTEGER NOT NULL CHECK (active IN (0, 1)),
+                        observed_at REAL NOT NULL,
+                        last_seen_at REAL NOT NULL,
+                        UNIQUE(provider, scope, name)
+                    );
+                    CREATE INDEX managed_package_updates ON managed_packages(active, available_version, installed_version);
+                    INSERT INTO schema_migrations (version) VALUES (13);
+                    """)
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -969,6 +1033,15 @@ public final class Database: @unchecked Sendable {
             if result.status == .success, result.dataAsOf == nil { throw DatabaseError.invalidRefreshInput("successful \(result.provider.rawValue) result has no data timestamp") }
             if result.status != .success, result.dataAsOf != nil { throw DatabaseError.invalidRefreshInput("non-successful \(result.provider.rawValue) result has a data timestamp") }
             if let dataAsOf = result.dataAsOf, dataAsOf > result.finishedAt { throw DatabaseError.invalidRefreshInput("data timestamp is after \(result.provider.rawValue) finished") }
+        }
+        let managedProviders = input.managedPackageInventories.map(\.provider)
+        guard Set(managedProviders).count == managedProviders.count,
+              managedProviders.allSatisfy({ $0 == .npmGlobal || $0 == .uvTools }) else {
+            throw DatabaseError.invalidRefreshInput("invalid managed package provider inventory")
+        }
+        let statuses = Dictionary(uniqueKeysWithValues: input.providerResults.map { ($0.provider, $0.status) })
+        guard managedProviders.allSatisfy({ statuses[$0] == .success }) else {
+            throw DatabaseError.invalidRefreshInput("managed package inventory requires a successful provider result")
         }
         var packages = Set<HomebrewPackageKey>()
         for prefix in input.homebrewInventory.prefixes {

@@ -70,8 +70,8 @@ public enum SiftCLI {
                 }
                 return EXIT_SUCCESS
             case .updates:
-                let updates = try database.homebrewUpdates()
-                print(invocation.json ? try HomebrewRenderer.json(updates) : HomebrewRenderer.humanReadable(updates))
+                let updates = try database.updates()
+                print(invocation.json ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates))
                 return EXIT_SUCCESS
             case let .show(name):
                 switch try database.resolveCatalogItem(name, includeAll: invocation.includeAll) {
@@ -120,8 +120,8 @@ public enum SiftCLI {
             print(invocation.json ? try CatalogRenderer.json(items) : CatalogRenderer.list(items))
             return EXIT_SUCCESS
         case .updates:
-            let updates: [HomebrewUpdate] = []
-            print(invocation.json ? try HomebrewRenderer.json(updates) : HomebrewRenderer.humanReadable(updates))
+            let updates: [UnifiedUpdate] = []
+            print(invocation.json ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates))
             return EXIT_SUCCESS
         case let .apps(.some(selector)), let .show(selector):
             throw InvocationError.missingCatalogItem(selector)

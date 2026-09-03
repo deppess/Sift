@@ -175,6 +175,28 @@ final class SiftCoreTests: XCTestCase {
         removeDatabase(at: url)
     }
 
+    func testManagedPackageUpdatesAreUnifiedAndFailedProviderRetainsCachedData() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        let firstDate = Date(timeIntervalSince1970: 1_000)
+        let inventory = ManagedPackageInventory(provider: .npmGlobal, scopes: [
+            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")]),
+        ])
+        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [inventory], providerResults: refreshInput(at: firstDate).providerResults))
+
+        XCTAssertEqual(try database.updates(now: firstDate), [UnifiedUpdate(provider: "npm-global", scope: "/opt/homebrew", name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0", freshness: .current, dataAsOf: firstDate)])
+        XCTAssertEqual(try database.dashboard(now: firstDate).data.availableUpdateCount, 1)
+
+        let failedDate = Date(timeIntervalSince1970: 2_000)
+        var statuses = Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, ProviderRefreshStatus.success) })
+        statuses[.npmGlobal] = .failure
+        _ = try database.applyRefresh(refreshInput(at: failedDate, providerStatuses: statuses))
+
+        XCTAssertEqual(try database.updates(now: failedDate).map(\.name), ["typescript"])
+        XCTAssertEqual(try database.dashboard(now: failedDate).data.providerResults.first(where: { $0.provider == .npmGlobal })?.status, .failure)
+    }
+
     func testHomebrewReleaseNotesKeepDistinctInstalledRangesForSameTarget() throws {
         let url = temporaryDatabaseURL()
         do {
@@ -285,25 +307,29 @@ final class SiftCoreTests: XCTestCase {
 
     func testUnifiedPartialRefreshKeepsMissingNativeApplicationsActive() throws {
         let url = temporaryDatabaseURL()
-        defer { removeDatabase(at: url) }
-        let database = try Database(url: url)
-        let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path])))
+        do {
+            let database = try Database(url: url)
+            let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path])))
 
-        let startedAt = Date(timeIntervalSince1970: 2_000)
-        let finishedAt = Date(timeIntervalSince1970: 2_001)
-        let results = [
-            ProviderRefreshResult(provider: .nativeApplications, status: .partial, message: "root unavailable", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt),
-            ProviderRefreshResult(provider: .homebrewInventory, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
-            ProviderRefreshResult(provider: .homebrewTargets, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
-            ProviderRefreshResult(provider: .homebrewReleaseNotes, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
-        ]
-        let summary = try database.applyRefresh(RefreshPersistenceInput(startedAt: startedAt, finishedAt: finishedAt, nativeInventory: NativeInventoryResult(applications: [], warnings: ["root unavailable"], complete: false, scannedRoots: ["/Applications"]), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results))
+            let startedAt = Date(timeIntervalSince1970: 2_000)
+            let finishedAt = Date(timeIntervalSince1970: 2_001)
+            let results = [
+                ProviderRefreshResult(provider: .nativeApplications, status: .partial, message: "root unavailable", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt),
+                ProviderRefreshResult(provider: .homebrewInventory, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
+                ProviderRefreshResult(provider: .homebrewTargets, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
+                ProviderRefreshResult(provider: .homebrewReleaseNotes, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
+                ProviderRefreshResult(provider: .npmGlobal, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
+                ProviderRefreshResult(provider: .uvTools, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt),
+            ]
+            let summary = try database.applyRefresh(RefreshPersistenceInput(startedAt: startedAt, finishedAt: finishedAt, nativeInventory: NativeInventoryResult(applications: [], warnings: ["root unavailable"], complete: false, scannedRoots: ["/Applications"]), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results))
 
-        XCTAssertEqual(summary.status, .partial)
-        XCTAssertEqual(summary.providerResults.count, 4)
-        XCTAssertEqual(try database.catalogItems(includeAll: true).first?.active, true)
-        XCTAssertEqual(try database.dashboard(now: finishedAt).data.partialProviderCount, 1)
+            XCTAssertEqual(summary.status, .partial)
+            XCTAssertEqual(summary.providerResults.count, 6)
+            XCTAssertEqual(try database.catalogItems(includeAll: true).first?.active, true)
+            XCTAssertEqual(try database.dashboard(now: finishedAt).data.partialProviderCount, 1)
+        }
+        removeDatabase(at: url)
     }
 
     func testUnifiedRefreshRejectsReplayedCompletionTime() throws {

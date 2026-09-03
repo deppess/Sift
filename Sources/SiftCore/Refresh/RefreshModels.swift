@@ -5,6 +5,8 @@ public enum RefreshProvider: String, Codable, CaseIterable, Sendable {
     case homebrewInventory = "homebrew-inventory"
     case homebrewTargets = "homebrew-targets"
     case homebrewReleaseNotes = "homebrew-release-notes"
+    case npmGlobal = "npm-global"
+    case uvTools = "uv-tools"
 }
 
 public enum ProviderRefreshStatus: String, Codable, Equatable, Sendable {
@@ -81,15 +83,69 @@ public struct RefreshPersistenceInput: Sendable {
     public let homebrewInventory: HomebrewInventory
     public let targetResults: [HomebrewPackageKey: HomebrewTargetResolution]
     public let releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution]
+    public let managedPackageInventories: [ManagedPackageInventory]
     public let providerResults: [ProviderRefreshResult]
 
-    public init(startedAt: Date, finishedAt: Date, nativeInventory: NativeInventoryResult, homebrewInventory: HomebrewInventory, targetResults: [HomebrewPackageKey: HomebrewTargetResolution], releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution], providerResults: [ProviderRefreshResult]) {
+    public init(startedAt: Date, finishedAt: Date, nativeInventory: NativeInventoryResult, homebrewInventory: HomebrewInventory, targetResults: [HomebrewPackageKey: HomebrewTargetResolution], releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution], managedPackageInventories: [ManagedPackageInventory] = [], providerResults: [ProviderRefreshResult]) {
         self.startedAt = startedAt
         self.finishedAt = finishedAt
         self.nativeInventory = nativeInventory
         self.homebrewInventory = homebrewInventory
         self.targetResults = targetResults
         self.releaseNoteResults = releaseNoteResults
+        self.managedPackageInventories = managedPackageInventories
         self.providerResults = providerResults
+    }
+}
+
+public struct ManagedPackage: Equatable, Sendable {
+    public let name: String
+    public let installedVersion: String
+    public let availableVersion: String?
+
+    public init(name: String, installedVersion: String, availableVersion: String? = nil) {
+        self.name = name
+        self.installedVersion = installedVersion
+        self.availableVersion = availableVersion
+    }
+}
+
+public struct ManagedPackageScope: Equatable, Sendable {
+    public let scope: String
+    public let packages: [ManagedPackage]
+
+    public init(scope: String, packages: [ManagedPackage]) {
+        self.scope = scope
+        self.packages = packages
+    }
+}
+
+public struct ManagedPackageInventory: Equatable, Sendable {
+    public let provider: RefreshProvider
+    public let scopes: [ManagedPackageScope]
+
+    public init(provider: RefreshProvider, scopes: [ManagedPackageScope]) {
+        self.provider = provider
+        self.scopes = scopes
+    }
+}
+
+public struct UnifiedUpdate: Codable, Equatable, Sendable {
+    public let provider: String
+    public let scope: String
+    public let name: String
+    public let installedVersion: String
+    public let availableVersion: String
+    public let freshness: Freshness
+    public let dataAsOf: Date?
+
+    public init(provider: String, scope: String, name: String, installedVersion: String, availableVersion: String, freshness: Freshness, dataAsOf: Date?) {
+        self.provider = provider
+        self.scope = scope
+        self.name = name
+        self.installedVersion = installedVersion
+        self.availableVersion = availableVersion
+        self.freshness = freshness
+        self.dataAsOf = dataAsOf
     }
 }
