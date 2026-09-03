@@ -714,6 +714,26 @@ final class SiftCoreTests: XCTestCase {
         XCTAssertEqual(String(decoding: result.stderr, as: UTF8.self), "failure")
     }
 
+    func testUVToolProviderParsesDocumentedToolListOutput() throws {
+        let output = "ruff v0.12.0 [required: ruff>=0.11] [CPython 3.13.3] (/Users/example/.local/share/uv/tools/ruff)\n- ruff (/Users/example/.local/bin/ruff)\nblack v25.1.0 [CPython 3.12.9] (/Users/example/.local/share/uv/tools/black)\n- black (/Users/example/.local/bin/black)\n- blackd (/Users/example/.local/bin/blackd)\n"
+
+        let tools = try UVToolProvider.parseToolList(Data(output.utf8), outdated: false)
+        XCTAssertEqual(tools.map(\.name), ["black", "ruff"])
+        XCTAssertEqual(tools.last?.versionSpecifier, "ruff>=0.11")
+        XCTAssertEqual(tools.first?.entrypoints.map(\.name), ["black", "blackd"])
+    }
+
+    func testUVToolProviderRejectsMalformedToolListOutput() {
+        let malformed = "ruff v0.12.0 [CPython 3.13.3] (/Users/example/tools/ruff)\n- ruff relative/path\n"
+        XCTAssertThrowsError(try UVToolProvider.parseToolList(Data(malformed.utf8), outdated: false))
+    }
+
+    func testUVToolProviderParsesOutdatedToolOutput() throws {
+        let output = "ruff v0.12.0 [required: ruff] [CPython 3.13.3] [latest: 0.13.0] (/Users/example/tools/ruff)\n- ruff (/Users/example/bin/ruff)\n"
+        let tools = try UVToolProvider.parseToolList(Data(output.utf8), outdated: true)
+        XCTAssertEqual(tools.first?.latestVersion, "0.13.0")
+    }
+
     private func homebrewPackage(kind: HomebrewPackageKind, name: String, artifacts: [String] = [], autoUpdates: Bool = false) -> HomebrewPackage {
         HomebrewPackage(prefix: "/opt/homebrew", kind: kind, name: name, fullName: name, tap: kind == .formula ? "homebrew/core" : "homebrew/cask", ownership: kind == .formula ? .explicitlyRequested : .installedCask, installedVersion: "1.0", sourceURL: nil, homepage: nil, artifactPaths: artifacts, autoUpdates: autoUpdates)
     }
