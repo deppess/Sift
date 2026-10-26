@@ -22,10 +22,6 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
         compareResolver = GitHubCompareResolver(metadataClient: metadataClient)
     }
 
-    public func resolve(package: HomebrewPackage, target: HomebrewTarget) -> HomebrewReleaseNotes? {
-        try? resolveExact(package: package, target: target)
-    }
-
     public func resolveReleaseNotes(for package: HomebrewPackage, target: HomebrewTarget) -> HomebrewReleaseNotesResolution {
         guard let source = target.sourceURL ?? package.sourceURL,
               let url = URL(string: source), GitHubSource.parse(url) != nil else {
@@ -122,15 +118,16 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
     }
 
     private func comparisonMarkdown(_ comparison: GitHubComparison) -> String {
-        var counts: [(title: String, count: Int)] = []
+        var counts: [String: Int] = [:]
+        var titlesInOrder: [String] = []
         for commit in comparison.commits {
-            if let index = counts.firstIndex(where: { $0.title == commit.title }) {
-                counts[index].count += 1
-            } else {
-                counts.append((commit.title, 1))
-            }
+            if counts[commit.title] == nil { titlesInOrder.append(commit.title) }
+            counts[commit.title, default: 0] += 1
         }
-        let entries = counts.map { "- \($0.title)\($0.count > 1 ? " × \($0.count)" : "")" }
+        let entries = titlesInOrder.map { title -> String in
+            let count = counts[title] ?? 1
+            return "- \(title)\(count > 1 ? " × \(count)" : "")"
+        }
         return "## Repository changes (\(comparison.commits.count) commits)\n\(entries.joined(separator: "\n"))"
     }
 }

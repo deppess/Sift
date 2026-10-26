@@ -9,20 +9,14 @@ struct GitHubCompareResolver: Sendable {
 
     func compare(repository: GitHubRepository, installedCommit: String, targetCommit: String) throws -> GitHubComparison? {
         guard let metadataClient,
-              let owner = encode(repository.owner),
-              let name = encode(repository.name),
-              let installed = encode(installedCommit),
-              let target = encode(targetCommit),
+              let owner = encodeGitHubPathComponent(repository.owner),
+              let name = encodeGitHubPathComponent(repository.name),
+              let installed = encodeGitHubPathComponent(installedCommit),
+              let target = encodeGitHubPathComponent(targetCommit),
               let url = URL(string: "https://api.github.com/repos/\(owner)/\(name)/compare/\(installed)...\(target)") else { return nil }
         let data = try metadataClient.fetch(url, resource: .githubReference).body
         let response = try JSONDecoder().decode(Response.self, from: data)
         return GitHubComparison(commits: response.commits.map { GitHubCommitSummary(sha: $0.sha, message: $0.commit.message) }, sourceURL: "https://github.com/\(repository.path)/compare/\(installedCommit)...\(targetCommit)")
-    }
-
-    private func encode(_ value: String) -> String? {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed)
     }
 
     private struct Response: Decodable {

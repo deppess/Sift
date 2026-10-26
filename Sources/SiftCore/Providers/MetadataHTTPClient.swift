@@ -1,23 +1,27 @@
 import CryptoKit
 import Foundation
 
-public enum MetadataResource: Sendable {
-    case homebrewTarget
+public enum MetadataResource: Equatable, Sendable {
     case githubReference
     case githubAnnotatedTag
     case githubReleaseByTag
     case githubReleaseList
-    case githubCommit
     case githubTree
     case githubBlob
     case githubChangelog
+    case appStoreLookup
+    case homebrewCaskCatalog
+    case blackmagicDownloads
+    case cratesIndex
+    case githubLatestRelease
+    /// An electron-builder `latest-mac.yml`; only the host the app's manifest names is allowed.
+    case electronUpdateFeed(host: String)
+    /// A Sparkle appcast; only the host the application's own bundle declares is allowed.
+    case sparkleAppcast(host: String)
 }
 
 public struct MetadataHTTPResponse: Sendable {
     public let body: Data
-    public let linkHeader: String?
-    public let validatedAt: Date
-    public let fromCache: Bool
 }
 
 public struct CachedMetadataResponse: Sendable {
@@ -25,7 +29,6 @@ public struct CachedMetadataResponse: Sendable {
     public let body: Data?
     public let etag: String?
     public let lastModified: String?
-    public let linkHeader: String?
     public let validatedAt: Date
 }
 
@@ -59,7 +62,12 @@ public enum MetadataHTTPError: LocalizedError {
 
 public final class MetadataHTTPClient: @unchecked Sendable {
     private static let concurrency = DispatchSemaphore(value: 6)
-    private static let githubConcurrency = DispatchSemaphore(value: 1)
+    // Anonymous GitHub API access has a low hourly quota (60 requests) and is the more likely target
+    // of abuse-detection throttling on bursty concurrent traffic, so it stays fully serial. A
+    // request carrying a token (GITHUB_TOKEN/GH_TOKEN) has a much higher quota (5,000/hour) and is
+    // not subject to that same anonymous-abuse heuristic, so it can safely overlap in flight.
+    private static let githubConcurrencyAnonymous = DispatchSemaphore(value: 1)
+    private static let githubConcurrencyAuthenticated = DispatchSemaphore(value: 4)
     private static let rateLimitLock = NSLock()
     nonisolated(unsafe) private static var githubBlockedUntil: [String: Date] = [:]
 
@@ -81,20 +89,53 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         try perform(url, policy: policy(for: resource))
     }
 
+    /// `derive` applied to the response, saved next to it: while the cached response is the same
+    /// one (same ETag, or the same download when the server sends none), the saved value is reused
+    /// instead of deriving it again. Fetching works exactly as `fetch` does.
+    public func fetch<Value: Codable>(_ url: URL, resource: MetadataResource, derivedAs name: String, _ derive: (Data) throws -> Value) throws -> Value {
+        let policy = policy(for: resource)
+        let derivedKind = "\(policy.cacheKey)-derived-\(name)"
+        // The response a saved value was derived from: its ETag, or the download itself when the
+        // server sends none.
+        func sourceKey(_ cached: CachedMetadataResponse) -> String { cached.etag ?? "validated:\(cached.validatedAt.timeIntervalSince1970)" }
+        // JSON decodes about twice as fast as a property list here.
+        func saved(for source: String?) -> Value? {
+            guard let source, let saved = try? database.cachedMetadataResponse(url: url.absoluteString, resourceKind: derivedKind), saved.etag == source,
+                  let compressed = saved.body, let data = try? (compressed as NSData).decompressed(using: .lzfse) as Data else { return nil }
+            return try? JSONDecoder().decode(Value.self, from: data)
+        }
+        // While the cached response is fresh its body isn't needed at all: the saved value answers
+        // without decompressing it (the cask catalog is 19 MB).
+        if let cached = try database.cachedMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey), cached.statusCode == 200,
+           case let age = now().timeIntervalSince(cached.validatedAt), age >= 0, age < policy.maxAge,
+           let value = saved(for: sourceKey(cached)) {
+            return value
+        }
+        let body = try perform(url, policy: policy).body
+        let source = (try? database.cachedMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey)).flatMap { $0 }.map(sourceKey)
+        if let value = saved(for: source) { return value }
+        let value = try derive(body)
+        if let source, let data = try? JSONEncoder().encode(value), let compressed = try? (data as NSData).compressed(using: .lzfse) as Data {
+            try? database.storeMetadataResponse(url: url.absoluteString, resourceKind: derivedKind, statusCode: 200, body: compressed, etag: source, lastModified: nil, validatedAt: now())
+        }
+        return value
+    }
+
     private func perform(_ url: URL, policy: MetadataHTTPPolicy) throws -> MetadataHTTPResponse {
-        guard isAllowed(url, policy: policy) else { throw MetadataHTTPError.unsupportedURL }
+        guard isAllowedMetadataURL(url, policy: policy) else { throw MetadataHTTPError.unsupportedURL }
         let deadline = DispatchTime.now() + policy.outerTimeout
         let timestamp = now()
-        let cached = try database.cachedMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey)
+        let cached = try database.cachedMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey).map { decodedCache($0, policy: policy) }
         let age = cached.map { timestamp.timeIntervalSince($0.validatedAt) }
         if let cached, let age, age >= 0, age < policy.maxAge {
             if cached.statusCode == 404 { throw MetadataHTTPError.notFound }
             guard let body = cached.body else { throw MetadataHTTPError.invalidResponse }
-            return MetadataHTTPResponse(body: body, linkHeader: cached.linkHeader, validatedAt: cached.validatedAt, fromCache: true)
+            return MetadataHTTPResponse(body: body)
         }
         if policy.serialGitHub {
-            guard Self.githubConcurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
-            defer { Self.githubConcurrency.signal() }
+            let githubConcurrency = policy.token != nil ? Self.githubConcurrencyAuthenticated : Self.githubConcurrencyAnonymous
+            guard githubConcurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
+            defer { githubConcurrency.signal() }
             if let retryAt = blockedUntil(for: policy) { throw MetadataHTTPError.rateLimited(retryAt: retryAt) }
         }
         guard Self.concurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
@@ -125,10 +166,10 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         let validatedAt = now()
         if response.statusCode == 304, cached == nil { throw MetadataHTTPError.invalidResponse }
         if response.statusCode == 304, let cached {
-            try database.storeMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: cached.statusCode, body: cached.body, etag: response.value(forHTTPHeaderField: "ETag") ?? cached.etag, lastModified: response.value(forHTTPHeaderField: "Last-Modified") ?? cached.lastModified, validatedAt: validatedAt, linkHeader: response.value(forHTTPHeaderField: "Link") ?? cached.linkHeader)
+            try database.storeMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: cached.statusCode, body: encodedCacheBody(cached.body, policy: policy), etag: response.value(forHTTPHeaderField: "ETag") ?? cached.etag, lastModified: response.value(forHTTPHeaderField: "Last-Modified") ?? cached.lastModified, validatedAt: validatedAt)
             if cached.statusCode == 404 { throw MetadataHTTPError.notFound }
             guard let body = cached.body else { throw MetadataHTTPError.invalidResponse }
-            return MetadataHTTPResponse(body: body, linkHeader: response.value(forHTTPHeaderField: "Link") ?? cached.linkHeader, validatedAt: validatedAt, fromCache: true)
+            return MetadataHTTPResponse(body: body)
         }
         if response.statusCode == 404 {
             try database.storeMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: 404, body: nil, etag: response.value(forHTTPHeaderField: "ETag"), lastModified: response.value(forHTTPHeaderField: "Last-Modified"), validatedAt: validatedAt)
@@ -139,33 +180,57 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             throw error
         }
         guard (200...299).contains(response.statusCode) else { throw MetadataHTTPError.transport("Metadata server returned HTTP \(response.statusCode).") }
-        try database.storeMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: response.statusCode, body: data, etag: response.value(forHTTPHeaderField: "ETag"), lastModified: response.value(forHTTPHeaderField: "Last-Modified"), validatedAt: validatedAt, linkHeader: response.value(forHTTPHeaderField: "Link"))
-        return MetadataHTTPResponse(body: data, linkHeader: response.value(forHTTPHeaderField: "Link"), validatedAt: validatedAt, fromCache: false)
+        try database.storeMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: response.statusCode, body: encodedCacheBody(data, policy: policy), etag: response.value(forHTTPHeaderField: "ETag"), lastModified: response.value(forHTTPHeaderField: "Last-Modified"), validatedAt: validatedAt)
+        return MetadataHTTPResponse(body: data)
     }
 
     private func policy(for resource: MetadataResource) -> MetadataHTTPPolicy {
         switch resource {
-        case .homebrewTarget:
-            return MetadataHTTPPolicy(cacheKey: "homebrew-target-v2", allowedHosts: ["formulae.brew.sh"], responseLimit: 1_048_576, accept: "application/json", headers: [:], token: nil, serialGitHub: false, rateLimitKey: nil)
+        case .homebrewCaskCatalog:
+            // ~19 MB of JSON (2 MB on the wire); cached compressed and revalidated with its ETag.
+            return MetadataHTTPPolicy(cacheKey: "homebrew-cask-catalog-v1", allowedHosts: ["formulae.brew.sh"], responseLimit: 64 * 1_048_576, accept: "application/json", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+        case let .electronUpdateFeed(host):
+            return MetadataHTTPPolicy(cacheKey: "electron-update-feed-v1", allowedHosts: [host.lowercased()], responseLimit: 1_048_576, accept: "text/yaml, application/x-yaml, text/plain", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, redirectsToPublicHosts: true, maxAge: 60 * 60)
+        case .cratesIndex:
+            return MetadataHTTPPolicy(cacheKey: "crates-index-v1", allowedHosts: ["index.crates.io"], responseLimit: 16 * 1_048_576, accept: "application/json, text/plain", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+        case .blackmagicDownloads:
+            return MetadataHTTPPolicy(cacheKey: "blackmagic-downloads-v1", allowedHosts: ["www.blackmagicdesign.com"], responseLimit: 8 * 1_048_576, accept: "application/json", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+        case .appStoreLookup:
+            return MetadataHTTPPolicy(cacheKey: "app-store-lookup-v1", allowedHosts: ["itunes.apple.com"], responseLimit: 1_048_576, accept: "application/json", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, maxAge: 60 * 60)
+        case let .sparkleAppcast(host):
+            // Feeds commonly redirect to a CDN or object store (some go to S3), as Sparkle allows.
+            return MetadataHTTPPolicy(cacheKey: "sparkle-appcast-v1", allowedHosts: [host.lowercased()], responseLimit: 4_194_304, accept: "application/rss+xml, application/xml, text/xml", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, redirectsToPublicHosts: true, maxAge: 60 * 60)
         case .githubChangelog:
             return MetadataHTTPPolicy(cacheKey: "github-changelog-v2", allowedHosts: ["raw.githubusercontent.com"], responseLimit: 2_097_152, accept: "text/plain", headers: [:], token: nil, serialGitHub: false, rateLimitKey: nil)
-        case .githubReference, .githubAnnotatedTag, .githubReleaseByTag, .githubReleaseList, .githubCommit, .githubTree, .githubBlob:
-            let token = githubToken()
-            let name: String
-            switch resource {
-            case .githubReference: name = "github-reference"
-            case .githubAnnotatedTag: name = "github-annotated-tag"
-            case .githubReleaseByTag: name = "github-release-by-tag"
-            case .githubReleaseList: name = "github-release-list"
-            case .githubCommit: name = "github-commit"
-            case .githubTree: name = "github-tree"
-            case .githubBlob: name = "github-blob"
-            default: name = "github-unsupported"
-            }
-            let limit = resource == .githubReleaseList || resource == .githubTree || resource == .githubBlob ? 4_194_304 : 2_097_152
-            let representation = token.map { "auth-\(tokenFingerprint($0))" } ?? "anonymous"
-            return MetadataHTTPPolicy(cacheKey: "\(name)-v3-\(representation)", allowedHosts: ["api.github.com"], responseLimit: limit, accept: "application/vnd.github+json", headers: ["X-GitHub-Api-Version": "2022-11-28", "User-Agent": "sift-pre-v1"], token: token, serialGitHub: true, rateLimitKey: representation)
+        case .githubReference: return githubPolicy("github-reference", responseLimit: 2_097_152)
+        case .githubAnnotatedTag: return githubPolicy("github-annotated-tag", responseLimit: 2_097_152)
+        case .githubReleaseByTag: return githubPolicy("github-release-by-tag", responseLimit: 2_097_152)
+        case .githubLatestRelease: return githubPolicy("github-latest-release", responseLimit: 2_097_152, maxAge: 60 * 60)
+        case .githubReleaseList: return githubPolicy("github-release-list", responseLimit: 4_194_304)
+        case .githubTree: return githubPolicy("github-tree", responseLimit: 4_194_304)
+        case .githubBlob: return githubPolicy("github-blob", responseLimit: 4_194_304)
         }
+    }
+
+    /// GitHub API responses are cached per credential, so a token's wider view never answers an
+    /// anonymous request or the reverse.
+    private func githubPolicy(_ name: String, responseLimit limit: Int, maxAge: TimeInterval = 6 * 60 * 60) -> MetadataHTTPPolicy {
+        let token = githubToken()
+        let representation = token.map { "auth-\(tokenFingerprint($0))" } ?? "anonymous"
+        return MetadataHTTPPolicy(cacheKey: "\(name)-v3-\(representation)", allowedHosts: ["api.github.com"], responseLimit: limit, accept: "application/vnd.github+json", headers: ["X-GitHub-Api-Version": "2022-11-28", "User-Agent": SiftVersion.userAgent], token: token, serialGitHub: true, rateLimitKey: representation, maxAge: maxAge)
+    }
+
+    /// Large catalogs are stored LZFSE-compressed; everything else is stored as received.
+    private func encodedCacheBody(_ body: Data?, policy: MetadataHTTPPolicy) -> Data? {
+        guard policy.compressesCache, let body else { return body }
+        return (try? (body as NSData).compressed(using: .lzfse) as Data) ?? body
+    }
+
+    private func decodedCache(_ cached: CachedMetadataResponse, policy: MetadataHTTPPolicy) -> CachedMetadataResponse {
+        guard policy.compressesCache, let body = cached.body else { return cached }
+        // An undecodable body is treated as no body, which forces a fresh download.
+        let decoded = try? (body as NSData).decompressed(using: .lzfse) as Data
+        return CachedMetadataResponse(statusCode: cached.statusCode, body: decoded, etag: decoded == nil ? nil : cached.etag, lastModified: decoded == nil ? nil : cached.lastModified, validatedAt: decoded == nil ? .distantPast : cached.validatedAt)
     }
 
     private func githubToken() -> String? {
@@ -178,12 +243,20 @@ public final class MetadataHTTPClient: @unchecked Sendable {
 
     private func blockedUntil(for policy: MetadataHTTPPolicy) -> Date? {
         guard let key = policy.rateLimitKey else { return nil }
-        return Self.rateLimitLock.withLock {
-            Self.githubBlockedUntil = Self.githubBlockedUntil.filter { $0.value > now() }
-            guard let blocked = Self.githubBlockedUntil[key] else { return nil }
-            return blocked
-        }
+        let current = now()
+        if let blocked = Self.rateLimitLock.withLock({ () -> Date? in
+            Self.githubBlockedUntil = Self.githubBlockedUntil.filter { $0.value > current }
+            return Self.githubBlockedUntil[key]
+        }) { return blocked }
+        // A block recorded by an earlier run still applies: asking again only spends a request.
+        guard let stored = (try? database.setting(Self.rateLimitSettingPrefix + key)).flatMap({ $0.flatMap(TimeInterval.init) }) else { return nil }
+        let blocked = Date(timeIntervalSince1970: stored)
+        guard blocked > current else { return nil }
+        Self.rateLimitLock.withLock { Self.githubBlockedUntil[key] = max(Self.githubBlockedUntil[key] ?? blocked, blocked) }
+        return blocked
     }
+
+    private static let rateLimitSettingPrefix = "github-rate-limited-until:"
 
     private func blockGitHub(for policy: MetadataHTTPPolicy, until retryAt: Date?) {
         guard let key = policy.rateLimitKey, let retryAt else { return }
@@ -192,10 +265,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
                 Self.githubBlockedUntil[key] = retryAt
             }
         }
-    }
-
-    private func isAllowed(_ url: URL, policy: MetadataHTTPPolicy) -> Bool {
-        url.scheme?.lowercased() == "https" && url.user == nil && url.password == nil && url.port == nil && url.host.map { policy.allowedHosts.contains($0.lowercased()) } == true
+        try? database.setSetting(Self.rateLimitSettingPrefix + key, value: String(retryAt.timeIntervalSince1970))
     }
 
     private func statusError(_ response: HTTPURLResponse, now: Date) -> MetadataHTTPError? {
@@ -230,7 +300,19 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     private func normalizedTransportError(_ error: Error) -> MetadataHTTPError {
         if let error = error as? MetadataHTTPError { return error }
         guard let error = error as? URLError else { return .transport(error.localizedDescription) }
-        return error.code == .timedOut ? .timedOut : .transport("Metadata transport failed: \(error.code.rawValue).")
+        if error.code == .timedOut { return .timedOut }
+        // An application firewall's prompt left unanswered typically surfaces as a lost or
+        // refused connection, so name the host-level cause rather than a bare error code.
+        let reason: String = switch error.code {
+        case .networkConnectionLost: "the network connection was lost"
+        case .notConnectedToInternet: "the Mac is not connected to the internet"
+        case .cannotFindHost, .dnsLookupFailed: "the host could not be found"
+        case .cannotConnectToHost: "the host refused the connection"
+        case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot: "a secure connection could not be established"
+        default: "the request failed"
+        }
+        let host = error.failingURL?.host.map { " to \($0)" } ?? ""
+        return .transport("Metadata request\(host) failed: \(reason) (URL error \(error.code.rawValue)).")
     }
 
     private func remaining(until deadline: DispatchTime) -> TimeInterval {
@@ -248,6 +330,30 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     }
 }
 
+/// Where a request may end up after redirects: an allowed host, or for policies that permit it, any
+/// public HTTPS host.
+private func isAllowedRedirectURL(_ url: URL?, policy: MetadataHTTPPolicy) -> Bool {
+    if isAllowedMetadataURL(url, policy: policy) { return true }
+    guard policy.redirectsToPublicHosts, let url else { return false }
+    return isPublicHTTPSURL(url)
+}
+
+/// HTTPS on a named public host: no credentials, ports, IP literals, or local names.
+func isPublicHTTPSURL(_ url: URL) -> Bool {
+    guard url.scheme?.lowercased() == "https", url.user == nil, url.password == nil, url.port == nil,
+          let host = url.host?.lowercased(), host.contains("."), !host.hasSuffix(".local"), !host.hasSuffix(".localhost"), host != "localhost",
+          host.contains(where: \.isLetter), !host.contains(":") else { return false }
+    return true
+}
+
+/// Shared by `MetadataHTTPClient` (initial request) and, through `isAllowedRedirectURL`,
+/// `MetadataHTTPSessionDelegate` (each redirect hop and the final response), so the HTTPS/host
+/// allowlist can't drift between the call sites.
+private func isAllowedMetadataURL(_ url: URL?, policy: MetadataHTTPPolicy) -> Bool {
+    guard let url else { return false }
+    return url.scheme?.lowercased() == "https" && url.user == nil && url.password == nil && url.port == nil && url.host.map { policy.allowedHosts.contains($0.lowercased()) } == true
+}
+
 private struct MetadataHTTPPolicy: Sendable {
     let cacheKey: String
     let allowedHosts: Set<String>
@@ -257,7 +363,13 @@ private struct MetadataHTTPPolicy: Sendable {
     let token: String?
     let serialGitHub: Bool
     let rateLimitKey: String?
-    let maxAge: TimeInterval = 6 * 60 * 60
+    var compressesCache = false
+    /// Redirects may leave `allowedHosts` for any public HTTPS host (see `isPublicHTTPSURL`).
+    var redirectsToPublicHosts = false
+    /// How long a cached response is used without asking the server again. Release notes are
+    /// pinned to a version and GitHub's anonymous quota is small, so they keep six hours; sources
+    /// that announce new versions are asked again after an hour, as Homebrew's metadata is.
+    var maxAge: TimeInterval = 6 * 60 * 60
     let timeout: TimeInterval = 30
     let outerTimeout: TimeInterval = 35
 }
@@ -272,7 +384,7 @@ private final class MetadataHTTPSessionDelegate: NSObject, URLSessionDataDelegat
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         let state = lock.withLock { () -> RequestState? in
             guard var state = requests[task.taskIdentifier] else { return nil }
-            guard state.redirectCount < 5, isAllowed(request.url, policy: state.policy) else { state.result.fail(MetadataHTTPError.unsupportedURL); requests[task.taskIdentifier] = state; return nil }
+            guard state.redirectCount < 5, isAllowedRedirectURL(request.url, policy: state.policy) else { state.result.fail(MetadataHTTPError.unsupportedURL); requests[task.taskIdentifier] = state; return nil }
             state.redirectCount += 1
             requests[task.taskIdentifier] = state
             return state
@@ -281,7 +393,7 @@ private final class MetadataHTTPSessionDelegate: NSObject, URLSessionDataDelegat
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        guard let state = lock.withLock({ requests[dataTask.taskIdentifier] }), isAllowed(response.url, policy: state.policy), let http = response as? HTTPURLResponse else { result(for: dataTask)?.fail(MetadataHTTPError.unsupportedURL); completionHandler(.cancel); return }
+        guard let state = lock.withLock({ requests[dataTask.taskIdentifier] }), isAllowedRedirectURL(response.url, policy: state.policy), let http = response as? HTTPURLResponse else { result(for: dataTask)?.fail(MetadataHTTPError.unsupportedURL); completionHandler(.cancel); return }
         state.result.setResponse(http)
         completionHandler(.allow)
     }
@@ -293,7 +405,6 @@ private final class MetadataHTTPSessionDelegate: NSObject, URLSessionDataDelegat
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) { lock.withLock { requests.removeValue(forKey: task.taskIdentifier)?.result }?.complete(error: error) }
     private func result(for task: URLSessionTask) -> HTTPDataResult? { lock.withLock { requests[task.taskIdentifier]?.result } }
-    private func isAllowed(_ url: URL?, policy: MetadataHTTPPolicy) -> Bool { guard let url else { return false }; return url.scheme?.lowercased() == "https" && url.user == nil && url.password == nil && url.port == nil && url.host.map { policy.allowedHosts.contains($0.lowercased()) } == true }
 }
 
 private final class HTTPDataResult: @unchecked Sendable {
@@ -325,5 +436,3 @@ private final class HTTPDataResult: @unchecked Sendable {
     func waitForCompletion(timeout: DispatchTime) -> Bool { completionSemaphore.wait(timeout: timeout) == .success }
     func value() -> Result<(Data, HTTPURLResponse), Error> { lock.withLock { if let failure { return .failure(failure) }; guard let response else { return .failure(MetadataHTTPError.invalidResponse) }; return .success((data, response)) } }
 }
-
-private extension String { var nonEmpty: String? { isEmpty ? nil : self } }

@@ -35,20 +35,24 @@ public struct UVToolInstallation: Codable, Equatable, Sendable {
     public let toolDirectory: String
     public let tools: [UVTool]
     public let outdatedTools: [UVTool]
+    public let outdatedComplete: Bool
 
-    public init(executablePath: String, toolDirectory: String, tools: [UVTool], outdatedTools: [UVTool]) {
+    public init(executablePath: String, toolDirectory: String, tools: [UVTool], outdatedTools: [UVTool], outdatedComplete: Bool = true) {
         self.executablePath = executablePath
         self.toolDirectory = toolDirectory
         self.tools = tools
         self.outdatedTools = outdatedTools
+        self.outdatedComplete = outdatedComplete
     }
 }
 
 public struct UVToolInventory: Codable, Equatable, Sendable {
     public let installations: [UVToolInstallation]
+    public let warnings: [String]
 
-    public init(installations: [UVToolInstallation]) {
+    public init(installations: [UVToolInstallation], warnings: [String] = []) {
         self.installations = installations
+        self.warnings = warnings
     }
 }
 
@@ -72,27 +76,48 @@ public enum UVToolProviderError: LocalizedError {
     }
 }
 
-public struct UVToolProvider {
+public struct UVToolProvider: Sendable {
     private let runner: CommandRunner
     private let environment: [String: String]
+    private let standardDirectories: [String]
 
-    public init(runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment) {
+    public init(runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment, standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
         self.runner = runner
         // CommandRunner cannot select a working directory; prevent cwd and user config discovery.
         self.environment = environment.merging(["LC_ALL": "C", "NO_COLOR": "1", "UV_NO_CONFIG": "1", "UV_NO_PROGRESS": "1"]) { _, replacement in replacement }
+        self.standardDirectories = standardDirectories
     }
 
-    public func discover() throws -> UVToolInventory {
-        try UVToolInventory(installations: executables().map { executable in
-            let directoryResult = try run(executable, command: "tool dir", arguments: ["tool", "dir"])
-            let toolDirectory = try parseToolDirectory(directoryResult.stdout)
-            let listResult = try run(executable, command: "tool list", arguments: listArguments)
-            let tools = try Self.parseToolList(listResult.stdout, outdated: false)
-            let outdatedResult = try run(executable, command: "tool list --outdated", arguments: listArguments + ["--outdated"])
-            let outdatedTools = try Self.parseToolList(outdatedResult.stdout, outdated: true)
-            guard Set(outdatedTools.map(\.name)).isSubset(of: Set(tools.map(\.name))) else { throw UVToolProviderError.invalidOutdated }
-            return UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: outdatedTools)
-        }.sorted { $0.toolDirectory < $1.toolDirectory })
+    public func discover() -> UVToolInventory {
+        var installations: [UVToolInstallation] = []
+        var warnings: [String] = []
+        for executable in executables() {
+            do {
+                let directoryResult = try run(executable, command: "tool dir", arguments: ["tool", "dir"])
+                let toolDirectory = try parseToolDirectory(directoryResult.stdout)
+                let listResult = try run(executable, command: "tool list", arguments: listArguments)
+                let tools = try Self.parseToolList(listResult.stdout, outdated: false)
+                // The outdated check asks the package index about every tool; with none there is
+                // nothing to ask.
+                guard !tools.isEmpty else {
+                    installations.append(UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: [], outdatedTools: []))
+                    continue
+                }
+                do {
+                    let outdatedResult = try run(executable, command: "tool list --outdated", arguments: listArguments + ["--outdated"])
+                    let outdatedTools = try Self.parseToolList(outdatedResult.stdout, outdated: true)
+                    guard Set(outdatedTools.map(\.name)).isSubset(of: Set(tools.map(\.name))) else { throw UVToolProviderError.invalidOutdated }
+                    installations.append(UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: outdatedTools))
+                } catch {
+                    warnings.append("uv tool list --outdated at \(executable.path): \(error.localizedDescription)")
+                    installations.append(UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: [], outdatedComplete: false))
+                }
+            } catch {
+                // A failed installation must not discard tool directories that other installations reported successfully.
+                warnings.append("uv at \(executable.path): \(error.localizedDescription)")
+            }
+        }
+        return UVToolInventory(installations: installations.sorted { $0.toolDirectory < $1.toolDirectory }, warnings: warnings)
     }
 
     private var listArguments: [String] {
@@ -106,24 +131,7 @@ public struct UVToolProvider {
     }
 
     private func executables() -> [URL] {
-        var candidates = [URL(filePath: "/opt/homebrew/bin/uv"), URL(filePath: "/usr/local/bin/uv"), URL(filePath: "/usr/bin/uv")]
-        if let path = environment["PATH"] {
-            candidates += path.split(separator: ":").compactMap { entry in
-                let directory = String(entry)
-                guard Self.isSafeAbsolutePath(directory) else { return nil }
-                return URL(filePath: directory, directoryHint: .isDirectory).appending(path: "uv")
-            }
-        }
-        var seen = Set<String>()
-        return candidates.compactMap { candidate in
-            let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
-            guard isRegularExecutable(resolved), seen.insert(resolved.path).inserted else { return nil }
-            return resolved
-        }
-    }
-
-    private func isRegularExecutable(_ url: URL) -> Bool {
-        FileManager.default.isExecutableFile(atPath: url.path) && (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+        discoverExecutables(named: "uv", standardDirectories: standardDirectories, environment: environment)
     }
 
     private func parseToolDirectory(_ data: Data) throws -> String {
@@ -220,7 +228,4 @@ public struct UVToolProvider {
         return URL(filePath: path).standardizedFileURL.path
     }
 
-    private static func isSafeAbsolutePath(_ value: String) -> Bool {
-        value.hasPrefix("/") && !value.split(separator: "/").contains("..") && !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
-    }
 }

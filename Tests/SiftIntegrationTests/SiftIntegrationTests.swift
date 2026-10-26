@@ -28,7 +28,7 @@ final class SiftIntegrationTests: XCTestCase {
         let database = root.appending(path: "unused.sqlite3")
         let help = try Self.run(executable: executable, ["--help", "--database", database.path])
         XCTAssertEqual(help.status, 0)
-        XCTAssertEqual(help.stdout, "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--full] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]\n")
+        XCTAssertEqual(help.stdout, "Usage: sift [refresh|apps [name]|updates|changes|show <package>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]\n")
         XCTAssertEqual(help.stderr, "")
         XCTAssertFalse(FileManager.default.fileExists(atPath: database.path))
 
@@ -66,7 +66,7 @@ final class SiftIntegrationTests: XCTestCase {
         XCTAssertEqual(result.status, 0)
         XCTAssertEqual(result.stderr, "")
         let object = try JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
-        XCTAssertEqual(object?["schemaVersion"] as? Int, 0)
+        XCTAssertEqual(object?["schemaVersion"] as? Int, 1)
         XCTAssertEqual(object?["freshness"] as? String, "unknown")
         XCTAssertEqual(object?["latestRefreshStatus"] as? String, "never")
         XCTAssertTrue(object?.keys.contains("lastAttemptAt") == true)
@@ -135,7 +135,7 @@ final class SiftIntegrationTests: XCTestCase {
         XCTAssertEqual(results.values.count, 16)
         XCTAssertTrue(results.values.allSatisfy { $0.status == 0 && $0.stderr.isEmpty })
         XCTAssertEqual(try scalar(database, "PRAGMA integrity_check;"), "ok")
-        XCTAssertEqual(try scalar(database, "SELECT COUNT(*) FROM schema_migrations WHERE version = 11;"), "1")
+        XCTAssertEqual(try scalar(database, "SELECT COUNT(*) FROM schema_migrations WHERE version = 15;"), "1")
     }
 
     func testRejectsCorruptDatabase() throws {

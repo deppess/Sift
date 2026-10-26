@@ -1,5 +1,14 @@
 import Foundation
 
+/// Percent-encodes a single GitHub API/URL path segment (owner, repo, tag, ref, commit SHA). Shared by
+/// GitHubReleaseResolver, GitHubTagResolver, and GitHubCompareResolver so their API and source URL
+/// construction can't diverge on which characters get escaped.
+func encodeGitHubPathComponent(_ value: String) -> String? {
+    var allowed = CharacterSet.urlPathAllowed
+    allowed.remove(charactersIn: "/")
+    return value.addingPercentEncoding(withAllowedCharacters: allowed)
+}
+
 public struct GitHubRepository: Equatable, Sendable {
     public let owner: String
     public let name: String

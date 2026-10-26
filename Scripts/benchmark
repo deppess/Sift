@@ -19,7 +19,7 @@ swift build -c release
 run=1
 while [ "$run" -le "$iterations" ]; do
     started=$(date +%s)
-    swift test --filter SiftCoreTests >/dev/null
+    swift test -c release --filter SiftCoreTests >/dev/null
     finished=$(date +%s)
     printf '{"scenario":"core-tests","iteration":%s,"elapsedSeconds":%s}\n' "$run" "$((finished - started))"
     run=$((run + 1))

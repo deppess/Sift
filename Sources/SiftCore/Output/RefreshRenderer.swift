@@ -18,7 +18,7 @@ public enum RefreshRenderer {
         if !summary.providerResults.isEmpty {
             lines.append("")
             lines.append("Providers")
-            lines.append(contentsOf: summary.providerResults.map { "\($0.provider.rawValue)\t\($0.status.rawValue)" })
+            lines.append(contentsOf: TableFormatter.rows(summary.providerResults.map { [$0.provider.rawValue, $0.status.rawValue] }))
         }
         lines.append("")
         lines.append(summary.status == .success ? "Refresh completed successfully." : "Refresh completed with incomplete provider data.")
@@ -26,9 +26,6 @@ public enum RefreshRenderer {
     }
 
     public static func json(_ summary: RefreshSummary) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return String(decoding: try encoder.encode(summary), as: UTF8.self)
+        try JSONOutput.encode(summary)
     }
 }

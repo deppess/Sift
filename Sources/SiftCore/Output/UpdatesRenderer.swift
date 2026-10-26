@@ -3,14 +3,21 @@ import Foundation
 public enum UpdatesRenderer {
     public static func humanReadable(_ updates: [UnifiedUpdate]) -> String {
         guard !updates.isEmpty else { return "No cached updates available." }
-        var lines = ["Updates  \(updates.count)", ""]
-        lines.append(contentsOf: updates.map { "\($0.name.terminalInline)\t\($0.installedVersion.terminalInline) -> \($0.availableVersion.terminalInline)\t\($0.provider.terminalInline)\t\($0.scope.terminalInline)" })
-        return lines.joined(separator: "\n")
+        let rows = updates.map { [$0.name.terminalInline, "\($0.installedVersion.terminalInline) -> \($0.availableVersion.terminalInline)", $0.provider.terminalInline, $0.scope.terminalInline, $0.selfUpdating ? "self-updating" : ""] }
+        let freshness = updates.contains(where: { $0.freshness == .stale }) ? "Snapshot is stale; run 'sift refresh' before comparing." : "Matches the latest cached snapshot."
+        let selfUpdatingCount = updates.filter(\.selfUpdating).count
+        let header = selfUpdatingCount == 0 ? "Updates  \(updates.count)" : "Updates  \(updates.count - selfUpdatingCount) + \(selfUpdatingCount) self-updating"
+        return ([header, freshness, ""] + TableFormatter.rows(rows).map { $0.trimmingTrailingSpaces }).joined(separator: "\n")
     }
 
     public static func json(_ updates: [UnifiedUpdate]) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return String(decoding: try encoder.encode(updates), as: UTF8.self)
+        try JSONOutput.encode(updates)
+    }
+}
+
+private extension String {
+    var trimmingTrailingSpaces: String {
+        guard let end = lastIndex(where: { $0 != " " }) else { return "" }
+        return String(self[...end])
     }
 }

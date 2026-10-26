@@ -30,7 +30,7 @@ public struct Dashboard: Codable, Equatable, Sendable {
         latestRefreshStatus: RefreshStatus,
         data: DashboardData
     ) {
-        self.schemaVersion = 0
+        self.schemaVersion = 1
         self.generatedAt = generatedAt
         self.lastAttemptAt = lastAttemptAt
         self.dataAsOf = dataAsOf

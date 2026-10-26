@@ -1,6 +1,3 @@
-import Darwin
-import Foundation
-
 enum CompletionShell: String {
     case fish
     case bash
@@ -15,28 +12,39 @@ enum CompletionRenderer {
             complete -c sift -f
             complete -c sift -n '__fish_use_subcommand' -a refresh -d 'Refresh native application inventory'
             complete -c sift -n '__fish_use_subcommand' -a apps -d 'Show cached applications'
-            complete -c sift -n '__fish_use_subcommand' -a updates -d 'Show cached Homebrew updates'
-            complete -c sift -n '__fish_use_subcommand' -a show -d 'Show cached release notes'
+            complete -c sift -n '__fish_use_subcommand' -a updates -d 'Show cached updates'
+            complete -c sift -n '__fish_use_subcommand' -a changes -d 'Show cached application changes'
+            complete -c sift -n '__fish_use_subcommand' -a show -d 'Show cached software details'
+            complete -c sift -n '__fish_use_subcommand' -a completions -d 'Generate shell completions'
             complete -c sift -s h -l help -d 'Show usage'
+            complete -c sift -l version -d 'Show version'
             complete -c sift -l json -d 'Render JSON'
             complete -c sift -l all -d 'Include CoreServices and inactive applications'
+            complete -c sift -l full -d 'Show full release notes'
             complete -c sift -l no-color -d 'Disable color output'
+            complete -c sift -l update-homebrew -d 'Update Homebrew metadata before refreshing'
+            complete -c sift -l no-update-homebrew -d 'Skip updating Homebrew metadata before refreshing'
             complete -c sift -l database -r -F -d 'Use a database path'
-            complete -c sift -l completions -d 'Install shell completions'
-            complete -c sift -n '__fish_seen_subcommand_from apps show' -a '(sift __complete apps (commandline -ct))'
+            complete -c sift -n '__fish_seen_subcommand_from apps show' -a '(sift __complete (commandline -opc | string match -r -- "^apps\\$|^show\\$") (commandline -ct))'
             """
         case .bash:
             """
             _sift() {
-                local current previous words
+                local current previous words subcommand i
                 COMPREPLY=()
                 current="${COMP_WORDS[COMP_CWORD]}"
                 previous="${COMP_WORDS[COMP_CWORD-1]}"
-                words="refresh apps updates show --help -h --completions --json --all --no-color --update-homebrew --no-update-homebrew --database"
-                if [[ "${COMP_WORDS[1]}" == "apps" || "${COMP_WORDS[1]}" == "show" ]]; then
+                words="refresh apps updates changes show completions --help -h --version --json --all --full --no-color --update-homebrew --no-update-homebrew --database"
+                subcommand=""
+                for ((i = 1; i < COMP_CWORD; i++)); do
+                    case "${COMP_WORDS[i]}" in
+                        apps|show) subcommand="${COMP_WORDS[i]}"; break ;;
+                    esac
+                done
+                if [[ -n "$subcommand" ]]; then
                     while IFS=$'\t' read -r value description; do
                         COMPREPLY[${#COMPREPLY[@]}]="$value"
-                    done < <(sift __complete apps "$current")
+                    done < <(sift __complete "$subcommand" "$current")
                 elif [[ "$previous" == "--database" ]]; then
                     while IFS= read -r value; do
                         COMPREPLY[${#COMPREPLY[@]}]="$value"
@@ -58,174 +66,45 @@ enum CompletionRenderer {
                 commands=(
                     'refresh:Refresh native application inventory'
                     'apps:Show cached applications'
-                    'updates:Show cached Homebrew updates'
-                    'show:Show cached release notes'
+                    'updates:Show cached updates'
+                    'changes:Show cached application changes'
+                    'show:Show cached software details'
+                    'completions:Generate shell completions'
                 )
                 _arguments -C \
+                    '--version[Show version]' \
                     '--json[Render JSON]' \
                     '--all[Include CoreServices and inactive applications]' \
+                    '--full[Show full release notes]' \
                     '--no-color[Disable color output]' \
+                    '--update-homebrew[Update Homebrew metadata before refreshing]' \
+                    '--no-update-homebrew[Skip updating Homebrew metadata before refreshing]' \
                     '--database=[Use a database path]:database path:_files' \
-                    '--completions[Install shell completions]' \
                     '(-h --help)'{-h,--help}'[Show usage]' \
                     '1:command:->command' \
                     '2:argument:->argument'
                 case $state in
                     command) _describe -t commands command "$commands" ;;
-                    argument) case $words[2] in
-                        apps|show)
-                            local -a candidates
-                            local value description
-                            while IFS=$'\t' read -r value description; do
-                                candidates+=("$value")
-                            done < <(sift __complete apps "$words[CURRENT]")
-                            compadd -Q -- $candidates
-                            ;;
-                    esac ;;
+                    argument)
+                        local subcommand w
+                        for w in $words[1,-2]; do
+                            case $w in
+                                apps|show) subcommand=$w; break ;;
+                            esac
+                        done
+                        case $subcommand in
+                            apps|show)
+                                local -a candidates
+                                local value description
+                                while IFS=$'\t' read -r value description; do
+                                    candidates+=("$value")
+                                done < <(sift __complete "$subcommand" "$words[CURRENT]")
+                                compadd -Q -- $candidates
+                                ;;
+                        esac ;;
                 esac
             }
             """
-        }
-    }
-}
-
-enum CompletionInstaller {
-    static func install(environment: [String: String] = ProcessInfo.processInfo.environment, fileManager: FileManager = .default) throws -> URL {
-        guard let shell = detectedShell(environment: environment) else { throw CompletionInstallError.unsupportedShell(environment["SHELL"]) }
-        let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
-        let destination: URL
-        switch shell {
-        case .fish:
-            let config = try configuredDirectory(environment["XDG_CONFIG_HOME"], default: home.appending(path: ".config", directoryHint: .isDirectory), name: "XDG_CONFIG_HOME", fileManager: fileManager)
-            destination = config.appending(path: "fish/completions/sift.fish", directoryHint: .notDirectory)
-        case .bash:
-            let data: URL
-            if let path = environment["BASH_COMPLETION_USER_DIR"] {
-                data = try configuredDirectory(path, name: "BASH_COMPLETION_USER_DIR", fileManager: fileManager)
-            } else if let path = environment["XDG_DATA_HOME"] {
-                data = try configuredDirectory(path, name: "XDG_DATA_HOME", fileManager: fileManager).appending(path: "bash-completion", directoryHint: .isDirectory)
-            } else {
-                data = home.appending(path: ".local/share/bash-completion", directoryHint: .isDirectory)
-            }
-            destination = data.appending(path: "completions/sift", directoryHint: .notDirectory)
-        case .zsh:
-            let zdotdir = try configuredDirectory(environment["ZDOTDIR"], default: home, name: "ZDOTDIR", fileManager: fileManager)
-            let directory = zdotdir.appending(path: ".zfunc", directoryHint: .isDirectory)
-            destination = directory.appending(path: "_sift", directoryHint: .notDirectory)
-        }
-        try createPrivateDirectory(at: destination.deletingLastPathComponent(), fileManager: fileManager)
-        try validateDestination(destination, fileManager: fileManager)
-        try CompletionRenderer.script(for: shell).write(to: destination, atomically: true, encoding: .utf8)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
-        if shell == .zsh {
-            let zdotdir = try configuredDirectory(environment["ZDOTDIR"], default: home, name: "ZDOTDIR", fileManager: fileManager)
-            try installZshLoadPath(directory: destination.deletingLastPathComponent(), zdotdir: zdotdir, fileManager: fileManager)
-        }
-        return destination
-    }
-
-    private static func detectedShell(environment: [String: String]) -> CompletionShell? {
-        guard let shellPath = environment["SHELL"] else { return nil }
-        return CompletionShell(rawValue: URL(filePath: shellPath).lastPathComponent)
-    }
-
-    private static func installZshLoadPath(directory: URL, zdotdir: URL, fileManager: FileManager) throws {
-        let zshrc = zdotdir.appending(path: ".zshrc", directoryHint: .notDirectory)
-        let marker = "# >>> sift completions >>>"
-        let snippet = """
-
-        # >>> sift completions >>>
-        fpath=(\(shellQuote(directory.path)) $fpath)
-        autoload -Uz compinit
-        compinit
-        # <<< sift completions <<<
-        """
-        try createPrivateDirectory(at: zdotdir, fileManager: fileManager)
-        try validateDestination(zshrc, fileManager: fileManager)
-        let existing = fileManager.fileExists(atPath: zshrc.path) ? (try String(contentsOf: zshrc, encoding: .utf8)) : ""
-        guard !existing.contains(marker) else { return }
-        try (existing + snippet).write(to: zshrc, atomically: true, encoding: .utf8)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: zshrc.path)
-    }
-
-    private static func configuredDirectory(_ path: String?, default fallback: URL, name: String, fileManager: FileManager) throws -> URL {
-        guard let path else { return try configuredDirectory(fallback.path, name: name, fileManager: fileManager) }
-        return try configuredDirectory(path, name: name, fileManager: fileManager)
-    }
-
-    private static func configuredDirectory(_ path: String, name: String, fileManager: FileManager) throws -> URL {
-        guard !path.isEmpty, path.hasPrefix("/"), !path.split(separator: "/").contains("..") else { throw CompletionInstallError.unsafePath(name) }
-        let directory = URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
-        try validateExistingPathComponents(directory, fileManager: fileManager)
-        if let status = try lstatStatus(at: directory.path) { try validatePrivateDirectory(status, at: name) }
-        return directory
-    }
-
-    private static func createPrivateDirectory(at directory: URL, fileManager: FileManager) throws {
-        try validateExistingPathComponents(directory, fileManager: fileManager)
-        var current = URL(fileURLWithPath: "/", isDirectory: true)
-        for component in directory.standardizedFileURL.pathComponents.dropFirst() {
-            current.append(path: component, directoryHint: .isDirectory)
-            if try lstatStatus(at: current.path) == nil {
-                try fileManager.createDirectory(at: current, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-                try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: current.path)
-            }
-        }
-        try validateExistingPathComponents(directory, fileManager: fileManager)
-        guard let status = try lstatStatus(at: directory.path) else { throw CompletionInstallError.unsafePath(directory.path) }
-        try validatePrivateDirectory(status, at: directory.path)
-    }
-
-    private static func validateExistingPathComponents(_ path: URL, fileManager: FileManager) throws {
-        var current = URL(fileURLWithPath: "/", isDirectory: true)
-        for component in path.standardizedFileURL.pathComponents.dropFirst() {
-            current.append(path: component, directoryHint: .isDirectory)
-            guard let status = try lstatStatus(at: current.path) else { break }
-            guard fileType(status) == S_IFDIR else { throw CompletionInstallError.unsafePath(current.path) }
-        }
-    }
-
-    private static func validateDestination(_ destination: URL, fileManager: FileManager) throws {
-        guard let status = try lstatStatus(at: destination.path) else { return }
-        guard fileType(status) == S_IFREG,
-              status.st_nlink == 1,
-              status.st_uid == getuid(),
-              permissions(status) == 0o600 else { throw CompletionInstallError.unsafePath(destination.path) }
-    }
-
-    private static func lstatStatus(at path: String) throws -> stat? {
-        var status = stat()
-        guard lstat(path, &status) != 0 else { return status }
-        guard errno == ENOENT else { throw CompletionInstallError.unsafePath(path) }
-        return nil
-    }
-
-    private static func fileType(_ status: stat) -> mode_t {
-        mode_t(status.st_mode) & S_IFMT
-    }
-
-    private static func permissions(_ status: stat) -> mode_t {
-        mode_t(status.st_mode) & 0o777
-    }
-
-    private static func validatePrivateDirectory(_ status: stat, at path: String) throws {
-        guard fileType(status) == S_IFDIR,
-              status.st_uid == getuid(),
-              permissions(status) == 0o700 else { throw CompletionInstallError.unsafePath(path) }
-    }
-
-    private static func shellQuote(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\\\''"))'"
-    }
-}
-
-enum CompletionInstallError: LocalizedError {
-    case unsupportedShell(String?)
-    case unsafePath(String)
-    var errorDescription: String? {
-        switch self {
-        case let .unsupportedShell(shell): return "Cannot install completions for \(shell ?? "an unknown shell"). Set SHELL to bash, zsh, or fish."
-        case let .unsafePath(path): return "Refusing unsafe completion path: \(path)."
         }
     }
 }

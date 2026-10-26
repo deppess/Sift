@@ -22,6 +22,8 @@ public struct GitHubTagResolver: Sendable {
                 continue
             }
         }
+        // Both "1.2.3" and "v1.2.3" resolving is treated as ambiguous rather than guessed at,
+        // consistent with PROJECT.md: weak evidence must not be used to establish ownership.
         return matches.count == 1 ? matches[0] : nil
     }
 
@@ -45,15 +47,9 @@ public struct GitHubTagResolver: Sendable {
 
     private func apiURL(repository: GitHubRepository, path: [String]) -> URL? {
         let components = ["repos", repository.owner, repository.name] + path
-        let encoded = components.compactMap(encodePathComponent)
+        let encoded = components.compactMap(encodeGitHubPathComponent)
         guard encoded.count == components.count else { return nil }
         return URL(string: "https://api.github.com/\(encoded.joined(separator: "/"))")
-    }
-
-    private func encodePathComponent(_ value: String) -> String? {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {

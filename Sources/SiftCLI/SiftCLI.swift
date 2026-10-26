@@ -10,9 +10,8 @@ public enum SiftCLI {
                 print(Invocation.usage)
                 return EXIT_SUCCESS
             }
-            if invocation.installCompletions {
-                let destination = try CompletionInstaller.install()
-                print("Installed \(destination.path)")
+            if invocation.version {
+                print(invocation.json ? try JSONOutput.encode(["version": SiftVersion.current]) : "sift \(SiftVersion.current)")
                 return EXIT_SUCCESS
             }
             if case let .completions(shell) = invocation.command {
@@ -24,7 +23,7 @@ public enum SiftCLI {
                 let databaseURL = invocation.databaseURL ?? SiftApplication.existingDefaultDatabaseURL()
                 guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else { return EXIT_SUCCESS }
                 let database = try Database.readOnly(url: databaseURL)
-                let items = try database.catalogItems(includeAll: invocation.includeAll)
+                let items = try target == "show" ? database.catalogItems(includeAll: invocation.includeAll) : database.nativeApplicationItems(includeAll: invocation.includeAll)
                 let matches = items.filter { $0.selector.localizedCaseInsensitiveHasPrefix(prefix) || $0.aliases.contains { $0.localizedCaseInsensitiveHasPrefix(prefix) } }
                 var aliasSelectors: [String: Set<String>] = [:]
                 for item in items {
@@ -33,15 +32,22 @@ public enum SiftCLI {
                 for item in matches.prefix(200) {
                     let friendly = item.aliases.first { $0.localizedCaseInsensitiveHasPrefix(prefix) && aliasSelectors[$0.lowercased()]?.count == 1 }
                     let value = friendly ?? item.selector
-                    print("\(value.completionSafe)\t\(item.name.completionSafe) · \(item.kind.rawValue) · \(item.installedVersion?.completionSafe ?? "unknown")")
+                    print("\(value.terminalInline)\t\(item.name.terminalInline) · \(item.kind.rawValue) · \(item.installedVersion?.terminalInline ?? "unknown")")
                 }
                 return EXIT_SUCCESS
             }
             if case .refresh = invocation.command {
                 let databaseURL = try invocation.databaseURL ?? SiftApplication.defaultDatabaseURL()
                 let database = try Database(url: databaseURL)
-                let updateHomebrew = try refreshHomebrewUpdatePreference(invocation)
-                let summary = try RefreshCoordinator(database: database).refresh(updateHomebrew: updateHomebrew)
+                let homebrewUpdate: HomebrewUpdatePolicy = switch invocation.updateHomebrew {
+                case true?: .always
+                case false?: .never
+                case nil: .automatic()
+                }
+                let progress = refreshProgress(invocation)
+                progress?("Refreshing…")
+                let summary = try RefreshCoordinator(database: database).refresh(homebrewUpdate: homebrewUpdate, progress: progress)
+                progress?("")
                 print(invocation.json ? try RefreshRenderer.json(summary) : RefreshRenderer.humanReadable(summary))
                 return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
             }
@@ -56,9 +62,9 @@ public enum SiftCLI {
                 print(invocation.json ? try DashboardRenderer.json(dashboard) : DashboardRenderer.humanReadable(dashboard))
                 return EXIT_SUCCESS
             case let .apps(selector):
-                let items = try database.catalogItems(includeAll: invocation.includeAll)
+                let items = try database.nativeApplicationItems(includeAll: invocation.includeAll)
                 if let selector {
-                    switch resolveCatalogItem(selector, in: items) {
+                    switch items.resolveCatalogItem(selector) {
                     case let .item(item):
                         let notes = try releaseNotes(for: item, database: database)
                         print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: notes))
@@ -70,17 +76,22 @@ public enum SiftCLI {
                 }
                 return EXIT_SUCCESS
             case .updates:
-                let updates = try database.updates()
+                let updates = try database.updates(includeAll: invocation.includeAll)
                 print(invocation.json ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates))
+                return EXIT_SUCCESS
+            case .changes:
+                let changes = try database.nativeVersionTransitions(includeAll: invocation.includeAll)
+                print(invocation.json ? try ChangesRenderer.json(changes) : ChangesRenderer.humanReadable(changes))
                 return EXIT_SUCCESS
             case let .show(name):
                 switch try database.resolveCatalogItem(name, includeAll: invocation.includeAll) {
                 case let .item(item):
                     let notes = try releaseNotes(for: item, database: database)
                     if let notes {
-                        print(invocation.json ? try CatalogRenderer.json(notes) : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: !invocation.noColor)))
+                        print(invocation.json ? try CatalogRenderer.json(notes) : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: colorEnabled(invocation))))
                     } else {
-                        print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: nil))
+                        let nativeNotes = try item.kind == .nativeApp && item.updateAvailable ? item.path.flatMap { try database.nativeReleaseNotes(path: $0, targetVersion: item.availableVersion!) } : nil
+                        print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: nil, nativeNotes: nativeNotes, full: invocation.full))
                     }
                 case .missing: throw InvocationError.missingCatalogItem(name)
                 case let .ambiguous(matches): throw InvocationError.ambiguousSelector(name, matches.map(\.selector))
@@ -123,6 +134,10 @@ public enum SiftCLI {
             let updates: [UnifiedUpdate] = []
             print(invocation.json ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates))
             return EXIT_SUCCESS
+        case .changes:
+            let changes: [NativeVersionTransition] = []
+            print(invocation.json ? try ChangesRenderer.json(changes) : ChangesRenderer.humanReadable(changes))
+            return EXIT_SUCCESS
         case let .apps(.some(selector)), let .show(selector):
             throw InvocationError.missingCatalogItem(selector)
         case .refresh, .completions, .complete:
@@ -130,33 +145,26 @@ public enum SiftCLI {
         }
     }
 
-    private static func refreshHomebrewUpdatePreference(_ invocation: Invocation) throws -> Bool {
-        if let update = invocation.updateHomebrew { return update }
-        guard !invocation.json, isatty(STDIN_FILENO) == 1 else { return false }
-        FileHandle.standardError.write(Data("Update Homebrew metadata before refreshing? [y/N] ".utf8))
-        guard let response = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return false }
-        guard response.isEmpty || response == "y" || response == "yes" || response == "n" || response == "no" else {
-            throw InvocationError.invalidHomebrewUpdateResponse
-        }
-        return response == "y" || response == "yes"
+    /// A status line on a terminal while the refresh runs; each message replaces the last, and an
+    /// empty one clears it.
+    private static func refreshProgress(_ invocation: Invocation) -> (@Sendable (String) -> Void)? {
+        guard !invocation.json, isatty(STDERR_FILENO) == 1 else { return nil }
+        return { message in FileHandle.standardError.write(Data("\r\u{1B}[2K\(message)".utf8)) }
+    }
+
+    private static func colorEnabled(_ invocation: Invocation) -> Bool {
+        !invocation.noColor && isatty(STDOUT_FILENO) == 1 && ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     }
 
     private static func releaseNotes(for item: CatalogItem, database: Database) throws -> HomebrewReleaseNotes? {
-        guard let prefix = item.prefix,
-              let fullName = item.fullName,
-              let installedVersion = item.installedVersion,
-              let availableVersion = item.availableVersion else { return nil }
-        let kind: HomebrewPackageKind = item.kind == .homebrewFormula ? .formula : item.kind == .homebrewCask ? .cask : .formula
-        guard item.kind != .nativeApp else { return nil }
+        let kind: HomebrewPackageKind
+        switch item.kind {
+        case .homebrewFormula: kind = .formula
+        case .homebrewCask: kind = .cask
+        case .nativeApp: return nil
+        }
+        guard let prefix = item.prefix, let fullName = item.fullName, let installedVersion = item.installedVersion, let availableVersion = item.availableVersion else { return nil }
         return try database.homebrewReleaseNotes(prefix: prefix, kind: kind, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion)
-    }
-
-    private static func resolveCatalogItem(_ selector: String, in items: [CatalogItem]) -> CatalogResolution {
-        let exact = items.filter { $0.selector == selector || $0.aliases.contains(selector) }
-        if exact.count == 1 { return .item(exact[0]) }
-        if exact.count > 1 { return .ambiguous(exact) }
-        let folded = items.filter { $0.name.caseInsensitiveCompare(selector) == .orderedSame || $0.aliases.contains { $0.caseInsensitiveCompare(selector) == .orderedSame } }
-        return folded.count == 1 ? .item(folded[0]) : folded.isEmpty ? .missing : .ambiguous(folded)
     }
 
     private static func writeError(_ message: String, usage: Bool = false) {
@@ -165,37 +173,25 @@ public enum SiftCLI {
     }
 }
 
-private extension JSONEncoder {
-    static var sift: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }
-}
-
 extension String {
     func localizedCaseInsensitiveHasPrefix(_ prefix: String) -> Bool {
         prefix.isEmpty || range(of: prefix, options: [.caseInsensitive, .anchored]) != nil
     }
-
-    var completionSafe: String {
-        terminalInline
-    }
 }
 
 private struct Invocation {
-    enum Command { case dashboard, refresh, apps(String?), updates, show(String), completions(CompletionShell), complete(String, String) }
+    enum Command { case dashboard, refresh, apps(String?), updates, changes, show(String), completions(CompletionShell), complete(String, String) }
 
-    static let usage = "Usage: sift [refresh|apps [name]|updates|show <package>] [--completions] [--json] [--all] [--full] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
+    static let usage = "Usage: sift [refresh|apps [name]|updates|changes|show <package>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
 
     let command: Command
     let json: Bool
     let databaseURL: URL?
     let help: Bool
+    let version: Bool
     let includeAll: Bool
     let full: Bool
     let noColor: Bool
-    let installCompletions: Bool
     let updateHomebrew: Bool?
 
     init(arguments: [String]) throws {
@@ -204,10 +200,10 @@ private struct Invocation {
         var json = false
         var databaseURL: URL?
         var help = false
+        var version = false
         var includeAll = false
         var full = false
         var noColor = false
-        var installCompletions = false
         var updateHomebrew: Bool?
         var index = 0
 
@@ -216,6 +212,9 @@ private struct Invocation {
             switch argument {
             case "--help", "-h":
                 help = true
+            case "--version":
+                guard !version else { throw InvocationError.duplicateOption("--version") }
+                version = true
             case "--json":
                 guard !json else { throw InvocationError.duplicateOption("--json") }
                 json = true
@@ -234,9 +233,6 @@ private struct Invocation {
             case "--no-update-homebrew":
                 guard updateHomebrew == nil else { throw InvocationError.duplicateOption(argument) }
                 updateHomebrew = false
-            case "--completions":
-                guard !installCompletions else { throw InvocationError.duplicateOption("--completions") }
-                installCompletions = true
             case "--database":
                 guard databaseURL == nil else { throw InvocationError.duplicateOption("--database") }
                 index += 1
@@ -258,6 +254,10 @@ private struct Invocation {
             case "updates":
                 guard !hasCommand else { throw InvocationError.duplicateCommand }
                 command = .updates
+                hasCommand = true
+            case "changes":
+                guard !hasCommand else { throw InvocationError.duplicateCommand }
+                command = .changes
                 hasCommand = true
             case "show":
                 guard !hasCommand else { throw InvocationError.duplicateCommand }
@@ -285,14 +285,17 @@ private struct Invocation {
             }
             index += 1
         }
+        if includeAll, !command.supportsIncludeAll { throw InvocationError.optionNotSupported("--all", command: command) }
+        if full, !command.supportsFull { throw InvocationError.optionNotSupported("--full", command: command) }
+        if let updateHomebrew, !command.supportsUpdateHomebrew { throw InvocationError.optionNotSupported(updateHomebrew ? "--update-homebrew" : "--no-update-homebrew", command: command) }
         self.command = command
         self.json = json
         self.databaseURL = databaseURL
         self.help = help
+        self.version = version
         self.includeAll = includeAll
         self.full = full
         self.noColor = noColor
-        self.installCompletions = installCompletions
         self.updateHomebrew = updateHomebrew
     }
 }
@@ -303,11 +306,11 @@ private enum InvocationError: LocalizedError {
     case duplicateCommand
     case unrecognizedArgument(String)
     case invalidCompletionShell
-    case invalidHomebrewUpdateResponse
     case missingShowPackage
     case missingCatalogItem(String)
     case ambiguousSelector(String, [String])
     case invalidCompletionRequest
+    case optionNotSupported(String, command: Invocation.Command)
 
     var errorDescription: String? {
         switch self {
@@ -316,11 +319,47 @@ private enum InvocationError: LocalizedError {
         case .duplicateCommand: "Only one command may be specified."
         case let .unrecognizedArgument(argument): "Unrecognized argument: \(argument)."
         case .invalidCompletionShell: "completions requires one of: fish, bash, zsh."
-        case .invalidHomebrewUpdateResponse: "Respond with y or n."
         case .missingShowPackage: "show requires a package name."
         case let .missingCatalogItem(selector): "No cached software matches \(selector). Run 'sift refresh' to update the catalog."
         case let .ambiguousSelector(selector, matches): "\(selector) matches multiple records: \(matches.joined(separator: ", "))."
         case .invalidCompletionRequest: "__complete requires a target command."
+        case let .optionNotSupported(option, command): "\(option) is not supported with \(command.description)."
+        }
+    }
+}
+
+private extension Invocation.Command {
+    var description: String {
+        switch self {
+        case .dashboard: "the dashboard"
+        case .refresh: "refresh"
+        case .apps: "apps"
+        case .updates: "updates"
+        case .changes: "changes"
+        case .show: "show"
+        case .completions: "completions"
+        case .complete: "completion lookup"
+        }
+    }
+
+    var supportsIncludeAll: Bool {
+        switch self {
+        case .apps, .changes, .show, .complete, .updates: true
+        case .dashboard, .refresh, .completions: false
+        }
+    }
+
+    var supportsFull: Bool {
+        switch self {
+        case .show: true
+        case .dashboard, .refresh, .apps, .updates, .changes, .completions, .complete: false
+        }
+    }
+
+    var supportsUpdateHomebrew: Bool {
+        switch self {
+        case .refresh: true
+        case .dashboard, .apps, .updates, .changes, .show, .completions, .complete: false
         }
     }
 }

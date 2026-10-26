@@ -26,14 +26,13 @@ public enum DashboardRenderer {
     }
 
     public static func json(_ dashboard: Dashboard) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(dashboard)
-        return String(decoding: data, as: UTF8.self)
+        try JSONOutput.encode(dashboard)
     }
 
-    private static func relativeTimestamp(_ date: Date, relativeTo referenceDate: Date) -> String {
+    static func relativeTimestamp(_ date: Date, relativeTo referenceDate: Date) -> String {
+        // Timestamps round-trip through whole seconds, so a refresh that just finished can read as
+        // slightly in the future.
+        if abs(referenceDate.timeIntervalSince(date)) < 60 { return "just now" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
         return formatter.localizedString(for: date, relativeTo: referenceDate)
@@ -46,8 +45,12 @@ public enum DashboardRenderer {
         case .success where dashboard.freshness == .stale:
             return "Cached data is stale. Run 'sift refresh' to update it."
         case .partial:
-            let incomplete = dashboard.data.providerResults.filter { $0.status == .partial || $0.status == .failure }.map(\.provider.rawValue)
-            return "Incomplete providers: \(incomplete.joined(separator: ", ")). Cached data was preserved."
+            let incomplete = dashboard.data.providerResults.filter { $0.status == .partial || $0.status == .failure }
+            let reasons = incomplete.map { result in
+                let reason = result.message?.split(separator: "\n").first.map { ": \(String($0).terminalInline)" } ?? ""
+                return "  \(result.provider.rawValue)\(reason)"
+            }
+            return (["Incomplete providers (cached data was preserved):"] + reasons).joined(separator: "\n")
         case .failure:
             return "The latest refresh failed; cached data may be outdated."
         default:

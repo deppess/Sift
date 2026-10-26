@@ -21,7 +21,40 @@ public enum CommandRunnerError: LocalizedError {
     }
 }
 
-public struct CommandRunner {
+/// Validates an absolute filesystem path (a PATH entry, a reported prefix, a tool directory) before it's
+/// used to build an executable URL or stored. Shared by HomebrewProvider, NPMGlobalProvider, and
+/// UVToolProvider, whose PATH-derived directories all need the same hardening: rooted, no `..` traversal,
+/// no control characters that could confuse a terminal or a downstream shell.
+func isSafeAbsolutePath(_ value: String) -> Bool {
+    value.hasPrefix("/") && !value.split(separator: "/").contains("..") && !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+}
+
+/// Finds candidate executables named `name` in `standardDirectories` and every PATH-derived directory,
+/// resolves symlinks, and deduplicates by resolved path. Shared by HomebrewProvider, NPMGlobalProvider,
+/// and UVToolProvider, whose provider-discovery scan is otherwise identical (only the executable name
+/// and default `standardDirectories` differ).
+func discoverExecutables(named name: String, standardDirectories: [String], environment: [String: String]) -> [URL] {
+    var candidates = standardDirectories.map { URL(filePath: $0, directoryHint: .isDirectory).appending(path: name) }
+    if let path = environment["PATH"] {
+        candidates += path.split(separator: ":").compactMap { entry in
+            let directory = String(entry)
+            guard isSafeAbsolutePath(directory) else { return nil }
+            return URL(filePath: directory, directoryHint: .isDirectory).appending(path: name)
+        }
+    }
+    var seen = Set<String>()
+    return candidates.compactMap { candidate in
+        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
+        guard isRegularExecutable(resolved), seen.insert(resolved.path).inserted else { return nil }
+        return resolved
+    }
+}
+
+func isRegularExecutable(_ url: URL) -> Bool {
+    FileManager.default.isExecutableFile(atPath: url.path) && (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+}
+
+public struct CommandRunner: Sendable {
     public init() {}
 
     public func run(executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024) throws -> CommandResult {
@@ -57,8 +90,15 @@ public struct CommandRunner {
         let status = StatusBox()
         DispatchQueue.global().async {
             var value: Int32 = 0
-            _ = waitpid(processIdentifier, &value, 0)
-            status.set(value)
+            var result: pid_t
+            repeat {
+                result = waitpid(processIdentifier, &value, 0)
+            } while result == -1 && errno == EINTR
+            if result == -1 {
+                status.setWaitError(errno)
+            } else {
+                status.set(value)
+            }
             completed.signal()
         }
         if completed.wait(timeout: .now() + timeout) == .timedOut {
@@ -86,6 +126,7 @@ public struct CommandRunner {
         let output = stdoutBox.value
         let errors = stderrBox.value
         guard !stdoutBox.exceededLimit, !stderrBox.exceededLimit else { throw CommandRunnerError.outputTooLarge(executable) }
+        if let error = status.waitError { throw NSError(domain: NSPOSIXErrorDomain, code: Int(error)) }
         return CommandResult(status: Self.terminationStatus(status.value), stdout: output, stderr: errors)
     }
 
@@ -129,13 +170,15 @@ public struct CommandRunner {
             posix_spawn_file_actions_destroy(&actions)
             posix_spawnattr_destroy(&attributes)
         }
-        let flags = Int16(POSIX_SPAWN_SETPGROUP)
+        // CLOEXEC_DEFAULT closes every descriptor not set up below in the child, so it never holds
+        // the database, another command's pipe (which would delay that command's end of output), or
+        // the terminal. Standard input is /dev/null: nothing Sift runs may wait on a prompt.
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
         guard posix_spawnattr_setflags(&attributes, flags) == 0,
               posix_spawnattr_setpgroup(&attributes, 0) == 0,
+              posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
               posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) == 0,
-              posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO) == 0,
-              posix_spawn_file_actions_addclose(&actions, stdout.fileHandleForReading.fileDescriptor) == 0,
-              posix_spawn_file_actions_addclose(&actions, stderr.fileHandleForReading.fileDescriptor) == 0 else {
+              posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO) == 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
 
@@ -188,9 +231,12 @@ private final class ProcessStopper: @unchecked Sendable {
 private final class StatusBox: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: Int32 = 0
+    private var waitFailure: Int32?
 
     var value: Int32 { lock.withLock { storage } }
+    var waitError: Int32? { lock.withLock { waitFailure } }
     func set(_ value: Int32) { lock.withLock { storage = value } }
+    func setWaitError(_ value: Int32) { lock.withLock { waitFailure = value } }
 }
 
 private final class DataBox: @unchecked Sendable {

@@ -18,4 +18,10 @@ public enum HomebrewVersion {
               installedVersion[installedVersion.index(after: separator)...].allSatisfy(\.isNumber) else { return installedVersion }
         return String(installedVersion[..<separator])
     }
+
+    /// A cask version's upstream part: Homebrew appends build metadata after a comma
+    /// ("158.0.1,2" is version 158.0.1, build 2).
+    public static func caskUpstreamVersion(from caskVersion: String) -> String {
+        caskVersion.split(separator: ",", maxSplits: 1).first.map(String.init) ?? caskVersion
+    }
 }

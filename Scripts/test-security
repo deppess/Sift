@@ -21,7 +21,6 @@ run=1
 while [ "$run" -le "$iterations" ]; do
     swift test --filter SiftCLITests
     swift test --filter SiftCoreTests
+    ./Scripts/test-integration
     run=$((run + 1))
 done
-
-./Scripts/test-integration
