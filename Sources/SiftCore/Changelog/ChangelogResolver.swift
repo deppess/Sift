@@ -113,6 +113,9 @@ public struct ChangelogResolver: Sendable {
         case githubReleases(GitHubRepository)
         case githubFile(GitHubRepository)
         case githubTags(GitHubRepository)
+        /// A repository on a GitLab (gitlab.com, gitlab.gnome.org, …) or Forgejo/Gitea
+        /// (codeberg.org, …) host: its releases, then its changelog file.
+        case forge(host: String, path: String)
         case page(URL)
 
         var label: String {
@@ -125,6 +128,7 @@ public struct ChangelogResolver: Sendable {
             case let .githubReleases(repository): "GitHub releases (\(repository.path))"
             case let .githubFile(repository): "changelog in \(repository.path)"
             case let .githubTags(repository): "GitHub tags and commits (\(repository.path))"
+            case let .forge(host, path): "\(host)/\(path)"
             case let .page(url): url.host.map { "\($0)\(url.path.count > 1 ? url.path : "")" } ?? url.absoluteString
             }
         }
@@ -137,6 +141,7 @@ public struct ChangelogResolver: Sendable {
             case let .steam(appID): "https://store.steampowered.com/news/app/\(appID)"
             case let .githubReleases(repository): "https://github.com/\(repository.path)/releases"
             case let .githubFile(repository), let .githubTags(repository): "https://github.com/\(repository.path)"
+            case let .forge(host, path): "https://\(host)/\(path)"
             case let .page(url): url.absoluteString
             }
         }
@@ -184,6 +189,7 @@ public struct ChangelogResolver: Sendable {
             guard let link, let url = Self.normalizedURL(link) else { return }
             if let github = GitHubSource.parse(Self.repositoryRoot(url)) { add(github.repository); return }
             guard isPublicHTTPSURL(url) else { return }
+            if let forge = Self.forgeRepository(url) { add(.forge(host: forge.host, path: forge.path)); return }
             add(.page(url))
         }
 
@@ -198,6 +204,19 @@ public struct ChangelogResolver: Sendable {
             guard var components = URLComponents(string: value), components.scheme == "https", components.host != nil else { return nil }
             components.fragment = nil
             return components.url
+        }
+
+        /// A repository on a known GitLab or Forgejo host: gitlab.gnome.org/GNOME/librsvg(.git).
+        static func forgeRepository(_ url: URL) -> (host: String, path: String)? {
+            guard let host = url.host?.lowercased(), ChangelogResolver.forgeKinds[host] != nil || host.hasPrefix("gitlab.") else { return nil }
+            var parts = url.path.split(separator: "/").map(String.init)
+            if let dash = parts.firstIndex(of: "-") { parts = Array(parts[..<dash]) }
+            guard parts.count >= 2 else { return nil }
+            // gitlab.com allows subgroups (group/sub/project); Forgejo has owner/repo only.
+            let kept = ChangelogResolver.forgeKinds[host] == .forgejo ? Array(parts.prefix(2)) : parts.prefix(4).filter { !["tree", "blob", "releases", "tags", "issues"].contains($0) }
+            var path = kept.joined(separator: "/")
+            if path.hasSuffix(".git") { path.removeLast(4) }
+            return (host, path)
         }
 
         /// github.com/owner/repo/tree/main/docs reads as github.com/owner/repo.
@@ -219,6 +238,7 @@ public struct ChangelogResolver: Sendable {
         case let .githubReleases(repository): try githubHistory(repository, installed: hints.installed, name: hints.name, preferCLI: hints.commandLine)
         case let .githubFile(repository): try githubFile(repository)
         case let .githubTags(repository): try githubTags(repository)
+        case let .forge(host, path): try forge(host: host, path: path, name: hints.name)
         case let .page(url): try page(url, name: hints.name)
         }
     }
@@ -548,6 +568,45 @@ public struct ChangelogResolver: Sendable {
 
     // Raw file paths are case-sensitive, so the common spellings are each tried (a missing one
     // is a cached 404, and raw files don't count against the API quota).
+    enum ForgeKind { case gitlab, forgejo }
+    static let forgeKinds: [String: ForgeKind] = [
+        "gitlab.com": .gitlab, "gitlab.gnome.org": .gitlab, "gitlab.freedesktop.org": .gitlab, "invent.kde.org": .gitlab,
+        "salsa.debian.org": .gitlab, "gitlab.archlinux.org": .gitlab, "framagit.org": .gitlab, "gitlab.torproject.org": .gitlab,
+        "codeberg.org": .forgejo, "gitea.com": .forgejo,
+    ]
+
+    /// A GitLab or Forgejo repository's releases (with the changelog file filling gaps, as for
+    /// GitHub), or its changelog file alone.
+    private func forge(host: String, path: String, name: String) throws -> [ChangelogEntry] {
+        let kind = Self.forgeKinds[host] ?? .gitlab
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? path
+        let api = kind == .gitlab ? "https://\(host)/api/v4/projects/\(encoded)/releases?per_page=100" : "https://\(host)/api/v1/repos/\(path)/releases?limit=50"
+        var releases: [ChangelogEntry] = []
+        if let url = URL(string: api), let data = try? client.fetch(url, resource: .changelogPage(host: host)).body,
+           let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for release in list where release["draft"] as? Bool != true && release["prerelease"] as? Bool != true && release["upcoming_release"] as? Bool != true {
+                guard let tag = release["tag_name"] as? String, let version = ChangelogVersion.token(in: tag) else { continue }
+                let body = (release["description"] as? String) ?? (release["body"] as? String) ?? ""
+                let date = ((release["released_at"] ?? release["published_at"] ?? release["created_at"]) as? String).flatMap { ISO8601DateFormatter().date(from: $0.replacing(#/\.\d+/#, with: "")) }
+                releases.append(ChangelogEntry(version: version, title: nil, date: date, content: ChangelogDocument.tidy(body), sourceURL: "https://\(host)/\(path)/\(kind == .gitlab ? "-/" : "")releases/tag/\(tag)"))
+            }
+        }
+        releases = Self.ownProductReleases(releases, name: name)
+        let withText = releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
+        if releases.count >= 30, withText * 10 >= releases.count * 8 { return releases }
+        for file in Self.repositoryChangelogPaths {
+            let raw = kind == .gitlab ? "https://\(host)/\(path)/-/raw/HEAD/\(file)" : "https://\(host)/\(path)/raw/branch/main/\(file)"
+            guard let url = URL(string: raw) else { continue }
+            let text: String
+            do { text = try fetchText(url, resource: .changelogPage(host: host)) } catch MetadataHTTPError.notFound { continue } catch { break }
+            // A missing file can come back as the forge's sign-in or error page.
+            guard !text.lowercased().contains("<html") else { continue }
+            let entries = ChangelogDocument.entries(fromMarkdown: text, sourceURL: raw)
+            if !entries.isEmpty { return releases.isEmpty ? entries : Self.merge(releases, entries) }
+        }
+        return releases
+    }
+
     private static let repositoryChangelogPaths = ["CHANGELOG.md", "ChangeLog.md", "Changelog.md", "changelog.md", "CHANGES.md", "Changes.md", "HISTORY.md", "History.md", "NEWS.md", "RELEASES.md", "RELEASE_NOTES.md", "RELEASE-NOTES.md", "CHANGELOG", "ChangeLog", "Changelog", "CHANGES", "NEWS", "HISTORY", "docs/changelog.md", "docs/CHANGELOG.md", "docs/CHANGES.md", "CHANGELOG.rst", "CHANGES.rst", "HISTORY.rst", "NEWS.rst", "docs/changelog.rst", "CHANGELOG.txt", "NEWS.txt"]
 
     private func githubFile(_ repository: GitHubRepository) throws -> [ChangelogEntry] {
@@ -780,7 +839,9 @@ public struct ChangelogResolver: Sendable {
         let head = (urls?["head"] as? [String: Any])?["url"] as? String
         for link in [stable, head, document["url"] as? String] {
             guard let link, let url = URL(string: link) else { continue }
-            if let github = GitHubSource.parse(url) { hints.add(github.repository) } else { registryHints(forDownload: url, into: &hints) }
+            if let github = GitHubSource.parse(url) { hints.add(github.repository) }
+            else if let forge = Hints.forgeRepository(url) { hints.add(.forge(host: forge.host, path: forge.path)) }
+            else { registryHints(forDownload: url, into: &hints) }
         }
         hints.add(link: document["homepage"] as? String)
     }

@@ -89,6 +89,13 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogResolver.changelogLinks(in: html, base: URL(string: "https://www.obdev.at/products/microsnitch/index.html")!).first?.path, "/products/microsnitch/releasenotes.html")
     }
 
+    func testGitLabAndForgejoRepositoriesAreRecognized() {
+        XCTAssertEqual(ChangelogResolver.Hints.forgeRepository(URL(string: "https://gitlab.gnome.org/GNOME/librsvg.git")!).map { "\($0.host)/\($0.path)" }, "gitlab.gnome.org/GNOME/librsvg")
+        XCTAssertEqual(ChangelogResolver.Hints.forgeRepository(URL(string: "https://gitlab.com/group/sub/project/-/releases")!).map(\.path), "group/sub/project")
+        XCTAssertEqual(ChangelogResolver.Hints.forgeRepository(URL(string: "https://codeberg.org/deppes/Sift/src/branch/main")!).map(\.path), "deppes/Sift")
+        XCTAssertNil(ChangelogResolver.Hints.forgeRepository(URL(string: "https://example.com/a/b")!))
+    }
+
     func testCodeBlocksOnAPageDontSwallowTheHeadingsAfterThem() {
         let html = "<h2>go1.27.0 (released 2026-08-19)</h2><p>Major release.</p><pre>go install x</pre><h2>go1.26.0 (released 2026-02-10)</h2><p>Older.</p>"
         let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://go.dev/doc/devel/release")!)
