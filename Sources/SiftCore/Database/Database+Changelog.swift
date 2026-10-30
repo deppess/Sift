@@ -45,6 +45,18 @@ extension Database {
                         last_seen_at = excluded.last_seen_at;
                     """, bindings: [.text(selector), .text(entry.version), .optionalText(entry.title), .optionalDouble(entry.date?.timeIntervalSince1970), .text(String(entry.content.prefix(262_144))), .optionalText(entry.sourceURL), .text(source), .int64(Int64(position)), .double(fetchedAt.timeIntervalSince1970), .double(fetchedAt.timeIntervalSince1970), .int(placeholder ? 1 : 0)])
             }
+            // What a better reading has replaced: placeholder text, and posts without a version
+            // (a blog feed read by mistake) once the item has a versioned changelog.
+            var stale: [String] = []
+            let versioned = merged.contains { ChangelogVersion.token(in: $0.version) == $0.version }
+            try withStatement("SELECT version, content FROM changelog_history WHERE subject = ? AND position IS NULL;") { statement in
+                try bind(statement, [.text(selector)])
+                while try stepRow(statement) {
+                    let version = String(cString: sqlite3_column_text(statement, 0))
+                    if ChangelogDocument.isPlaceholder(String(cString: sqlite3_column_text(statement, 1))) || versioned && ChangelogVersion.token(in: version) != version { stale.append(version) }
+                }
+            }
+            for version in stale { try run("DELETE FROM changelog_history WHERE subject = ? AND version = ?;", bindings: [.text(selector), .text(version)]) }
             try run("INSERT INTO changelog_state (subject, status, source, source_url, detail, fetched_at) VALUES (?, 'resolved', ?, ?, NULL, ?) ON CONFLICT(subject) DO UPDATE SET status = 'resolved', source = excluded.source, source_url = excluded.source_url, detail = NULL, fetched_at = excluded.fetched_at;", bindings: [.text(selector), .text(source), .optionalText(sourceURL), .double(fetchedAt.timeIntervalSince1970)])
             try execute("COMMIT;")
         } catch {

@@ -55,11 +55,11 @@ public enum SiftCLI {
                     let line: String
                     switch Result(catching: { try service.changelog(for: item, refetch: invocation.fetch) }) {
                     case let .success(.changelog(changelog)):
-                        line = ["ok", item.selector, item.updateSource ?? item.kind.rawValue, changelog.source, "\(changelog.entries.count)", "\(changelog.newEntries.count)", changelog.installedEntry == nil ? "no-installed-entry" : "", String(format: "%.1fs", Date().timeIntervalSince(started))].joined(separator: "\t")
+                        line = ["ok", item.selector, item.updateSource ?? item.kind.rawValue, changelog.source, "\(changelog.entries.count)", "\(changelog.newEntries.count)", changelog.installedEntry == nil ? "no-installed-entry" : "", String(format: "%.1fs", Date().timeIntervalSince(started))].map(\.terminalInline).joined(separator: "\t")
                     case let .success(.unavailable(_, tried)):
-                        line = ["MISS", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", tried.joined(separator: " | "), String(format: "%.1fs", Date().timeIntervalSince(started))].joined(separator: "\t")
+                        line = ["MISS", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", tried.joined(separator: " | "), String(format: "%.1fs", Date().timeIntervalSince(started))].map(\.terminalInline).joined(separator: "\t")
                     case let .failure(error):
-                        line = ["ERROR", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", error.localizedDescription, ""].joined(separator: "\t")
+                        line = ["ERROR", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", error.localizedDescription, ""].map(\.terminalInline).joined(separator: "\t")
                     }
                     results.withLock { $0.append((index, line)) }
                     FileHandle.standardError.write(Data("\r\u{1B}[2K\(results.withLock { $0.count })/\(items.count) \(item.name.terminalInline)".utf8))
@@ -67,7 +67,7 @@ public enum SiftCLI {
                 FileHandle.standardError.write(Data("\r\u{1B}[2K".utf8))
                 let lines = results.withLock { $0.sorted { $0.0 < $1.0 }.map(\.1) }
                 print("status\tselector\tprovider\tsource\tentries\tnew\tdetail\ttime")
-                lines.forEach { print($0.terminalInline) }
+                lines.forEach { print($0) }
                 let found = lines.filter { $0.hasPrefix("ok\t") }.count
                 FileHandle.standardError.write(Data("changelogs found: \(found)/\(lines.count)\n".utf8))
                 return EXIT_SUCCESS

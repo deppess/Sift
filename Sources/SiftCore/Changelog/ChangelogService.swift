@@ -32,7 +32,8 @@ public struct ChangelogService: Sendable {
         guard let state = try database.changelogState(selector: item.selector), let source = state.source else { return nil }
         let entries = try database.changelogEntries(selector: item.selector)
         guard !entries.isEmpty else { return nil }
-        return Changelog(selector: item.selector, name: item.name, installedVersion: item.installedVersion, availableVersion: item.availableVersion, source: source, sourceURL: state.sourceURL, entries: entries, fetchedAt: state.fetchedAt)
+        let versions = try parentApplication(of: item, database: database) ?? item
+        return Changelog(selector: item.selector, name: item.name, installedVersion: versions.installedVersion, availableVersion: versions.availableVersion, source: source, sourceURL: state.sourceURL, entries: entries, fetchedAt: state.fetchedAt)
     }
 
     public func changelog(for item: CatalogItem, refetch: Bool = false, now: Date = .now) throws -> ChangelogOutcome {
@@ -43,15 +44,22 @@ public struct ChangelogService: Sendable {
             if let cached, age >= 0, age < Self.maxAge, covers(cached, item) || age < 60 * 60 { return .changelog(cached) }
             if state.status == "unavailable", cached == nil, age >= 0, age < Self.missMaxAge { return .unavailable(name: item.name, tried: Self.tried(state.detail)) }
         }
-        let homebrewSource: String? = switch item.kind {
+        // A helper installed and updated with another app ("Installed and updated with DaVinci
+        // Resolve.") has that app's changelog.
+        let parent = try Self.parentApplication(of: item, database: database)
+        let target = parent ?? item
+        let homebrewSource: String? = switch target.kind {
         case .homebrewFormula, .homebrewCask:
-            try item.prefix.flatMap { prefix in try database.homebrewSourceURL(prefix: prefix, kind: item.kind == .homebrewCask ? .cask : .formula, fullName: item.fullName ?? item.name) }
+            try target.prefix.flatMap { prefix in try database.homebrewSourceURL(prefix: prefix, kind: target.kind == .homebrewCask ? .cask : .formula, fullName: target.fullName ?? target.name) }
         default: nil
         }
-        switch resolver.resolve(ChangelogSubject(item: item, homebrewSourceURL: homebrewSource)) {
-        case let .resolved(source, sourceURL, entries):
+        switch resolver.resolve(ChangelogSubject(item: target, homebrewSourceURL: homebrewSource)) {
+        case let .resolved(resolvedSource, sourceURL, entries):
+            let source = parent.map { "\(resolvedSource), for \($0.name)" } ?? resolvedSource
             try database.storeChangelog(selector: item.selector, source: source, sourceURL: sourceURL, entries: entries, fetchedAt: now)
-            return .changelog(Changelog(selector: item.selector, name: item.name, installedVersion: item.installedVersion, availableVersion: item.availableVersion, source: source, sourceURL: sourceURL, entries: entries, fetchedAt: now))
+            // The whole stored history, in version order, not just this fetch.
+            let history = try database.changelogEntries(selector: item.selector)
+            return .changelog(Changelog(selector: item.selector, name: item.name, installedVersion: target.installedVersion, availableVersion: target.availableVersion, source: source, sourceURL: sourceURL, entries: history.isEmpty ? entries : history, fetchedAt: now))
         case let .unavailable(tried):
             try database.storeChangelogMiss(selector: item.selector, status: "unavailable", detail: tried.joined(separator: "\n"), fetchedAt: now)
             if var cached {
@@ -91,6 +99,13 @@ public struct ChangelogService: Sendable {
             progress?(done, due.count)
         }
         return due.count
+    }
+
+    static func parentApplication(of item: CatalogItem, database: Database) throws -> CatalogItem? {
+        guard item.updateSource == NativeUpdateAuthority.bundled.rawValue, let detail = item.updateDetail,
+              let match = detail.firstMatch(of: #/updated with (.+?)\./#) else { return nil }
+        let name = String(match.1)
+        return try database.catalogItems(includeAll: true).first { $0.kind == .nativeApp && $0.name == name && $0.selector != item.selector }
     }
 
     /// Whether a cached changelog already has an entry for the newest version known.

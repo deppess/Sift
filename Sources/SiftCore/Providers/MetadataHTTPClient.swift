@@ -239,7 +239,8 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         case .githubAnnotatedTag: return githubPolicy("github-annotated-tag", responseLimit: 2_097_152)
         case .githubReleaseByTag: return githubPolicy("github-release-by-tag", responseLimit: 2_097_152)
         case .githubLatestRelease: return githubPolicy("github-latest-release", responseLimit: 2_097_152, maxAge: 60 * 60)
-        case .githubReleaseList: return githubPolicy("github-release-list", responseLimit: 4_194_304)
+        // A page of 100 releases with long notes (LLVM's) runs past 4 MB.
+        case .githubReleaseList: return githubPolicy("github-release-list", responseLimit: 32 * 1_048_576)
         case .githubTree: return githubPolicy("github-tree", responseLimit: 4_194_304)
         case .githubBlob: return githubPolicy("github-blob", responseLimit: 4_194_304)
         }

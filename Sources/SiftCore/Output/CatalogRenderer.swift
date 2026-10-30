@@ -73,7 +73,7 @@ public enum CatalogRenderer {
         let shown = newEntries.isEmpty ? Array(changelog.entries.prefix(1)) : Array(newEntries.prefix(3))
         lines.append("Changelog: \(changelog.source.terminalInline)\(newEntries.isEmpty ? "" : " · \(newEntries.count) new")")
         for entry in shown {
-            let date = entry.date.map { "  \(style.label($0.formatted(.dateTime.year().month(.abbreviated).day())))" } ?? ""
+            let date = entry.date.map { "  \(style.label(ChangelogRenderer.dateText($0)))" } ?? ""
             lines.append("")
             lines.append("\(style.heading(entry.version.terminalInline))\(date)")
             let body = ChangelogRenderer.render(entry.content, full: false, style: style).split(separator: "\n", omittingEmptySubsequences: false)

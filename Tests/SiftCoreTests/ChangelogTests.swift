@@ -55,7 +55,8 @@ final class ChangelogTests: XCTestCase {
             """
         let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://bjango.com/mac/istatmenus/versionhistory/")!)
         XCTAssertEqual(entries.map(\.version), ["7.5", "7.3"])
-        XCTAssertEqual(entries[1].content, "14 May 2026\n- Cloud cover & more.")
+        XCTAssertEqual(entries[1].content, "- Cloud cover & more.")
+        XCTAssertEqual(entries[1].date, ChangelogDocument.utcDate(year: 2026, month: 5, day: 14))
     }
 
     func testChangelogLinksPreferTheSameSiteAndReadUnquotedAttributes() {
@@ -69,6 +70,18 @@ final class ChangelogTests: XCTestCase {
         XCTAssertTrue(ChangelogDocument.isPlaceholder(""))
         XCTAssertFalse(ChangelogDocument.isPlaceholder("- Fixed a crash when opening large files.\n- Added dark mode."))
         XCTAssertFalse(ChangelogDocument.isPlaceholder("Bug fixes and performance improvements."))
+    }
+
+    func testPlainTextNewsFilesAreSplitAtTheirReleaseLines() {
+        let gnu = "GNU coreutils NEWS\n\n* Noteworthy changes in release ?.? (????-??-??) [?]\n\n* Noteworthy changes in release 9.5 (2024-03-28) [stable]\n\n** Bug fixes\n\n  chmod -R now avoids a race.\n\n* Noteworthy changes in release 9.4 (2023-08-29) [stable]\n\n  Fixes.\n"
+        let entries = ChangelogDocument.entries(fromMarkdown: gnu, sourceURL: nil)
+        XCTAssertEqual(entries.map(\.version), ["9.5", "9.4"])
+        XCTAssertEqual(entries[0].content, "### Bug fixes\n\nchmod -R now avoids a race.")
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: "version <next>:\n- wip\n\nversion 7.1:\n- VVC decoder\n\nversion 7.0:\n- Old\n", sourceURL: nil).map(\.version), ["7.1", "7.0"])
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: "CHANGES FROM 3.5a TO 3.6\n\n* New\n\nCHANGES FROM 3.5 TO 3.5a\n\n* Fix\n", sourceURL: nil).map(\.version), ["3.6", "3.5a"])
+        XCTAssertEqual(ChangelogVersion.token(in: "go1.25.0 (released 2025-08-12)"), "1.25.0")
+        XCTAssertTrue(ChangelogVersion.looselyMatches("7.3", "7.30"))
+        XCTAssertFalse(ChangelogVersion.matches("7.3", "7.30"))
     }
 
     func testBBCodeBecomesMarkdown() {

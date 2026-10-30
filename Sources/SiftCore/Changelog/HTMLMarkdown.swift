@@ -41,7 +41,8 @@ enum HTMLMarkdown {
                 continue
             }
             switch name {
-            case "script", "style", "head", "nav", "header", "footer", "noscript", "svg", "template", "form", "button", "aside":
+            // Buttons stay: accordion changelogs put each version's header in one.
+            case "script", "style", "head", "nav", "footer", "noscript", "svg", "template", "aside":
                 if !isClosing, !tag.hasSuffix("/") { skipping.append(name) }
             case "h1", "h2", "h3", "h4", "h5", "h6":
                 if isClosing { newline(2) } else {
@@ -67,7 +68,7 @@ enum HTMLMarkdown {
                 output += "**"
             case "br":
                 newline()
-            case "p", "div", "section", "article", "tr", "table", "dl", "dt", "dd", "blockquote", "details", "summary", "main":
+            case "p", "div", "section", "article", "tr", "table", "dl", "dt", "dd", "blockquote", "details", "summary", "main", "button", "header", "form":
                 newline(name == "p" || name == "section" || name == "article" ? 2 : 1)
             default:
                 break

@@ -65,13 +65,21 @@ public enum ChangelogRenderer {
     private static func entryHeading(_ entry: ChangelogEntry, changelog: Changelog, newEntries: [ChangelogEntry], style: TerminalStyle) -> String {
         var parts = [style.heading(entry.version.terminalInline)]
         if let title = entry.title { parts.append(title.terminalInline) }
-        if let date = entry.date { parts.append(style.label(date.formatted(.dateTime.year().month(.abbreviated).day()))) }
+        if let date = entry.date { parts.append(style.label(ChangelogRenderer.dateText(date))) }
         if let installed = changelog.installedVersion, ChangelogVersion.matches(entry.version, ChangelogVersion.normalized(installed)) {
             parts.append(style.success("installed"))
         } else if newEntries.contains(entry) {
             parts.append(style.warning("new"))
         }
         return parts.joined(separator: "  ")
+    }
+
+    /// A release date: a date-only value (midnight UTC) is shown as that calendar day, not
+    /// shifted into the local time zone.
+    static func dateText(_ date: Date) -> String {
+        var style = Date.FormatStyle.dateTime.year().month(.abbreviated).day()
+        if date.timeIntervalSince1970.truncatingRemainder(dividingBy: 86_400) == 0 { style.timeZone = TimeZone(secondsFromGMT: 0)! }
+        return date.formatted(style)
     }
 
     static func render(_ markdown: String, full: Bool, style: TerminalStyle) -> String {

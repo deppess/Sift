@@ -51,7 +51,7 @@ public struct Changelog: Codable, Equatable, Sendable {
     public var newEntries: [ChangelogEntry] {
         guard let installedVersion else { return [] }
         let installed = ChangelogVersion.normalized(installedVersion)
-        if let index = entries.firstIndex(where: { ChangelogVersion.matches($0.version, installed) }) { return Array(entries[..<index]) }
+        if let index = ChangelogVersion.installedIndex(in: entries, installed: installed) { return Array(entries[..<index]) }
         // The installed version has no entry of its own (a rebuild, or a source that skips
         // versions): keep the entries that compare newer.
         guard entries.contains(where: { ChangelogVersion.token(in: $0.version) != nil }) else { return [] }
@@ -64,8 +64,7 @@ public struct Changelog: Codable, Equatable, Sendable {
     /// The entry for the installed version itself, when the source has one.
     public var installedEntry: ChangelogEntry? {
         guard let installedVersion else { return nil }
-        let installed = ChangelogVersion.normalized(installedVersion)
-        return entries.first { ChangelogVersion.matches($0.version, installed) }
+        return ChangelogVersion.installedIndex(in: entries, installed: ChangelogVersion.normalized(installedVersion)).map { entries[$0] }
     }
 }
 
@@ -74,7 +73,9 @@ enum ChangelogVersion {
     /// The first version-looking token: "v2.103.2" in "Release v2.103.2 (2026-10-21)" is
     /// "2.103.2"; "Version 8" is "8".
     static func token(in text: String) -> String? {
-        let pattern = #/(?i)(?:^|[^\w.])v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
+        // A short word may be attached: "go1.25.0", "bash-5.3-release", "v2.1".
+        if let match = text.firstMatch(of: #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#), text.range(of: "from", options: .caseInsensitive) != nil { return String(match.1) }
+        let pattern = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
         if let match = text.firstMatch(of: pattern) { return String(match.1) }
         if let match = text.firstMatch(of: #/(?i)\bversion\s+(\d+)\b/#) { return String(match.1) }
         return nil
@@ -96,5 +97,25 @@ enum ChangelogVersion {
         if entryVersion == installed { return true }
         guard let token = token(in: entryVersion) else { return false }
         return token == installed || SparkleVersion.compare(token, installed) == .orderedSame
+    }
+
+    /// "7.30" and "7.3", or "7.50.1" and "7.5.1": the same version written with and without a
+    /// trailing zero in a minor part. Only used when nothing matches exactly, since "1.10" and
+    /// "1.1" are different versions for most projects.
+    static func looselyMatches(_ entryVersion: String, _ installed: String) -> Bool {
+        guard let token = token(in: entryVersion) else { return false }
+        func key(_ value: String) -> [String] {
+            value.split(separator: ".").enumerated().map { index, part in
+                guard index > 0, part.count > 1, part.allSatisfy(\.isNumber) else { return String(part) }
+                let trimmed = part.drop { _ in false }.reversed().drop { $0 == "0" }.reversed()
+                return trimmed.isEmpty ? "0" : String(trimmed)
+            }
+        }
+        return key(token) == key(installed)
+    }
+
+    /// The index of the installed version's entry: an exact match, or else a loose one.
+    static func installedIndex(in entries: [ChangelogEntry], installed: String) -> Int? {
+        entries.firstIndex { matches($0.version, installed) } ?? entries.firstIndex { looselyMatches($0.version, installed) }
     }
 }
