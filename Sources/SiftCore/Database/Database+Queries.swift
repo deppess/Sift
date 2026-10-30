@@ -116,12 +116,34 @@ extension Database {
                 items.append(CatalogItem(selector: selector, aliases: [name, fullName], kind: kind == .formula ? .homebrewFormula : .homebrewCask, name: name, fullName: fullName, installedVersion: String(cString: sqlite3_column_text(statement, 6)), availableVersion: optionalText(statement, column: 7), active: sqlite3_column_int(statement, 9) == 1, bundleIdentifier: nil, path: nil, prefix: prefix, tap: optionalText(statement, column: 4), ownership: String(cString: sqlite3_column_text(statement, 5)), autoUpdates: sqlite3_column_int(statement, 8) == 1, observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)), updateSource: "homebrew"))
             }
         }
+        // npm, uv, cargo, MacPorts, and Steam packages; dependency-only ports only with includeAll.
+        try withStatement("SELECT provider, scope, name, installed_version, available_version, active, observed_at, self_updating, requested, identifier FROM managed_packages WHERE (? = 1 OR (active = 1 AND requested = 1));") { statement in
+            try bind(statement, [.int(includeAll ? 1 : 0)])
+            while try stepRow(statement) {
+                let provider = String(cString: sqlite3_column_text(statement, 0))
+                let scope = String(cString: sqlite3_column_text(statement, 1))
+                let name = String(cString: sqlite3_column_text(statement, 2))
+                let identifier = optionalText(statement, column: 9)
+                items.append(CatalogItem(selector: "\(Self.packageSelectorPrefix(provider)):\(name)", aliases: [name] + (identifier.map { [$0] } ?? []), kind: .package, name: name, fullName: nil, installedVersion: String(cString: sqlite3_column_text(statement, 3)), availableVersion: optionalText(statement, column: 4), active: sqlite3_column_int(statement, 5) == 1, bundleIdentifier: nil, path: nil, prefix: scope, tap: nil, ownership: sqlite3_column_int(statement, 8) == 1 ? "requested" : "dependency", autoUpdates: sqlite3_column_int(statement, 7) == 1, observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 6)), updateSource: provider, identifier: identifier))
+            }
+        }
         let collisions = Dictionary(grouping: items, by: \CatalogItem.selector)
         return items.map { item in
             guard (collisions[item.selector]?.count ?? 0) > 1 else { return item }
             guard let disambiguator = item.prefix ?? item.path else { return item }
             return item.disambiguatingSelector(with: disambiguator)
         }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// The selector prefix for a managed package: `npm:`, `uv:`, `cargo:`, `port:`, `steam:`.
+    static func packageSelectorPrefix(_ provider: String) -> String {
+        switch provider {
+        case RefreshProvider.npmGlobal.rawValue: "npm"
+        case RefreshProvider.uvTools.rawValue: "uv"
+        case RefreshProvider.macPorts.rawValue: "port"
+        case RefreshProvider.steamGames.rawValue: "steam"
+        default: provider
+        }
     }
 
     public func resolveCatalogItem(_ selector: String, includeAll: Bool = false) throws -> CatalogResolution {

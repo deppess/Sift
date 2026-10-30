@@ -143,6 +143,8 @@ public enum CatalogKind: String, Codable, Equatable, Sendable {
     case nativeApp
     case homebrewFormula
     case homebrewCask
+    /// An npm, uv, cargo, MacPorts, or Steam package; `updateSource` names the provider.
+    case package
 }
 
 public struct CatalogItem: Codable, Equatable, Sendable {
@@ -165,8 +167,11 @@ public struct CatalogItem: Codable, Equatable, Sendable {
     public let updateSource: String?
     /// Why the latest update check gave no answer (no declared feed, not in the store), if it didn't.
     public let updateDetail: String?
+    /// The provider's own identifier for a package whose name isn't one (a Steam app ID).
+    public let identifier: String?
 
-    public init(selector: String, aliases: [String], kind: CatalogKind, name: String, fullName: String?, installedVersion: String?, availableVersion: String?, active: Bool, bundleIdentifier: String?, path: String?, prefix: String?, tap: String?, ownership: String?, autoUpdates: Bool, observedAt: Date, updateSource: String? = nil, updateDetail: String? = nil) {
+    public init(selector: String, aliases: [String], kind: CatalogKind, name: String, fullName: String?, installedVersion: String?, availableVersion: String?, active: Bool, bundleIdentifier: String?, path: String?, prefix: String?, tap: String?, ownership: String?, autoUpdates: Bool, observedAt: Date, updateSource: String? = nil, updateDetail: String? = nil, identifier: String? = nil) {
+        self.identifier = identifier
         self.selector = selector
         self.aliases = aliases
         self.kind = kind
@@ -191,7 +196,7 @@ public struct CatalogItem: Codable, Equatable, Sendable {
     }
 
     public func disambiguatingSelector(with suffix: String) -> CatalogItem {
-        CatalogItem(selector: "\(selector)@\(suffix)", aliases: aliases, kind: kind, name: name, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion, active: active, bundleIdentifier: bundleIdentifier, path: path, prefix: prefix, tap: tap, ownership: ownership, autoUpdates: autoUpdates, observedAt: observedAt, updateSource: updateSource, updateDetail: updateDetail)
+        CatalogItem(selector: "\(selector)@\(suffix)", aliases: aliases, kind: kind, name: name, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion, active: active, bundleIdentifier: bundleIdentifier, path: path, prefix: prefix, tap: tap, ownership: ownership, autoUpdates: autoUpdates, observedAt: observedAt, updateSource: updateSource, updateDetail: updateDetail, identifier: identifier)
     }
 }
 

@@ -27,6 +27,17 @@ final class SiftCLITests: XCTestCase {
         XCTAssertEqual(SiftCLI.run(arguments: ["changes", "--database", "/tmp/sift-missing-\(UUID().uuidString).sqlite3"]), EXIT_SUCCESS)
     }
 
+    func testLogAcceptsDurationsAndDatesForSince() throws {
+        let now = Date(timeIntervalSince1970: 10_000_000)
+        XCTAssertEqual(Invocation.parseSince("30d", now: now), now.addingTimeInterval(-30 * 24 * 60 * 60))
+        XCTAssertEqual(Invocation.parseSince("2w", now: now), now.addingTimeInterval(-14 * 24 * 60 * 60))
+        XCTAssertEqual(Invocation.parseSince("12h", now: now), now.addingTimeInterval(-12 * 60 * 60))
+        XCTAssertEqual(Invocation.parseSince("2026-10-01", now: now), Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 1)))
+        XCTAssertNil(Invocation.parseSince("soon", now: now))
+        XCTAssertEqual(SiftCLI.run(arguments: ["log", "--since", "7d", "--database", "/tmp/sift-missing-\(UUID().uuidString).sqlite3"]), EXIT_SUCCESS)
+        XCTAssertEqual(SiftCLI.run(arguments: ["updates", "--since", "7d"]), 2)
+    }
+
     func testAppsAndRefreshAreRecognizedCommands() {
         XCTAssertEqual(SiftCLI.run(arguments: ["apps", "apps", "apps"]), 2)
         XCTAssertEqual(SiftCLI.run(arguments: ["refresh", "refresh"]), 2)
@@ -52,7 +63,7 @@ final class SiftCLITests: XCTestCase {
         // `sift --json apps <TAB>` (a global flag before the subcommand) silently produced zero
         // completions. Guard against regressing back to positional indexing.
         let script = CompletionRenderer.script(for: .fish)
-        XCTAssertTrue(script.contains(#"string match -r -- "^apps\$|^show\$""#))
+        XCTAssertTrue(script.contains(#"string match -r -- "^apps\$|^show\$|^log\$""#))
         XCTAssertFalse(script.contains("(commandline -opc)[2]"))
     }
 

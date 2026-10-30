@@ -196,8 +196,11 @@ public struct ManagedPackage: Equatable, Sendable {
     public let selfUpdating: Bool
     /// Application bundles this package installed, which the package's provider then reports.
     public let applicationPaths: [String]
+    /// The provider's own identifier when the name isn't one (a Steam app ID).
+    public let identifier: String?
 
-    public init(name: String, installedVersion: String, availableVersion: String? = nil, isVersionConsistent: Bool = true, requested: Bool = true, selfUpdating: Bool = false, applicationPaths: [String] = []) {
+    public init(name: String, installedVersion: String, availableVersion: String? = nil, isVersionConsistent: Bool = true, requested: Bool = true, selfUpdating: Bool = false, applicationPaths: [String] = [], identifier: String? = nil) {
+        self.identifier = identifier
         self.requested = requested
         self.selfUpdating = selfUpdating
         self.applicationPaths = applicationPaths

@@ -357,7 +357,7 @@ public struct RefreshCoordinator: Sendable {
         let discovered = steamProvider.discover()
         let scopes = discovered.libraries.map { library in
             ManagedPackageScope(scope: library.path, packages: library.games.map { game in
-                ManagedPackage(name: game.name, installedVersion: game.buildID, availableVersion: game.pendingBuildID, selfUpdating: true)
+                ManagedPackage(name: game.name, installedVersion: game.buildID, availableVersion: game.pendingBuildID, selfUpdating: true, identifier: game.appID)
             })
         }
         return managedPhase(provider: .steamGames, scopes: discovered.detected ? scopes : [], warnings: discovered.warnings, retainedMessage: "Steam was not found; cached Steam data was retained.", startedAt: startedAt, finishedAt: clock.now())

@@ -34,7 +34,12 @@ public enum CatalogRenderer {
         let installed = (item.installedVersion ?? "Unknown").terminalInline
         let available = (item.availableVersion ?? item.installedVersion ?? "Unknown").terminalInline
         let version = item.updateAvailable ? "\(installed) -> \(available)" : installed
-        let kind = item.kind == .homebrewFormula ? "Homebrew formula" : item.kind == .homebrewCask ? "Homebrew cask" : "Native app"
+        let kind = switch item.kind {
+        case .homebrewFormula: "Homebrew formula"
+        case .homebrewCask: "Homebrew cask"
+        case .nativeApp: "Native app"
+        case .package: "\(LogRenderer.sourceLabel(item.updateSource ?? "")) package"
+        }
         let status = item.updateAvailable ? (item.autoUpdates ? "self-updating" : "update available") : "current"
         var lines = ["\(item.name.terminalInline)  \(version)", "\(kind) · \(status)"]
         if let prefix = item.prefix { lines.append("Prefix: \(prefix.terminalInline)\(item.tap.map { " · \($0.terminalInline)" } ?? "")") }

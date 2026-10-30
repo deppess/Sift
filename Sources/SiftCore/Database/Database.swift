@@ -68,6 +68,7 @@ public enum DatabaseError: Error, LocalizedError {
     case unsafeFilesystemPath(URL, message: String)
     case unsupportedSchemaVersion(Int)
     case obsoleteSchema
+    case needsMigration
     case refreshInProgress(URL)
     case refreshLockUnavailable(URL, message: String)
     case invalidRefreshInput(String)
@@ -80,6 +81,7 @@ public enum DatabaseError: Error, LocalizedError {
         case let .unsafeFilesystemPath(url, message): "Unsafe filesystem path \(url.path): \(message)"
         case let .unsupportedSchemaVersion(version): "Database schema version \(version) is newer than this version of Sift supports."
         case .obsoleteSchema: "This is an obsolete pre-release Sift database. Remove it and run Sift again."
+        case .needsMigration: "The Sift database was written by an earlier version; run 'sift refresh' to upgrade it."
         case let .refreshInProgress(url): "Another refresh is already running for database: \(url.deletingPathExtension().path)"
         case let .refreshLockUnavailable(url, message): "Unable to acquire the refresh lock for database: \(url.deletingPathExtension().path) (\(message))."
         case let .invalidRefreshInput(message): "Invalid refresh input: \(message)"
@@ -88,7 +90,9 @@ public enum DatabaseError: Error, LocalizedError {
 }
 
 public final class Database: @unchecked Sendable {
-    static let schemaVersion = 15
+    static let schemaVersion = 16
+    /// The 1.0.0 schema every database starts from; later versions are applied as steps on top.
+    static let baselineSchemaVersion = 15
     var handle: OpaquePointer?
     let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     let lock = NSRecursiveLock()
@@ -103,7 +107,20 @@ public final class Database: @unchecked Sendable {
         try validateDatabaseParentDirectory(url.deletingLastPathComponent())
         try validateDatabaseFile(url)
         do {
+            return try openReadOnlyRecreatingSidecars(url: url)
+        } catch DatabaseError.needsMigration {
+            // A cache written by an earlier 1.x release is upgraded in place on first use, so
+            // installing a new version never makes the cache-only commands fail until a refresh.
+            try upgrade(url: url)
+            return try openReadOnlyRecreatingSidecars(url: url)
+        }
+    }
+
+    private static func openReadOnlyRecreatingSidecars(url: URL) throws -> Database {
+        do {
             return try openReadOnly(url: url)
+        } catch DatabaseError.needsMigration {
+            throw DatabaseError.needsMigration
         } catch {
             // A read-only connection cannot create the WAL index (-shm) itself, so once any other
             // SQLite client closes the database last and deletes the -wal/-shm files, every
@@ -113,6 +130,34 @@ public final class Database: @unchecked Sendable {
             try createWALSidecars(url: url)
             return try openReadOnly(url: url)
         }
+    }
+
+    /// Applies pending schema steps without taking the refresh lock: migrate() runs in an
+    /// immediate transaction, so it is safe alongside a running refresh.
+    static func upgrade(url: URL) throws {
+        let database = try writer(url: url)
+        try database.migrate()
+    }
+
+    /// A read-write connection for writes outside a refresh (changelogs fetched on demand). It
+    /// never takes the refresh lock; SQLite's own locking orders it against a running refresh.
+    public static func writer(url: URL) throws -> Database {
+        guard url.isFileURL else { throw DatabaseError.invalidDatabasePath(url) }
+        try validateDatabaseParentDirectory(url.deletingLastPathComponent())
+        try validateDatabaseFile(url)
+        var handle: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &handle, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let handle else {
+            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "Unable to open SQLite database."
+            sqlite3_close(handle)
+            throw DatabaseError.sqlite(message: message)
+        }
+        let database = Database(handle: handle)
+        var persist: Int32 = 1
+        _ = sqlite3_file_control(handle, "main", SQLITE_FCNTL_PERSIST_WAL, &persist)
+        guard sqlite3_busy_timeout(handle, 5_000) == SQLITE_OK else { throw DatabaseError.sqlite(message: String(cString: sqlite3_errmsg(handle))) }
+        try database.execute("PRAGMA foreign_keys = ON;")
+        try database.migrate()
+        return database
     }
 
     static func walSidecarsExist(_ url: URL) -> Bool {
@@ -274,21 +319,76 @@ public final class Database: @unchecked Sendable {
         try run("INSERT INTO provider_state (provider, last_attempt_at, last_success_at, latest_status, data_as_of) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider) DO UPDATE SET last_attempt_at = excluded.last_attempt_at, last_success_at = COALESCE(excluded.last_success_at, provider_state.last_success_at), latest_status = excluded.latest_status, data_as_of = COALESCE(excluded.data_as_of, provider_state.data_as_of);", bindings: [.text(provider), .double(attemptAt.timeIntervalSince1970), .optionalDouble(successAt?.timeIntervalSince1970), .text(status.rawValue), .optionalDouble(successAt?.timeIntervalSince1970)])
     }
 
-    /// 1.0.0 replaces the incremental pre-release migration history with this single baseline at
-    /// `schemaVersion`. Pre-release databases (any stored version below it) are intentionally
-    /// unsupported: remove the old cache and run `sift refresh` again.
+    /// 1.0.0 replaced the pre-release migration history with a single baseline at
+    /// `baselineSchemaVersion`; each later version is a step applied on top of it, so 1.x caches
+    /// keep their history. Pre-release databases (any stored version below the baseline) are
+    /// intentionally unsupported: remove the old cache and run `sift refresh` again.
     func migrate() throws {
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             try execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY NOT NULL);")
-            let version = try scalarInt("SELECT COALESCE(MAX(version), 0) FROM schema_migrations;")
+            var version = try scalarInt("SELECT COALESCE(MAX(version), 0) FROM schema_migrations;")
             if version == Self.schemaVersion {
                 try execute("COMMIT;")
                 return
             }
             guard version <= Self.schemaVersion else { throw DatabaseError.unsupportedSchemaVersion(version) }
-            guard version == 0 else { throw DatabaseError.obsoleteSchema }
-            try execute("""
+            guard version == 0 || version >= Self.baselineSchemaVersion else { throw DatabaseError.obsoleteSchema }
+            if version == 0 {
+                try createBaselineSchema()
+                version = Self.baselineSchemaVersion
+            }
+            if version < 16 {
+                try execute(Self.schema16)
+                version = 16
+            }
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            throw error
+        }
+    }
+
+    /// Version history for Homebrew and managed packages (native apps keep theirs in
+    /// version_transitions), each managed package's provider identifier (a Steam app ID), and
+    /// changelogs, which are kept until the item they describe is fetched again.
+    static let schema16 = """
+        CREATE TABLE package_transitions (
+            id INTEGER PRIMARY KEY,
+            provider TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            from_version TEXT NOT NULL,
+            to_version TEXT NOT NULL,
+            first_observed_at REAL NOT NULL,
+            observed_at REAL NOT NULL
+        );
+        CREATE INDEX package_transitions_observed_at ON package_transitions(observed_at);
+        ALTER TABLE managed_packages ADD COLUMN identifier TEXT;
+        CREATE TABLE changelog_entries (
+            subject TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            version TEXT NOT NULL,
+            title TEXT,
+            published_at REAL,
+            content TEXT NOT NULL,
+            source_url TEXT,
+            PRIMARY KEY (subject, position)
+        );
+        CREATE TABLE changelog_state (
+            subject TEXT PRIMARY KEY NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('resolved', 'unavailable', 'failure')),
+            source TEXT,
+            source_url TEXT,
+            detail TEXT,
+            fetched_at REAL NOT NULL
+        );
+        INSERT INTO schema_migrations (version) VALUES (16);
+        """
+
+    private func createBaselineSchema() throws {
+        try execute("""
                 CREATE TABLE refresh_sessions (
                     id INTEGER PRIMARY KEY,
                     started_at REAL NOT NULL,
@@ -461,19 +561,15 @@ public final class Database: @unchecked Sendable {
                     PRIMARY KEY (managed_package_id, normalized_path)
                 );
                 CREATE INDEX managed_artifacts_path ON managed_artifacts(normalized_path);
-                INSERT INTO schema_migrations (version) VALUES (\(Self.schemaVersion));
+                INSERT INTO schema_migrations (version) VALUES (\(Self.baselineSchemaVersion));
                 """)
-            try execute("COMMIT;")
-        } catch {
-            try? execute("ROLLBACK;")
-            throw error
-        }
     }
 
     func validateExistingSchema() throws {
         let version = try scalarInt("SELECT COALESCE(MAX(version), 0) FROM schema_migrations;")
         guard version <= Self.schemaVersion else { throw DatabaseError.unsupportedSchemaVersion(version) }
-        guard version == Self.schemaVersion else { throw DatabaseError.obsoleteSchema }
+        guard version >= Self.baselineSchemaVersion else { throw DatabaseError.obsoleteSchema }
+        guard version == Self.schemaVersion else { throw DatabaseError.needsMigration }
     }
 
     func validateRefreshInput(_ input: RefreshPersistenceInput) throws {

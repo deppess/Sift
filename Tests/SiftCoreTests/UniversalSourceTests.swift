@@ -249,7 +249,8 @@ final class UniversalSourceTests: XCTestCase {
         XCTAssertEqual(dashboard.data.availableUpdateCount, 1)
         XCTAssertEqual(dashboard.data.informationalUpdateCount, 1)
         XCTAssertEqual(try database.nativeApplicationItems().first?.updateSource, "macports")
-        XCTAssertEqual(try database.catalogItems().map(\.name), ["IDLE"])
+        XCTAssertEqual(try database.catalogItems().map(\.name), ["Bastion Siege 6", "IDLE", "py313-Pillow"])
+        XCTAssertEqual(try database.catalogItems().first?.selector, "steam:Bastion Siege 6")
     }
 
     // MARK: - Helpers
