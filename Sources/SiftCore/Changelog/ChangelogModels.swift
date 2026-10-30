@@ -54,7 +54,7 @@ public struct Changelog: Codable, Equatable, Sendable {
         if let index = ChangelogVersion.installedIndex(in: entries, installed: installed) { return Array(entries[..<index]) }
         // The installed version has no entry of its own (a rebuild, or a source that skips
         // versions): keep the entries that compare newer.
-        guard entries.contains(where: { ChangelogVersion.token(in: $0.version) != nil }) else { return [] }
+        guard entries.contains(where: { ChangelogVersion.token(in: $0.version) != nil }), !ChangelogVersion.isCalendarDated(entries, installed: installed) else { return [] }
         return Array(entries.prefix { entry in
             guard let token = ChangelogVersion.token(in: entry.version) else { return false }
             return SparkleVersion.compare(token, installed) == .orderedDescending
@@ -90,6 +90,10 @@ enum ChangelogVersion {
         if let paren = value.firstIndex(of: "(") { value = String(value[..<paren]).trimmingCharacters(in: .whitespaces) }
         if let comma = value.firstIndex(of: ",") { value = String(value[..<comma]) }
         if let match = value.firstMatch(of: #/^(.+)_\d+$/#) { value = String(match.1) }
+        // Miniconda's py314_26.9.4-0: the Python build prefix and package revision go.
+        if let match = value.firstMatch(of: #/^[a-z]+\d*_(\d+(?:\.\d+)+)(?:-\d+)?$/#) { value = String(match.1) }
+        // Warp's 0.2026.10.21.08.25.stable_02: the channel goes.
+        if let match = value.firstMatch(of: #/^(\d+(?:\.\d+)+)[._-](?:stable|release)(?:[._-]?\d+)?$/#) { value = String(match.1) }
         if value.lowercased().hasPrefix("v"), value.dropFirst().first?.isNumber == true { value.removeFirst() }
         return value
     }
@@ -124,6 +128,15 @@ enum ChangelogVersion {
         return a.count >= 3 && b.count == a.count + 1 && Array(b.prefix(a.count)) == a
     }
 
+    /// Entries numbered by date (Gemini's 2026.10.13) for an app with ordinary versions (1.135):
+    /// a dated log, whose numbers can't be compared with the installed version.
+    static func isCalendarDated(_ entries: [ChangelogEntry], installed: String?) -> Bool {
+        guard let installed, let major = Int(installed.prefix { $0.isNumber }), major < 1990 else { return false }
+        let tokens = entries.compactMap { token(in: $0.version) }
+        let dated = tokens.filter { $0.firstMatch(of: #/^(19|20)\d\d\.\d{1,2}\.\d{1,2}$/#) != nil }
+        return !tokens.isEmpty && dated.count * 2 >= tokens.count
+    }
+
     /// Whether entries are versions of what's installed: one shares its major version, or they
     /// are dated releases. Entries all from another line (0.1.x for an app at 4.4212, a server's
     /// 8.x for its client at 1.53) are another product's.
@@ -137,6 +150,9 @@ enum ChangelogVersion {
     /// The index of the installed version's entry: an exact match, or else a loose one.
     static func installedIndex(in entries: [ChangelogEntry], installed: String) -> Int? {
         if let index = entries.firstIndex(where: { matches($0.version, installed) }) ?? entries.firstIndex(where: { looselyMatches($0.version, installed) }) { return index }
+        // A build number as the last part (Word's 16.114.26102720 is "16.114.3 (Build 26102720)").
+        if let build = installed.split(separator: ".").last, build.count >= 6, build.allSatisfy(\.isNumber),
+           let index = entries.firstIndex(where: { ($0.title ?? "").contains(build) || $0.content.prefix(200).contains(build) }) { return index }
         // A patch level of a release line the project documents only as a whole (Bash 5.3.20 is
         // patch 20 of 5.3, and CHANGES has one entry for 5.3).
         // Likewise Raycast's 2.10.1.0 under its 2.10 entry: the longest release line listed with

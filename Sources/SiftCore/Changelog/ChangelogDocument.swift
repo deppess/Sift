@@ -23,6 +23,19 @@ enum ChangelogDocument {
             }
         }
         var versioned = headings.filter { ChangelogVersion.token(in: $0.text) != nil && !isUnreleased($0.text) }
+        // Release notes by day instead of version (Claude's "October 21, 2026", Office for Mac's):
+        // each dated heading is an entry, its version the day.
+        // A day under an "Upcoming release" heading (Zoom's) isn't out yet.
+        let datedHeadings = headings.enumerated().filter { position, heading in
+            heading.text.count <= 48 && isDayHeading(heading.text) && !(position > 0 && headings[position - 1].text.lowercased().contains("upcoming"))
+        }.map(\.element)
+        var byDay = false
+        // Dates clearly outnumbering version headings; versions written as plain lines under the
+        // dates (Office's "Version 16.114.3 (Build …)") still win.
+        if datedHeadings.count >= 3, versioned.count < 2 || datedHeadings.count >= versioned.count * 3, plainTextHeadings(lines).count < datedHeadings.count {
+            versioned = datedHeadings
+            byDay = true
+        }
         if versioned.isEmpty {
             // Plain-text NEWS and CHANGES files have no Markdown headings.
             headings = plainTextHeadings(lines)
@@ -53,7 +66,7 @@ enum ChangelogDocument {
                 entryDate = found
                 bodyLines.remove(at: first)
             }
-            let version = ChangelogVersion.token(in: start.text) ?? start.text
+            let version = byDay ? entryDate.map(dayVersion) ?? start.text : ChangelogVersion.token(in: start.text) ?? start.text
             // "BetterTouchTool >= 6.943": everything since that version, marked so it can apply to later ones.
             let cumulative = start.text.contains(">=") || start.text.contains("≥") || start.text.range(of: #"(?i)\b(and later|or later|and newer|or newer|onwards)\b"#, options: .regularExpression) != nil
             entries.append(ChangelogEntry(version: version, title: cumulative ? ChangelogDocument.cumulativeTitle : cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
@@ -99,7 +112,9 @@ enum ChangelogDocument {
         var headings: [(Int, Int, String)] = []
         for (index, line) in lines.enumerated() {
             guard let first = line.first, !first.isWhitespace, line.count <= 140, ChangelogVersion.token(in: line) != nil, !isUnreleased(line) else { continue }
-            let lower = line.lowercased()
+            // A version line set in bold ("**Version 9.5.4**", Cyberduck's) reads as its words.
+            let bold = line.hasPrefix("**") && line.trimmingCharacters(in: .whitespaces).hasSuffix("**")
+            let lower = (bold ? line.trimmingCharacters(in: CharacterSet(charactersIn: "* ")) : line).lowercased()
             let next = index + 1 < lines.count ? lines[index + 1].trimmingCharacters(in: .whitespaces) : ""
             // "* Noteworthy changes in release 9.5", "* Changes in Wget 1.25.0"; not a bullet
             // that merely mentions a standard ("…conforming to POSIX 1003.1-2001:").
@@ -218,6 +233,22 @@ enum ChangelogDocument {
     }
 
     // MARK: Dates
+
+    /// A heading that is a day: "October 21, 2026", "2026-10-21", "21 Oct 2026" (not a month alone).
+    static func isDayHeading(_ text: String) -> Bool {
+        guard date(in: text) != nil, text.range(of: #"(?i)^\s*[a-z]+ \d{4}\s*$"#, options: .regularExpression) == nil else { return false }
+        // Mostly the date: a few words around it at most ("Released October 21, 2026").
+        return text.split(whereSeparator: \.isWhitespace).count <= 6
+    }
+
+    /// A day as a version: 2026-10-21.
+    static func dayVersion(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
 
     static func date(in original: String) -> Date? {
         // "July 21st, 2026" reads as "July 21, 2026".

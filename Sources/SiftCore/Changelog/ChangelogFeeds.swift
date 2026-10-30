@@ -37,13 +37,9 @@ enum ChangelogFeeds {
     static func datedEntries(_ items: [ChangelogEntry], limit: Int = 100) -> [ChangelogEntry] {
         let datedItems = items.filter { $0.date != nil }
         guard datedItems.count >= 3, datedItems.count * 5 >= items.count * 4 else { return [] }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyy-MM-dd"
         var days: [(String, [ChangelogEntry])] = []
         for item in datedItems.sorted(by: { $0.date! > $1.date! }) {
-            let day = formatter.string(from: item.date!)
+            let day = ChangelogDocument.dayVersion(item.date!)
             if let index = days.firstIndex(where: { $0.0 == day }) { days[index].1.append(item) } else if days.count < limit { days.append((day, [item])) }
         }
         return days.map { day, posts in

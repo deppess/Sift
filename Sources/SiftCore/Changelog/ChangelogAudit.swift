@@ -8,7 +8,7 @@ public enum ChangelogAudit {
         var flags: [String] = []
         let entries = changelog.entries
         let versioned = entries.filter { ChangelogVersion.token(in: $0.version) == $0.version }
-        let isVersioned = versioned.count * 2 >= entries.count
+        let isVersioned = versioned.count * 2 >= entries.count && !ChangelogVersion.isCalendarDated(entries, installed: changelog.installedVersion.map(ChangelogVersion.normalized))
         if isVersioned {
             if let installed = changelog.installedVersion, changelog.installedEntry == nil { flags.append("missing-installed(\(installed))") }
             if let available = changelog.availableVersion, available != changelog.installedVersion {

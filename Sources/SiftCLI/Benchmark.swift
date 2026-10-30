@@ -45,8 +45,10 @@ enum Benchmark {
             case let .failure(message):
                 line = ["ERROR", token, version ?? "?", "", "0", message].map(\.terminalInline).joined(separator: "\t")
             }
-            results.withLock { $0.append((index, line)) }
-            FileHandle.standardError.write(Data("\r\u{1B}[2K\(results.withLock { $0.count })/\(tokenList.count) \(token)".utf8))
+            let done = results.withLock { $0.append((index, line)); return $0.count }
+            let filled = done * 30 / max(tokenList.count, 1)
+            let bar = String(repeating: "█", count: filled) + String(repeating: "░", count: 30 - filled)
+            FileHandle.standardError.write(Data("\r\u{1B}[2K\(bar) \(done)/\(tokenList.count) \(done * 100 / max(tokenList.count, 1))%  \(token)".utf8))
         }
         let lines = results.withLock { $0.sorted { $0.0 < $1.0 }.map(\.1) }
         print("status\tname\tversion\tsource\tentries\tflags")

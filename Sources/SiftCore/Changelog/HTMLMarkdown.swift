@@ -78,6 +78,10 @@ enum HTMLMarkdown {
                 output += "**"
             case "br":
                 newline()
+            // A date or table cell set right against the text before it ("1.6.8</a><time>2026-09-24")
+            // is a separate word.
+            case "time", "td", "th":
+                if !isClosing, let last = output.last, !last.isWhitespace { output.append(" ") }
             case "p", "div", "section", "article", "tr", "table", "dl", "dt", "dd", "blockquote", "details", "summary", "main", "button", "header", "form":
                 newline(name == "p" || name == "section" || name == "article" ? 2 : 1)
             default:
@@ -99,7 +103,8 @@ enum HTMLMarkdown {
         // Minified pages leave attribute values unquoted (href=/mac/app/versionhistory/).
         for match in html.matches(of: #/(?is)<a\s[^>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))[^>]*>(.*?)</a>/#) {
             let raw = match.1 ?? match.2 ?? match.3 ?? ""
-            guard !raw.isEmpty, !raw.hasPrefix("#") else { continue }
+            // An href escaped for a script string (href=\"…\") isn't a link.
+            guard !raw.isEmpty, !raw.hasPrefix("#"), !raw.hasPrefix("\\") else { continue }
             let href = HTMLText.decodeEntities(String(raw)).trimmingCharacters(in: .whitespaces)
             guard let url = URL(string: href, relativeTo: base)?.absoluteURL, url.scheme?.lowercased() == "https" else { continue }
             let text = HTMLText.plainText(from: String(match.4)).trimmingCharacters(in: .whitespacesAndNewlines)

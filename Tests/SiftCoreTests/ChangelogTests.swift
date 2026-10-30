@@ -226,6 +226,26 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogFeeds.datedEntries(posts.map { ChangelogEntry(version: $0.version, content: $0.content) }).count, 0, "undated posts aren't a log")
     }
 
+    func testDatedBoldAndBuildStampedReleaseNotes() {
+        let claude = "# Release notes\n\n## October 2026\n\n### October 21, 2026\n\n- Faster startup\n\n### October 7, 2026\n\n- Projects\n\n### September 28, 2026\n\n- Fixes"
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: claude, sourceURL: nil).map(\.version), ["2026-10-21", "2026-10-07", "2026-09-28"])
+        let cyberduck = HTMLMarkdown.convert("<p><a href=\"x\"><strong>Version 9.5.4</strong></a></p><ul><li>Feature A</li></ul><p><strong>Version 9.5.3</strong></p><ul><li>Bugfix B</li></ul>")
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: cyberduck, sourceURL: nil).map(\.version), ["9.5.4", "9.5.3"])
+        let keka = HTMLMarkdown.convert("<h4><a href=\"#v1.6.8\">Changes in version 1.6.8</a><time datetime=\"2026-09-24\">2026-09-24</time></h4><ul><li>Fix</li></ul>")
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: keka, sourceURL: nil).map(\.version), ["1.6.8"])
+        let office = [ChangelogEntry(version: "16.114.3", title: "Build 26102720", content: "- Fix"), ChangelogEntry(version: "16.114.2", title: "Build 26102345", content: "- Fix")]
+        XCTAssertEqual(ChangelogVersion.installedIndex(in: office, installed: "16.114.26102345"), 1)
+        XCTAssertEqual(ChangelogVersion.normalized("py314_26.9.4-0"), "26.9.4")
+        XCTAssertEqual(ChangelogVersion.normalized("0.2026.10.21.08.25.stable_02"), "0.2026.10.21.08.25")
+        XCTAssertEqual(ChangelogVersion.installedIndex(in: ["2.10", "2.9"].map { ChangelogEntry(version: $0, content: "- x") }, installed: "2.10.1.0"), 0)
+        XCTAssertTrue(ChangelogVersion.looselyMatches("1.24", "1.24b"))
+        let gemini = ["2026.10.13", "2026.09.30"].map { ChangelogEntry(version: $0, content: "- x") }
+        XCTAssertTrue(ChangelogVersion.isCalendarDated(gemini, installed: "1.135.1"))
+        XCTAssertFalse(ChangelogVersion.isCalendarDated(gemini, installed: "2026.09.30"), "a calendar-versioned project's own versions")
+        let hub = #"<a href="/changelog/bionic-v1.1.10">Bionic</a><a href="/changelog/lmstudio">LM Studio</a>"#
+        XCTAssertEqual(ChangelogResolver.productSection(in: hub, base: URL(string: "https://lmstudio.ai/changelog")!, name: "lm-studio")?.absoluteString, "https://lmstudio.ai/changelog/lmstudio")
+    }
+
     // MARK: Resolving
 
     func testGitHubReleasesAreTheChangelogAndPagesFollowUntilShort() throws {
@@ -281,7 +301,7 @@ final class ChangelogTests: XCTestCase {
         let resolution = ChangelogResolver(client: mockedClient(database), homeDirectory: root.path, environment: [:]).resolve(ChangelogSubject(item: item))
         guard case let .resolved(source, _, entries) = resolution else { return XCTFail("expected a changelog, got \(resolution)") }
         XCTAssertEqual(source, "the app's update feed")
-        XCTAssertEqual(entries.map(\.version), ["3.3.1"])
+        XCTAssertEqual(entries.map(\.version), ["3.3.1", "3.3.0"], "the linked page's older sections fill in the history")
         XCTAssertEqual(entries.first?.content, "- Faster export")
         XCTAssertEqual(entries.first?.sourceURL, "https://help.example.com/notes")
     }
