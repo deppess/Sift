@@ -106,7 +106,13 @@ enum ChangelogDocument {
                 // A version alone on its line with a date next ("2.0" / "November 2026").
                 || (line.count <= 40 && lower.firstMatch(of: #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#) != nil
                     && (date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil || shortDateLine(before: index, in: lines) != nil))
-            if isHeading { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
+            // A heading stands on its own: a blank line, a list, or indented text follows it, or it
+            // ends with a colon. "Version 3.7.5 was accidentally built without the" running on
+            // into the next line is a sentence in the notes.
+            let following = index + 1 < lines.count ? lines[index + 1] : ""
+            let standsAlone = next.isEmpty || line.trimmingCharacters(in: .whitespaces).hasSuffix(":") || following.first.map { $0 == " " || $0 == "\t" } == true
+                || ["-", "*", "•", "+"].contains(where: { next.hasPrefix($0 + " ") }) || next.allSatisfy { "=-~^*".contains($0) }
+            if isHeading, standsAlone { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
         }
         if headings.isEmpty {
             // "Tor Browser 16.0 - October 28 2026" or "2012-04-02: atool 0.39.0 released." at the

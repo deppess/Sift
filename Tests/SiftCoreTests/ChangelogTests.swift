@@ -96,6 +96,25 @@ final class ChangelogTests: XCTestCase {
         XCTAssertNil(ChangelogResolver.Hints.forgeRepository(URL(string: "https://example.com/a/b")!))
     }
 
+    func testAFeedChannelNamedStableIsTheDefaultChannel() {
+        func item(_ channel: String?) -> SparkleAppcastItem { SparkleAppcastItem(version: "2", shortVersion: "2.0", channel: channel, minimumSystemVersion: nil, maximumSystemVersion: nil, releaseNotesHTML: nil, releaseNotesURL: nil) }
+        XCTAssertTrue(item(nil).isDefaultChannel)
+        XCTAssertTrue(item("stable").isDefaultChannel)
+        XCTAssertFalse(item("beta").isDefaultChannel)
+        XCTAssertEqual(SparkleAppcastParser.bestItem([item("stable")], systemVersion: "15.0")?.version, "2", "OrbStack labels every release stable")
+    }
+
+    func testHomebrewLivecheckBlocksNameTheUpdateEndpoint() {
+        let cask = "cask \"docker-desktop\" do\n  arch arm: \"arm64\", intel: \"amd64\"\n\n  version \"4.97.0,244584\"\n  url \"https://desktop.docker.com/mac/main/#{arch}/#{version.csv.second}/Docker.dmg\"\n\n  livecheck do\n    url \"https://desktop.docker.com/mac/main/#{arch}/appcast.xml\"\n    strategy :sparkle\n  end\nend\n"
+        let livecheck = HomebrewLivecheck(source: cask, version: "4.97.0,244584", downloadURL: nil, homepage: nil)
+        XCTAssertEqual(livecheck?.url.absoluteString, "https://desktop.docker.com/mac/main/arm64/appcast.xml")
+        XCTAssertEqual(livecheck?.strategy, .sparkle)
+        XCTAssertNil(HomebrewLivecheck(source: "  livecheck do\n    url \"https://x.com/#{livecheck_arch}.xml\"\n  end\n", version: nil, downloadURL: nil, homepage: nil), "an unknown interpolation isn't guessed")
+        let feed = UpdateFeedJSON.read(Data(#"{"version":"12.34.0","notes":"- Faster collections","pub_date":"2026-10-20T00:00:00Z"}"#.utf8))
+        XCTAssertEqual(feed.entries.map(\.version), ["12.34.0"])
+        XCTAssertEqual(UpdateFeedJSON.read(Data(#"{"productVersion":"1.144.0","notes":"https://code.visualstudio.com/updates/v1_144"}"#.utf8)).links.map(\.absoluteString), ["https://code.visualstudio.com/updates/v1_144"])
+    }
+
     func testCodeBlocksOnAPageDontSwallowTheHeadingsAfterThem() {
         let html = "<h2>go1.27.0 (released 2026-08-19)</h2><p>Major release.</p><pre>go install x</pre><h2>go1.26.0 (released 2026-02-10)</h2><p>Older.</p>"
         let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://go.dev/doc/devel/release")!)

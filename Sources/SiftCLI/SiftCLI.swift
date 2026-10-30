@@ -9,6 +9,16 @@ public enum SiftCLI {
         if arguments.count == 2, arguments[0] == "__render", let url = URL(string: arguments[1]), url.scheme?.lowercased() == "https" {
             return PageRenderer.main(url: url, timeout: 25)
         }
+        // Changelog accuracy benchmark over Homebrew's most-installed packages; see Benchmark.
+        if arguments.first == "__benchmark", arguments.count >= 2 {
+            let databaseIndex = arguments.firstIndex(of: "--database")
+            let url = databaseIndex.flatMap { $0 + 1 < arguments.count ? URL(filePath: arguments[$0 + 1]) : nil } ?? SiftApplication.existingDefaultDatabaseURL()
+            guard let url else { return EXIT_FAILURE }
+            // A count ("60"), or a comma-separated list of names to check instead ("iterm2,orbstack").
+            let third = arguments.count > 2 && !arguments[2].hasPrefix("-") ? arguments[2] : "50"
+            let only = Int(third) == nil ? third.split(separator: ",").map(String.init) : []
+            do { return try Benchmark.run(kind: arguments[1], count: Int(third) ?? 50, only: only, databaseURL: url) } catch { writeError(error.localizedDescription); return EXIT_FAILURE }
+        }
         do {
             let invocation = try Invocation(arguments: arguments)
             if invocation.help {

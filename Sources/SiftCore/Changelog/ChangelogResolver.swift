@@ -116,6 +116,8 @@ public struct ChangelogResolver: Sendable {
         /// A repository on a GitLab (gitlab.com, gitlab.gnome.org, …) or Forgejo/Gitea
         /// (codeberg.org, …) host: its releases, then its changelog file.
         case forge(host: String, path: String)
+        /// A vendor's JSON update endpoint (from Homebrew's livecheck) that carries release notes.
+        case updateFeed(URL)
         case page(URL)
 
         var label: String {
@@ -129,6 +131,7 @@ public struct ChangelogResolver: Sendable {
             case let .githubFile(repository): "changelog in \(repository.path)"
             case let .githubTags(repository): "GitHub tags and commits (\(repository.path))"
             case let .forge(host, path): "\(host)/\(path)"
+            case let .updateFeed(url): "the update feed at \(url.host ?? "its vendor")"
             case let .page(url): url.host.map { "\($0)\(url.path.count > 1 ? url.path : "")" } ?? url.absoluteString
             }
         }
@@ -142,6 +145,7 @@ public struct ChangelogResolver: Sendable {
             case let .githubReleases(repository): "https://github.com/\(repository.path)/releases"
             case let .githubFile(repository), let .githubTags(repository): "https://github.com/\(repository.path)"
             case let .forge(host, path): "https://\(host)/\(path)"
+            case let .updateFeed(url): url.absoluteString
             case let .page(url): url.absoluteString
             }
         }
@@ -239,6 +243,7 @@ public struct ChangelogResolver: Sendable {
         case let .githubFile(repository): try githubFile(repository)
         case let .githubTags(repository): try githubTags(repository)
         case let .forge(host, path): try forge(host: host, path: path, name: hints.name)
+        case let .updateFeed(url): try updateFeed(url, name: hints.name)
         case let .page(url): try page(url, name: hints.name)
         }
     }
@@ -304,7 +309,7 @@ public struct ChangelogResolver: Sendable {
     private func sparkle(_ url: URL, padding: Bool) throws -> [ChangelogEntry] {
         guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
         let items = try SparkleAppcastParser.parse(client.fetch(url, resource: .sparkleAppcast(host: host)).body)
-            .filter { $0.channel == nil }
+            .filter(\.isDefaultChannel)
             .sorted { SparkleVersion.compare($0.version, $1.version, padding: padding) == .orderedDescending }
         var entries: [ChangelogEntry] = []
         var linkedPages = 0
@@ -326,7 +331,11 @@ public struct ChangelogResolver: Sendable {
                     let split = read(html, url: link, render: true)
                     let own = split.first { ChangelogVersion.matches($0.version, ChangelogVersion.normalized(item.displayVersion)) }?.content
                     let whole = HTMLMarkdown.convert(html)
-                    content = own ?? (split.count == 1 ? split[0].content : ChangelogDocument.isPlaceholder(whole) ? content : whole)
+                    // One entry for a different version (iTerm2 links every item to the latest
+                    // release's notes) isn't this item's; an unversioned page is.
+                    let single = split.count == 1 && ChangelogVersion.token(in: split[0].version) == nil ? split[0].content : nil
+                    let unsplit = split.isEmpty && !ChangelogDocument.isPlaceholder(whole) ? whole : nil
+                    content = own ?? single ?? unsplit ?? content
                     source = link.absoluteString
                     // Older items in the same feed usually link to the same page.
                     if split.count > 1 { linkedSplit = split }
@@ -335,6 +344,12 @@ public struct ChangelogResolver: Sendable {
                 }
             }
             entries.append(ChangelogEntry(version: item.displayVersion, date: item.publishedAt.flatMap(Self.rfc822Date), content: content, sourceURL: source))
+        }
+        // A full-history page fills in the versions the feed itself no longer lists.
+        if let full = items.lazy.compactMap({ $0.fullReleaseNotesURL?.trimmingCharacters(in: .whitespacesAndNewlines) }).compactMap(URL.init(string:)).first, isPublicHTTPSURL(full), let fullHost = full.host,
+           let text = try? fetchText(full, resource: .changelogPage(host: fullHost)) {
+            let history = read(text, url: full, render: true)
+            if ChangelogDocument.isMeaningful(history) { return Self.merge(entries, history) }
         }
         return entries
     }
@@ -449,7 +464,10 @@ public struct ChangelogResolver: Sendable {
             catch MetadataHTTPError.rateLimited, MetadataHTTPError.forbidden {
                 // Out of API quota: the releases feed has the latest ten without spending any.
                 let feed = URL(string: "https://github.com/\(owner)/\(name)/releases.atom")!
-                return ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage(host: "github.com")).body)
+                // The feed lists pre-releases and drafts too; only versioned releases of this item stay.
+                let items = ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage(host: "github.com")).body)
+                    .filter { ChangelogVersion.token(in: $0.version) == $0.version && $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil }
+                return Self.ownProductReleases(items, name: currentName, preferCLI: preferCLI)
             }
             guard let releases = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
             for release in releases where release["draft"] as? Bool != true && release["prerelease"] as? Bool != true {
@@ -568,6 +586,17 @@ public struct ChangelogResolver: Sendable {
 
     // Raw file paths are case-sensitive, so the common spellings are each tried (a missing one
     // is a cached 404, and raw files don't count against the API quota).
+    /// A JSON update endpoint: the notes it carries, or the page its `notes` field links to.
+    private func updateFeed(_ url: URL, name: String) throws -> [ChangelogEntry] {
+        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
+        let feed = UpdateFeedJSON.read(try client.fetch(url, resource: .changelogPage(host: host)).body)
+        for link in feed.links.prefix(1) where isPublicHTTPSURL(link) {
+            let linked = (try? page(link, name: name)) ?? []
+            if ChangelogDocument.isMeaningful(linked) { return Self.merge(feed.entries, linked) }
+        }
+        return feed.entries
+    }
+
     enum ForgeKind { case gitlab, forgejo }
     static let forgeKinds: [String: ForgeKind] = [
         "gitlab.com": .gitlab, "gitlab.gnome.org": .gitlab, "gitlab.freedesktop.org": .gitlab, "invent.kde.org": .gitlab,
@@ -836,6 +865,7 @@ public struct ChangelogResolver: Sendable {
               let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let urls = document["urls"] as? [String: Any]
         let stable = (urls?["stable"] as? [String: Any])?["url"] as? String
+        livecheckHints(document: document, cask: cask, stableURL: stable, into: &hints)
         let head = (urls?["head"] as? [String: Any])?["url"] as? String
         for link in [stable, head, document["url"] as? String] {
             guard let link, let url = URL(string: link) else { continue }
@@ -844,6 +874,24 @@ public struct ChangelogResolver: Sendable {
             else { registryHints(forDownload: url, into: &hints) }
         }
         hints.add(link: document["homepage"] as? String)
+    }
+
+    /// The update endpoint in the cask's or formula's `livecheck` block, read from its Ruby source
+    /// on GitHub (raw files cost no API quota): a Sparkle feed, a JSON endpoint, or a repository.
+    private func livecheckHints(document: [String: Any], cask: Bool, stableURL: String?, into hints: inout Hints) {
+        guard let path = document["ruby_source_path"] as? String, !path.contains(".."),
+              let url = URL(string: "https://raw.githubusercontent.com/Homebrew/\(cask ? "homebrew-cask" : "homebrew-core")/HEAD/\(path)"),
+              let source = try? fetchText(url, resource: .githubChangelog) else { return }
+        let version = cask ? document["version"] as? String : (document["versions"] as? [String: Any])?["stable"] as? String
+        guard let livecheck = HomebrewLivecheck(source: source, version: version, downloadURL: cask ? document["url"] as? String : stableURL, homepage: document["homepage"] as? String) else { return }
+        if client.debug { MetadataHTTPClient.trace("livecheck: \(livecheck.strategy) \(livecheck.url.absoluteString)") }
+        switch livecheck.strategy {
+        case .sparkle: hints.add(.sparkle(livecheck.url, padding: true))
+        case .json: hints.add(.updateFeed(livecheck.url))
+        case .github: if let github = GitHubSource.parse(Hints.repositoryRoot(livecheck.url)) { hints.add(github.repository) }
+        case .page: if Self.looksLikeChangelogURL(livecheck.url) { hints.add(link: livecheck.url.absoluteString) }
+        case .other: break
+        }
     }
 
     /// A download from PyPI, npm, or crates.io names the package there, whose metadata names

@@ -117,10 +117,20 @@ public struct SparkleAppcastItem: Equatable, Sendable {
     public let releaseNotesURL: String?
     /// The item's `pubDate` as the feed writes it (RFC 822).
     public var publishedAt: String?
+    /// `sparkle:fullReleaseNotesLink`: a page with the app's whole release history.
+    public var fullReleaseNotesURL: String?
 
     public var displayVersion: String { shortVersion ?? version }
 
-    public init(version: String, shortVersion: String?, channel: String?, minimumSystemVersion: String?, maximumSystemVersion: String?, releaseNotesHTML: String?, releaseNotesURL: String?, publishedAt: String? = nil) {
+    /// On Sparkle's default channel: no channel at all, or one some feeds name explicitly
+    /// ("stable", OrbStack's). "beta" and the like are opt-in channels the app doesn't offer by default.
+    public var isDefaultChannel: Bool {
+        guard let channel = channel?.trimmingCharacters(in: .whitespaces).lowercased(), !channel.isEmpty else { return true }
+        return ["stable", "release", "default", "production", "public"].contains(channel)
+    }
+
+    public init(version: String, shortVersion: String?, channel: String?, minimumSystemVersion: String?, maximumSystemVersion: String?, releaseNotesHTML: String?, releaseNotesURL: String?, publishedAt: String? = nil, fullReleaseNotesURL: String? = nil) {
+        self.fullReleaseNotesURL = fullReleaseNotesURL
         self.version = version
         self.shortVersion = shortVersion
         self.channel = channel
@@ -205,14 +215,15 @@ public final class SparkleAppcastParser: NSObject, XMLParserDelegate {
             maximumSystemVersion: fields["maximumSystemVersion"],
             releaseNotesHTML: fields["description"],
             releaseNotesURL: fields["releaseNotesLink"] ?? fields["fullReleaseNotesLink"],
-            publishedAt: fields["pubDate"]
+            publishedAt: fields["pubDate"],
+            fullReleaseNotesURL: fields["fullReleaseNotesLink"]
         )
     }
 
     /// The update Sparkle would offer: the newest default-channel item this macOS can run.
     public static func bestItem(_ items: [SparkleAppcastItem], systemVersion: String, padding: Bool = true) -> SparkleAppcastItem? {
         items
-            .filter { $0.channel == nil }
+            .filter(\.isDefaultChannel)
             .filter { item in item.minimumSystemVersion.map { SparkleVersion.compare(systemVersion, $0, padding: padding) != .orderedAscending } ?? true }
             .filter { item in item.maximumSystemVersion.map { SparkleVersion.compare(systemVersion, $0, padding: padding) != .orderedDescending } ?? true }
             .max { SparkleVersion.compare($0.version, $1.version, padding: padding) == .orderedAscending }
