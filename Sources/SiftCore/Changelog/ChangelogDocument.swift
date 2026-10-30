@@ -112,7 +112,9 @@ enum ChangelogDocument {
             let following = index + 1 < lines.count ? lines[index + 1] : ""
             let standsAlone = next.isEmpty || line.trimmingCharacters(in: .whitespaces).hasSuffix(":") || following.first.map { $0 == " " || $0 == "\t" } == true
                 || ["-", "*", "•", "+"].contains(where: { next.hasPrefix($0 + " ") }) || next.allSatisfy { "=-~^*".contains($0) }
-            if isHeading, standsAlone { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
+            // Bash's "This document details the changes between this version, …" wraps onto a
+            // second line but is always a heading.
+            if isHeading, standsAlone || lower.hasPrefix("this document details the changes between this version") { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
         }
         if headings.isEmpty {
             // "Tor Browser 16.0 - October 28 2026" or "2012-04-02: atool 0.39.0 released." at the

@@ -343,7 +343,13 @@ public struct ChangelogResolver: Sendable {
                     let whole = HTMLMarkdown.convert(html)
                     // One entry for a different version (iTerm2 links every item to the latest
                     // release's notes) isn't this item's; an unversioned page is.
-                    let single = split.count == 1 && ChangelogVersion.token(in: split[0].version) == nil ? split[0].content : nil
+                    // A single section for an older version is cumulative ("BetterTouchTool >= 6.943"
+                    // for 6.990) and applies; one for a newer version doesn't.
+                    let single: String? = {
+                        guard split.count == 1 else { return nil }
+                        guard let token = ChangelogVersion.token(in: split[0].version) else { return split[0].content }
+                        return SparkleVersion.compare(token, ChangelogVersion.normalized(item.displayVersion)) != .orderedDescending ? split[0].content : nil
+                    }()
                     let unsplit = split.isEmpty && !ChangelogDocument.isPlaceholder(whole) ? whole : nil
                     content = own ?? single ?? unsplit ?? content
                     source = link.absoluteString
