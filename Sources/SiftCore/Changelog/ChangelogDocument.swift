@@ -29,15 +29,17 @@ enum ChangelogDocument {
             versioned = headings
         }
         guard !versioned.isEmpty else { return [] }
-        let levelCounts = Dictionary(grouping: versioned, by: \.level).mapValues(\.count)
-        let level = levelCounts.max { $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value }!.key
-        let starts = versioned.filter { $0.level == level }
+        // The first version heading sets the depth: version headings at its level or above are
+        // entries, deeper ones (a "### 2.1.1 fixes" under "## 2.1.1") stay inside them. FL
+        // Studio lists recent releases as h3 and older majors as h2, and both count.
+        let level = versioned[0].level
+        let starts = versioned.filter { $0.level <= level }
         var entries: [ChangelogEntry] = []
         for (position, start) in starts.enumerated() {
             let bodyStart = start.index + (isSetextUnderline(lines, after: start.index) ? 2 : 1)
             // An entry ends at the next version heading, or at any heading above its level.
             let nextVersion = position + 1 < starts.count ? starts[position + 1].index : lines.count
-            let nextHigher = headings.first { $0.index > start.index && $0.level < level }?.index ?? lines.count
+            let nextHigher = headings.first { $0.index > start.index && $0.level < start.level }?.index ?? lines.count
             let end = min(nextVersion, nextHigher)
             var bodyLines = bodyStart < end ? Array(lines[bodyStart..<end]) : []
             var entryDate = date(in: start.text)
@@ -73,7 +75,9 @@ enum ChangelogDocument {
             guard let first = line.first, !first.isWhitespace, line.count <= 140, ChangelogVersion.token(in: line) != nil, !isUnreleased(line) else { continue }
             let lower = line.lowercased()
             let next = index + 1 < lines.count ? lines[index + 1].trimmingCharacters(in: .whitespaces) : ""
-            let isHeading = lower.hasPrefix("* ") && (lower.contains("release") || lower.contains("version") || lower.contains("changes") || lower.contains("noteworthy"))
+            // "* Noteworthy changes in release 9.5", "* Changes in Wget 1.25.0"; not a bullet
+            // that merely mentions a standard ("…conforming to POSIX 1003.1-2001:").
+            let isHeading = lower.hasPrefix("* ") && (lower.firstMatch(of: #/\b(release|version)\s+v?\d/#) != nil || lower.firstMatch(of: #/^\* (?:noteworthy |major |user-visible |)changes in\b/#) != nil)
                 || lower.firstMatch(of: #/^(version|release|changes in|noteworthy changes|what's new in|what’s new in|new in)\b/#) != nil
                 || lower.hasPrefix("changes from ")
                 || lower.hasPrefix("this document details the changes between this version")
@@ -165,9 +169,14 @@ enum ChangelogDocument {
     static func date(in original: String) -> Date? {
         // "July 21st, 2026" reads as "July 21, 2026".
         let text = original.replacing(#/(\d{1,2})(st|nd|rd|th)\b/#) { String($0.1) }
-        if let match = text.firstMatch(of: #/(\d{4})-(\d{2})-(\d{2})/#),
+        if let match = text.firstMatch(of: #/(\d{4})[-/](\d{2})[-/](\d{2})/#),
            let year = Int(match.1), let month = Int(match.2), let day = Int(match.3) {
             return utcDate(year: year, month: month, day: day)
+        }
+        // "2025/ Feb / 03" (FL Studio).
+        if let match = text.firstMatch(of: #/(\d{4})\s*/\s*([A-Za-z]{3})[a-z]*\s*/\s*(\d{1,2})/#), let year = Int(match.1), let day = Int(match.3),
+           let month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].firstIndex(of: match.2.lowercased()) {
+            return utcDate(year: year, month: month + 1, day: day)
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

@@ -75,6 +75,8 @@ enum ChangelogVersion {
     static func token(in text: String) -> String? {
         // A short word may be attached: "go1.25.0", "bash-5.3-release", "v2.1".
         if let match = text.firstMatch(of: #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#), text.range(of: "from", options: .caseInsensitive) != nil { return String(match.1) }
+        // The number after "release" or "version" wins over others ("POSIX 1003.1" in a heading).
+        if let match = text.firstMatch(of: #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#) { return String(match.1) }
         let pattern = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
         if let match = text.firstMatch(of: pattern) { return String(match.1) }
         if let match = text.firstMatch(of: #/(?i)\bversion\s+(\d+)\b/#) { return String(match.1) }

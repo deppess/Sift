@@ -101,6 +101,9 @@ extension Database {
             }
         }
         return rows.sorted { left, right in
+            // A year-numbered version ("2024.2.2") against a plain one ("26.1.7") is ordered by date.
+            func yearNumbered(_ version: String) -> Bool { (Int(version.prefix { $0.isNumber }) ?? 0) >= 1990 }
+            if let a = left.entry.date, let b = right.entry.date, a != b, yearNumbered(left.entry.version) != yearNumbered(right.entry.version) { return a > b }
             if let a = ChangelogVersion.token(in: left.entry.version), let b = ChangelogVersion.token(in: right.entry.version), a == left.entry.version, b == right.entry.version {
                 let order = SparkleVersion.compare(a, b)
                 if order != .orderedSame { return order == .orderedDescending }

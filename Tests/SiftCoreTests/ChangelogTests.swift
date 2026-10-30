@@ -59,6 +59,13 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries[1].date, ChangelogDocument.utcDate(year: 2026, month: 5, day: 14))
     }
 
+    func testCodeBlocksOnAPageDontSwallowTheHeadingsAfterThem() {
+        let html = "<h2>go1.27.0 (released 2026-08-19)</h2><p>Major release.</p><pre>go install x</pre><h2>go1.26.0 (released 2026-02-10)</h2><p>Older.</p>"
+        let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://go.dev/doc/devel/release")!)
+        XCTAssertEqual(entries.map(\.version), ["1.27.0", "1.26.0"])
+        XCTAssertEqual(entries[0].date, ChangelogDocument.utcDate(year: 2026, month: 8, day: 19))
+    }
+
     func testChangelogLinksPreferTheSameSiteAndReadUnquotedAttributes() {
         let html = #"<a href=/mac/istatmenus/versionhistory/>Version history</a> <a href="https://news.example.org/news/review">Review</a> <a href='/buy/'>Buy</a>"#
         XCTAssertEqual(ChangelogResolver.changelogLinks(in: html, base: URL(string: "https://bjango.com/mac/istatmenus/")!).map(\.absoluteString), ["https://bjango.com/mac/istatmenus/versionhistory/"])

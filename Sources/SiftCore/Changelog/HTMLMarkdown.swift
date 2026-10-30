@@ -58,10 +58,16 @@ enum HTMLMarkdown {
                 listDepth = max(0, listDepth + (isClosing ? -1 : 1))
                 newline(listDepth == 0 ? 2 : 1)
             case "pre":
-                newline(2)
-                output += "```\n"
-                preformatted += isClosing ? -1 : 1
-                if isClosing { newline(); output += "```"; newline(2) }
+                if isClosing {
+                    preformatted = max(0, preformatted - 1)
+                    newline()
+                    output += "```"
+                    newline(2)
+                } else {
+                    newline(2)
+                    output += "```\n"
+                    preformatted += 1
+                }
             case "code" where preformatted == 0:
                 output += "`"
             case "strong", "b":

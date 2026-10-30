@@ -73,8 +73,11 @@ public struct ChangelogResolver: Sendable {
                         tried.append("\(source.label): \(entries.count) versions, not the installed one")
                         continue
                     }
-                    if let (better, betterEntries) = partial, !coversInstalled, betterEntries.count > entries.count {
-                        return .resolved(source: better.label, sourceURL: better.url, entries: betterEntries)
+                    if let (better, betterEntries) = partial {
+                        // A fuller source seen first is kept and this one fills in what it lacks
+                        // (bash-language-server's releases plus the tags that reach its version).
+                        if coversInstalled { return .resolved(source: "\(better.label) and \(source.label)", sourceURL: better.url, entries: Self.merge(betterEntries, entries)) }
+                        if betterEntries.count > entries.count { return .resolved(source: better.label, sourceURL: better.url, entries: betterEntries) }
                     }
                     return .resolved(source: source.label, sourceURL: source.url, entries: entries)
                 }
