@@ -52,6 +52,12 @@ public enum MetadataHTTPError: LocalizedError {
     case responseTooLarge
     case transport(String)
 
+    /// A host that doesn't resolve, as opposed to one that answered or timed out.
+    var isUnreachableHost: Bool {
+        if case let .transport(message) = self { return message.contains("the host could not be found") }
+        return false
+    }
+
     public var errorDescription: String? {
         switch self {
         case .unsupportedURL: "Metadata URL is not an allowed HTTPS endpoint."

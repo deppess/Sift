@@ -32,6 +32,30 @@ enum ChangelogFeeds {
         }
     }
 
+    /// Feed posts as a log by day, for a feed whose posts aren't versioned: each day's posts
+    /// under their titles, newest day first. Most posts need a date.
+    static func datedEntries(_ items: [ChangelogEntry], limit: Int = 100) -> [ChangelogEntry] {
+        let datedItems = items.filter { $0.date != nil }
+        guard datedItems.count >= 3, datedItems.count * 5 >= items.count * 4 else { return [] }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd"
+        var days: [(String, [ChangelogEntry])] = []
+        for item in datedItems.sorted(by: { $0.date! > $1.date! }) {
+            let day = formatter.string(from: item.date!)
+            if let index = days.firstIndex(where: { $0.0 == day }) { days[index].1.append(item) } else if days.count < limit { days.append((day, [item])) }
+        }
+        return days.map { day, posts in
+            let date = posts[0].date
+            if posts.count == 1, let post = posts.first {
+                return ChangelogEntry(version: day, title: post.title ?? post.version, date: date, content: post.content, sourceURL: post.sourceURL)
+            }
+            let content = posts.map { "### \($0.title ?? $0.version)\n\n\($0.content)" }.joined(separator: "\n\n")
+            return ChangelogEntry(version: day, title: nil, date: date, content: content, sourceURL: posts[0].sourceURL)
+        }
+    }
+
     private final class FeedParser: NSObject, XMLParserDelegate {
         var items: [[String: String]] = []
         private var current: [String: String]?

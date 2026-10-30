@@ -36,7 +36,10 @@ enum Benchmark {
             case let .resolved(source, sourceURL, entries):
                 let changelog = Changelog(selector: item.selector, name: token, installedVersion: version, availableVersion: nil, source: source, sourceURL: sourceURL, entries: entries, fetchedAt: .now)
                 let flags = ChangelogAudit.flags(changelog, item: item)
-                line = [flags.isEmpty ? "ok" : "warn", token, version ?? "?", source, "\(entries.count)", flags.joined(separator: " ")].map(\.terminalInline).joined(separator: "\t")
+                var fields = [flags.isEmpty ? "ok" : "warn", token, version ?? "?", source, "\(entries.count)", flags.joined(separator: " ")]
+                // SIFT_BENCH_VERSIONS=1 adds the first versions found, for looking into a flag.
+                if ProcessInfo.processInfo.environment["SIFT_BENCH_VERSIONS"] != nil { fields.append(entries.prefix(8).map(\.version).joined(separator: " ")) }
+                line = fields.map(\.terminalInline).joined(separator: "\t")
             case let .unavailable(tried):
                 line = ["MISS", token, version ?? "?", "", "0", tried.joined(separator: " | ")].map(\.terminalInline).joined(separator: "\t")
             case let .failure(message):

@@ -79,7 +79,7 @@ enum ChangelogVersion {
         if let match = text.firstMatch(of: #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#) { return String(match.1) }
         let pattern = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
         if let match = text.firstMatch(of: pattern) { return String(match.1) }
-        if let match = text.firstMatch(of: #/(?i)\bversion\s+(\d+)\b/#) { return String(match.1) }
+        if let match = text.firstMatch(of: #/(?i)\b(?:version|build)\s+(\d+)\b/#) { return String(match.1) }
         return nil
     }
 
@@ -114,6 +114,8 @@ enum ChangelogVersion {
             }
         }
         if key(token) == key(installed) { return true }
+        // A channel letter on the installed version (Zen's 1.24b, Shottr's 1.9.3b).
+        if let match = installed.firstMatch(of: #/^(\d+(?:\.\d+)+)[a-z]$/#), String(match.1) == token { return true }
         // Leading zeros ("019" and "19") and a build number after the release ("26.1.5.5384"
         // installed, "26.1.5" listed).
         let numbers = { (value: String) in value.split(separator: ".").map { part in Int(part).map(String.init) ?? String(part) } }
@@ -122,16 +124,31 @@ enum ChangelogVersion {
         return a.count >= 3 && b.count == a.count + 1 && Array(b.prefix(a.count)) == a
     }
 
+    /// Whether entries are versions of what's installed: one shares its major version, or they
+    /// are dated releases. Entries all from another line (0.1.x for an app at 4.4212, a server's
+    /// 8.x for its client at 1.53) are another product's.
+    static func sameLine(_ entries: [ChangelogEntry], installed: String?) -> Bool {
+        guard let installed, let major = Int(installed.prefix { $0.isNumber }) else { return true }
+        let majors = entries.compactMap { token(in: $0.version).flatMap { Int($0.prefix { $0.isNumber }) } }
+        guard !majors.isEmpty else { return true }
+        return majors.contains { $0 == major || $0 >= 1990 && $0 <= 2100 }
+    }
+
     /// The index of the installed version's entry: an exact match, or else a loose one.
     static func installedIndex(in entries: [ChangelogEntry], installed: String) -> Int? {
         if let index = entries.firstIndex(where: { matches($0.version, installed) }) ?? entries.firstIndex(where: { looselyMatches($0.version, installed) }) { return index }
         // A patch level of a release line the project documents only as a whole (Bash 5.3.20 is
         // patch 20 of 5.3, and CHANGES has one entry for 5.3).
+        // Likewise Raycast's 2.10.1.0 under its 2.10 entry: the longest release line listed with
+        // no entries for its own point releases.
         let parts = installed.split(separator: ".")
-        guard parts.count == 3 else { return nil }
-        let line = parts.prefix(2).joined(separator: ".")
+        guard parts.count >= 3 else { return nil }
         let tokens = entries.map { token(in: $0.version) }
-        guard !tokens.contains(where: { $0?.hasPrefix(line + ".") == true }) else { return nil }
-        return tokens.firstIndex { $0 == line }
+        for length in stride(from: parts.count - 1, through: 2, by: -1) {
+            let line = parts.prefix(length).joined(separator: ".")
+            if tokens.contains(where: { $0?.hasPrefix(line + ".") == true }) { return nil }
+            if let index = tokens.firstIndex(where: { $0 == line }) { return index }
+        }
+        return nil
     }
 }

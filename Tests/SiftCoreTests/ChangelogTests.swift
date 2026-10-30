@@ -67,6 +67,9 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogResolver.ownProductReleases(iperf, name: "iperf3").map(\.version), ["3.19", "3.18", "3.17"])
         let codex = ["rust-v0.166.0", "rust-v0.165.1"].map(release)
         XCTAssertEqual(ChangelogResolver.ownProductReleases(codex, name: "codex").map(\.version), ["0.166.0", "0.165.1"])
+        let clients = ["desktop-v2026.10.1", "cli-v2026.10.0", "desktop-v2026.9.0", "browser-v2026.10.0"].map(release)
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(clients, name: "bitwarden").map(\.version), ["2026.10.1", "2026.9.0"], "the desktop app's releases, not the CLI's")
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(clients, name: "bitwarden", preferCLI: true).map(\.version), ["2026.10.0"])
         let tools = ["gopls/v0.17.0", "gopls/v0.16.2"].map(release)
         XCTAssertEqual(ChangelogResolver.ownProductReleases(tools, name: "goimports").map(\.version), [], "another product's releases aren't goimports'")
         XCTAssertTrue(ChangelogVersion.looselyMatches("26.1.5", "26.1.5.5384"))
@@ -193,6 +196,36 @@ final class ChangelogTests: XCTestCase {
         XCTAssertFalse(rendered.contains("2.101.0"))
     }
 
+    func testResultsFromAnotherReleaseLineAndThinOnesAreCombined() {
+        let other = ["0.1.71", "0.1.70"].map { ChangelogEntry(version: $0, content: "- x") }
+        XCTAssertFalse(ChangelogVersion.sameLine(other, installed: "4.4212.0"), "0.1.x is another product's line")
+        XCTAssertTrue(ChangelogVersion.sameLine(other + [ChangelogEntry(version: "4.4000.0", content: "- y")], installed: "4.4212.0"))
+        XCTAssertTrue(ChangelogVersion.sameLine([ChangelogEntry(version: "2026.10.22", content: "- x")], installed: "3.27.22"), "dated releases")
+        let feed = ChangelogResolver.Candidate(source: .sparkle(URL(string: "https://example.com/appcast.xml")!, padding: false), entries: [ChangelogEntry(version: "2.9.0", content: "- New")], covers: true, sameLine: true, thin: true)
+        let releases = ChangelogResolver.Candidate(source: .githubReleases(GitHubRepository(owner: "o", name: "r")), entries: ["2.8.0", "2.7.0", "2.6.0"].map { ChangelogEntry(version: $0, content: "- Release \($0)") }, covers: true, sameLine: true, thin: false)
+        guard case let .resolved(source, _, entries) = ChangelogResolver.combine(feed, releases) else { return XCTFail("expected a changelog") }
+        XCTAssertEqual(source, "GitHub releases (o/r) and the app's update feed")
+        XCTAssertEqual(entries.map(\.version), ["2.9.0", "2.8.0", "2.7.0", "2.6.0"])
+        let wrong = ChangelogResolver.Candidate(source: .page(URL(string: "https://example.com/changelog")!), entries: other, covers: false, sameLine: false, thin: false)
+        guard case let .resolved(_, _, kept) = ChangelogResolver.combine(wrong, feed) else { return XCTFail("expected a changelog") }
+        XCTAssertEqual(kept.map(\.version), ["2.9.0"], "another product's versions aren't merged in")
+    }
+
+    func testAFeedOfUnversionedPostsReadsAsADatedLog() {
+        let day = { (d: Int) in ChangelogDocument.utcDate(year: 2026, month: 10, day: d)!.addingTimeInterval(3600) }
+        let posts = [
+            ChangelogEntry(version: "Agents, rebuilt", date: day(29), content: "- Faster agents"),
+            ChangelogEntry(version: "Model controls", date: day(29), content: "- Pick models"),
+            ChangelogEntry(version: "Suggest edits", date: day(20), content: "- Edits"),
+            ChangelogEntry(version: "Developer Portal", date: day(12), content: "- Sidebar"),
+        ]
+        let log = ChangelogFeeds.datedEntries(posts)
+        XCTAssertEqual(log.map(\.version), ["2026-10-29", "2026-10-20", "2026-10-12"])
+        XCTAssertEqual(log[0].content, "### Agents, rebuilt\n\n- Faster agents\n\n### Model controls\n\n- Pick models")
+        XCTAssertEqual(log[1].title, "Suggest edits")
+        XCTAssertEqual(ChangelogFeeds.datedEntries(posts.map { ChangelogEntry(version: $0.version, content: $0.content) }).count, 0, "undated posts aren't a log")
+    }
+
     // MARK: Resolving
 
     func testGitHubReleasesAreTheChangelogAndPagesFollowUntilShort() throws {
@@ -220,7 +253,7 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries[0].content, "## What's Changed\n- Fix attach")
         XCTAssertNil(entries[0].title)
         XCTAssertEqual(entries[1].title, "Christmas")
-        XCTAssertEqual(requested.filter { $0.contains("api.github.com") }.count, 1, "a short page is the last one")
+        XCTAssertEqual(requested.filter { $0.contains("api.github.com/repos/cli/cli/releases") }.count, 1, "a short page is the last one")
     }
 
     func testAPlaceholderFeedFollowsTheLinkInsideItsDescription() throws {

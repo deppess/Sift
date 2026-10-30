@@ -52,7 +52,7 @@ public struct ChangelogResolver: Sendable {
         // A source that lists versions and dates without saying what changed (a feed with no
         // descriptions) is still a version history; it's used when nothing better turns up.
         var versionsOnly: (Source, [ChangelogEntry])?
-        var partial: (Source, [ChangelogEntry])?
+        var partial: Candidate?
         var extraTries = 0
         if client.debug { MetadataHTTPClient.trace("changelog sources for \(subject.item.selector): \(hints.sources.map(\.label).joined(separator: ", "))") }
         for source in hints.sources {
@@ -72,18 +72,19 @@ public struct ChangelogResolver: Sendable {
                     // a changelog file installed with the package stops at the installed version.
                     let coversInstalled = (hints.installed.map { ChangelogVersion.installedIndex(in: entries, installed: $0) != nil } ?? true)
                         && (hints.latest.map { latest in ChangelogVersion.installedIndex(in: entries, installed: latest) != nil || entries.first.flatMap { ChangelogVersion.token(in: $0.version) }.map { SparkleVersion.compare($0, latest) != .orderedAscending } ?? false } ?? true)
-                    if versioned, !coversInstalled, extraTries < 2 {
-                        if partial.map({ entries.count > $0.1.count }) ?? true { partial = (source, entries) }
+                    // A feed of only the latest release or two, or releases mostly without text,
+                    // is a start that the next source may extend.
+                    let withText = entries.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
+                    let thin = entries.count < 3 || withText * 2 < entries.count
+                    let sameLine = ChangelogVersion.sameLine(entries, installed: hints.installed)
+                    let candidate = Candidate(source: source, entries: entries, covers: coversInstalled, sameLine: sameLine, thin: thin)
+                    if versioned, !coversInstalled || thin || !sameLine, extraTries < 2 {
+                        if partial.map({ candidate.rank > $0.rank }) ?? true { partial = candidate }
                         extraTries += 1
-                        tried.append("\(source.label): \(entries.count) versions, not the installed one")
+                        tried.append("\(source.label): \(entries.count) versions\(sameLine ? (coversInstalled ? ", little text" : ", not the installed one") : " of another release line")")
                         continue
                     }
-                    if let (better, betterEntries) = partial {
-                        // A fuller source seen first is kept and this one fills in what it lacks
-                        // (bash-language-server's releases plus the tags that reach its version).
-                        if coversInstalled { return .resolved(source: "\(better.label) and \(source.label)", sourceURL: better.url, entries: Self.merge(betterEntries, entries)) }
-                        if betterEntries.count > entries.count { return .resolved(source: better.label, sourceURL: better.url, entries: betterEntries) }
-                    }
+                    if let better = partial { return Self.combine(better, candidate) }
                     return .resolved(source: source.label, sourceURL: source.url, entries: entries)
                 }
                 tried.append("\(source.label): \(entries.isEmpty ? "no versions found" : "only links elsewhere")")
@@ -94,12 +95,34 @@ public struct ChangelogResolver: Sendable {
                 tried.append("\(source.label): \(error.localizedDescription)")
             }
         }
-        if let (source, entries) = partial { return .resolved(source: source.label, sourceURL: source.url, entries: entries) }
+        if let partial { return .resolved(source: partial.source.label, sourceURL: partial.source.url, entries: partial.entries) }
         if let (source, entries) = versionsOnly { return .resolved(source: "\(source.label) (versions only)", sourceURL: source.url, entries: entries) }
         if tried.isEmpty { return .unavailable(["No changelog source is known for this item."]) }
         // A source that failed outright may have the changelog; that's worth retrying sooner.
         if let lastError, tried.allSatisfy({ !$0.hasSuffix(": not found") && !$0.hasSuffix("no versions found") && !$0.hasSuffix("only links elsewhere") }) { return .failure(lastError) }
         return .unavailable(tried)
+    }
+
+    /// A source's result that may be incomplete, kept while the next sources are tried.
+    struct Candidate {
+        let source: Source
+        let entries: [ChangelogEntry]
+        let covers: Bool
+        let sameLine: Bool
+        let thin: Bool
+
+        var rank: Int { (sameLine ? 1_000_000 : 0) + (covers ? 100_000 : 0) + (thin ? 0 : 10_000) + entries.count }
+    }
+
+    /// The better of two results for the same item, merged when both are its own: the one
+    /// covering the installed version leads, and the other fills in versions it lacks (a
+    /// Sparkle feed of the latest release plus GitHub's history).
+    static func combine(_ first: Candidate, _ second: Candidate) -> ChangelogResolution {
+        let (lead, other) = first.rank >= second.rank ? (first, second) : (second, first)
+        guard lead.sameLine, other.sameLine, !other.entries.isEmpty else { return .resolved(source: lead.source.label, sourceURL: lead.source.url, entries: lead.entries) }
+        let merged = merge(lead.entries, other.entries)
+        guard merged.count > lead.entries.count else { return .resolved(source: lead.source.label, sourceURL: lead.source.url, entries: lead.entries) }
+        return .resolved(source: "\(lead.source.label) and \(other.source.label)", sourceURL: lead.source.url, entries: merged)
     }
 
     // MARK: - Sources
@@ -123,7 +146,9 @@ public struct ChangelogResolver: Sendable {
         case filteredFeed(URL, title: String)
         /// One version's release-notes page at an address that follows a pattern (Firefox's
         /// /firefox/159.0/releasenotes/).
-        case versionPage(URL, version: String)
+        case versionPages([VersionedURL])
+        /// Eclipse Temurin's releases of one Java version, with the issues each fixes (Adoptium's API).
+        case adoptium(major: Int)
         case page(URL)
 
         var label: String {
@@ -139,7 +164,8 @@ public struct ChangelogResolver: Sendable {
             case let .forge(host, path): "\(host)/\(path)"
             case let .updateFeed(url): "the update feed at \(url.host ?? "its vendor")"
             case let .filteredFeed(url, _): url.host ?? "the vendor's feed"
-            case let .versionPage(url, _): "\(url.host ?? "the vendor")'s release notes"
+            case let .versionPages(pages): "\(pages.first?.url.host ?? "the vendor")'s release notes"
+            case .adoptium: "Adoptium's release notes"
             case let .page(url): url.host.map { "\($0)\(url.path.count > 1 ? url.path : "")" } ?? url.absoluteString
             }
         }
@@ -149,11 +175,13 @@ public struct ChangelogResolver: Sendable {
             case let .localFiles(urls): urls.first?.path
             case let .sparkle(url, _): url.absoluteString
             case .appStore, .blackmagic: nil
+            case let .adoptium(major): "https://adoptium.net/temurin/release-notes/?version=\(major)"
             case let .steam(appID): "https://store.steampowered.com/news/app/\(appID)"
             case let .githubReleases(repository): "https://github.com/\(repository.path)/releases"
             case let .githubFile(repository), let .githubTags(repository): "https://github.com/\(repository.path)"
             case let .forge(host, path): "https://\(host)/\(path)"
-            case let .updateFeed(url), let .filteredFeed(url, _), let .versionPage(url, _): url.absoluteString
+            case let .updateFeed(url), let .filteredFeed(url, _): url.absoluteString
+            case let .versionPages(pages): pages.first?.url.absoluteString
             case let .page(url): url.absoluteString
             }
         }
@@ -249,11 +277,12 @@ public struct ChangelogResolver: Sendable {
         case let .blackmagic(product): try blackmagic(product)
         case let .githubReleases(repository): try githubHistory(repository, installed: hints.installed, name: hints.name, preferCLI: hints.commandLine)
         case let .githubFile(repository): try githubFile(repository)
-        case let .githubTags(repository): try githubTags(repository)
+        case let .githubTags(repository): try githubTags(repository, name: hints.name, preferCLI: hints.commandLine)
         case let .forge(host, path): try forge(host: host, path: path, name: hints.name)
         case let .updateFeed(url): try updateFeed(url, name: hints.name)
         case let .filteredFeed(url, title): try filteredFeed(url, title: title)
-        case let .versionPage(url, version): try versionPage(url, version: version)
+        case let .versionPages(pages): try versionPages(pages)
+        case let .adoptium(major): try adoptium(major: major)
         case let .page(url): try page(url, name: hints.name, installed: hints.installed)
         }
     }
@@ -534,7 +563,12 @@ public struct ChangelogResolver: Sendable {
         }
         // Unprefixed tags are the repository's main product and stay with the chosen group;
         // other products' prefixed tags go.
-        let genericGroups = groups.filter { generic.contains($0.key) }.values.flatMap { $0 }
+        // Platform words (bitwarden/clients' cli-v and desktop-v) are products of their own: the
+        // one matching what's installed is kept, not all of them.
+        let platforms = ["cli", "desktop", "macos", "mac", "app"]
+        let presentPlatforms = platforms.filter { groups[$0] != nil }
+        let chosenPlatform = presentPlatforms.count > 1 ? (preferCLI ? presentPlatforms.first { $0 == "cli" } : presentPlatforms.first { $0 != "cli" }) ?? presentPlatforms[0] : nil
+        let genericGroups = groups.filter { generic.contains($0.key) && (chosenPlatform == nil || !platforms.contains($0.key) || $0.key == chosenPlatform) }.values.flatMap { $0 }
         let kept = (best.map { groups[$0] ?? [] } ?? []) + (groups[""] ?? []) + (best == nil ? genericGroups : [])
         return kept.sorted { left, right in
             guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
@@ -578,7 +612,7 @@ public struct ChangelogResolver: Sendable {
     /// For a repository with no releases and no changelog: its version tags, newest first, each
     /// with the commits since the tag before it (for the newest few; GitHub's anonymous quota is
     /// small).
-    private func githubTags(_ repository: GitHubRepository) throws -> [ChangelogEntry] {
+    private func githubTags(_ repository: GitHubRepository, name itemName: String = "", preferCLI: Bool = false) throws -> [ChangelogEntry] {
         guard let owner = encodeGitHubPathComponent(repository.owner), let name = encodeGitHubPathComponent(repository.name) else { throw MetadataHTTPError.unsupportedURL }
         let url = URL(string: "https://api.github.com/repos/\(owner)/\(name)/tags?per_page=100")!
         guard let tags = try JSONSerialization.jsonObject(with: client.fetch(url, resource: .githubReleaseList).body) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
@@ -603,7 +637,10 @@ public struct ChangelogResolver: Sendable {
             }
             entries.append(ChangelogEntry(version: tag.version, title: nil, date: date, content: content, sourceURL: "https://github.com/\(repository.path)/releases/tag/\(tag.name)"))
         }
-        return entries
+        // Pre-release tags (Codex's 0.166.0-alpha.6) go when there are releases.
+        let own = Self.ownProductReleases(entries, name: itemName, preferCLI: preferCLI)
+        let stable = own.filter { $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil }
+        return stable.isEmpty ? own : stable
     }
 
     // Raw file paths are case-sensitive, so the common spellings are each tried (a missing one
@@ -628,6 +665,23 @@ public struct ChangelogResolver: Sendable {
         }
     }
 
+    struct VersionedURL: Equatable {
+        let url: URL
+        let version: String
+    }
+
+    /// Several versions' pages read together, newest first; a page that isn't up yet (the latest
+    /// version's, sometimes) is skipped.
+    private func versionPages(_ pages: [VersionedURL]) throws -> [ChangelogEntry] {
+        var entries: [ChangelogEntry] = []
+        var firstError: Error?
+        for page in pages {
+            do { entries = Self.merge(entries, try versionPage(page.url, version: page.version)) } catch { firstError = firstError ?? error }
+        }
+        if entries.isEmpty, let firstError { throw firstError }
+        return entries
+    }
+
     /// A page for one version: its own entry when the page splits by version, or else the whole
     /// page as that version's notes.
     private func versionPage(_ url: URL, version: String) throws -> [ChangelogEntry] {
@@ -640,6 +694,25 @@ public struct ChangelogResolver: Sendable {
         if withText * 2 > split.count, split.contains(where: { ChangelogVersion.matches($0.version, version) || ChangelogVersion.looselyMatches($0.version, version) }) { return split }
         let whole = HTMLMarkdown.convert(html)
         return whole.isEmpty || ChangelogDocument.isPlaceholder(whole) ? split : [ChangelogEntry(version: version, content: whole, sourceURL: url.absoluteString)]
+    }
+
+    /// The latest few Temurin releases of a Java version, each with the OpenJDK issues it fixes.
+    private func adoptium(major: Int) throws -> [ChangelogEntry] {
+        guard let names = URL(string: "https://api.adoptium.net/v3/info/release_names?version=%5B\(major)%2C\(major + 1)%29&release_type=ga&page_size=10&sort_order=DESC&vendor=eclipse&image_type=jdk"),
+              let list = (try JSONSerialization.jsonObject(with: client.fetch(names, resource: .changelogPage(host: "api.adoptium.net")).body) as? [String: Any])?["releases"] as? [String] else { throw MetadataHTTPError.invalidResponse }
+        return list.prefix(10).compactMap { name -> ChangelogEntry? in
+            guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-."))),
+                  let url = URL(string: "https://api.adoptium.net/v3/info/release_notes/\(encoded)"),
+                  let data = try? client.fetch(url, resource: .changelogPage(host: "api.adoptium.net")).body,
+                  let notes = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["release_notes"] as? [[String: Any]] else { return nil }
+            // jdk-21.0.13+9 is 21.0.13; jdk8u462-b08 is 8.0.462.
+            let version = name.firstMatch(of: #/^jdk-?(\d+(?:\.\d+)*)/#).map { String($0.1) }.flatMap { $0.contains(".") ? $0 : name.firstMatch(of: #/^jdk(\d+)u(\d+)/#).map { "\($0.1).0.\($0.2)" } ?? $0 } ?? name
+            let lines = notes.compactMap { note -> String? in
+                guard let title = note["title"] as? String, !title.hasPrefix("Bump update version") else { return nil }
+                return "- \(title)\((note["id"] as? String).map { " (\($0))" } ?? "")"
+            }
+            return ChangelogEntry(version: version, title: name, content: lines.joined(separator: "\n"), sourceURL: "https://adoptium.net/temurin/release-notes/?version=\(name)")
+        }
     }
 
     enum ForgeKind { case gitlab, forgejo }
@@ -707,7 +780,9 @@ public struct ChangelogResolver: Sendable {
         // A homepage's own text, then its changelog links, and only then its feeds (often a
         // blog covering other products) and embedded data.
         var entries = isChangelogPage ? read(html, url: url, render: true) : Self.pageEntries(html, url: url)
-        if entries.count >= 2 || ChangelogDocument.isMeaningful(entries) && isChangelogPage { return entries }
+        // Versions of another product (a homepage listing the vendor's other app) don't stop the search.
+        let fits = { (found: [ChangelogEntry]) in ChangelogVersion.sameLine(found, installed: installed) }
+        if fits(entries), entries.count >= 2 || ChangelogDocument.isMeaningful(entries) && isChangelogPage { return entries }
         // A homepage that links the project's own GitHub repository (same name as the item):
         // its releases beat a blog the homepage also links, when they go back a while.
         var repositoryHistory: [ChangelogEntry] = []
@@ -733,21 +808,21 @@ public struct ChangelogResolver: Sendable {
             let linkedEntries = read(linked, url: link, render: true)
             // A link that yields a real changelog wins; a couple of stray versions (a newsletter
             // page) only stands in if nothing better turns up.
-            if ChangelogDocument.isMeaningful(linkedEntries) {
-                if linkedEntries.count >= 3 { return linkedEntries }
-                if linkedEntries.count > entries.count { entries = linkedEntries }
+            if ChangelogDocument.isMeaningful(linkedEntries), fits(linkedEntries) || !fits(entries) {
+                if linkedEntries.count >= 3, fits(linkedEntries) { return linkedEntries }
+                if linkedEntries.count > entries.count || !fits(entries) { entries = linkedEntries }
             }
         }
         // Only then the homepage's feeds and embedded data, keeping posts that name the item
         // (a company blog covers its other products too).
         if !isChangelogPage {
             let more = read(html, url: url, render: false, name: name)
-            if ChangelogDocument.isMeaningful(more) && more.count >= 2 { return more }
+            if ChangelogDocument.isMeaningful(more) && more.count >= 2 && fits(more) { return more }
             if entries.isEmpty { entries = more }
         }
         if ChangelogDocument.isMeaningful(repositoryHistory) { return repositoryHistory }
         // Still little or nothing: the changelog the vendor's sitemap or docs site lists.
-        if !isChangelogPage, entries.count < 3 {
+        if !isChangelogPage, entries.count < 3 || !fits(entries) {
             // Of the top few, the one with the installed version, or else the most versions.
             var best: [ChangelogEntry] = []
             for candidate in discoverChangelogPages(near: url, name: name).prefix(6) {
@@ -759,13 +834,13 @@ public struct ChangelogResolver: Sendable {
                 }), let macText = try? fetchText(mac, resource: .changelogPage(host: candidateHost)) {
                     found = read(macText, url: mac, render: true)
                 }
-                guard ChangelogDocument.isMeaningful(found), found.count >= 3 else { continue }
+                guard ChangelogDocument.isMeaningful(found), found.count >= 3, fits(found) else { continue }
                 if client.debug { MetadataHTTPClient.trace("discovered changelog page \(candidate.absoluteString): \(found.count) versions") }
                 let covers = installed.map { ChangelogVersion.installedIndex(in: found, installed: $0) != nil } ?? false
                 if covers { return found }
                 if found.count > best.count { best = found }
             }
-            if best.count > entries.count { return best }
+            if best.count > entries.count || !best.isEmpty && !fits(entries) { return best }
         }
         // The page itself may be built by scripts even though its address doesn't say changelog.
         if !ChangelogDocument.isMeaningful(entries), !Self.looksLikeChangelogURL(url), ChangelogFeeds.looksScriptBuilt(html) {
@@ -780,7 +855,8 @@ public struct ChangelogResolver: Sendable {
     /// and the page is script-built) WebKit's rendering of it.
     private func read(_ html: String, url: URL, render: Bool, name: String = "") -> [ChangelogEntry] {
         let entries = Self.pageEntries(html, url: url)
-        if entries.count >= 2, ChangelogDocument.isMeaningful(entries) { return entries }
+        // Two versions may be a teaser (Notion's two latest headlines over a full feed).
+        if entries.count >= 3, ChangelogDocument.isMeaningful(entries) { return entries }
         for feed in ChangelogFeeds.advertisedFeeds(in: html, base: url).prefix(2) where isPublicHTTPSURL(feed) {
             guard let feedHost = feed.host, let data = try? client.fetch(feed, resource: .changelogPage(host: feedHost)).body else { continue }
             let items = ChangelogFeeds.entries(fromFeed: data)
@@ -795,6 +871,15 @@ public struct ChangelogResolver: Sendable {
                 if client.debug { MetadataHTTPClient.trace("read feed \(feed.absoluteString): \(releases.count) releases") }
                 return releases
             }
+            // A changelog page's own feed whose posts are titled by feature, not version (Notion's
+            // /releases/rss.xml, Linear's changelog feed): a dated log of what changed.
+            if releases.count < 3, Self.looksLikeChangelogURL(url), Self.looksLikeChangelogURL(feed) {
+                let dated = ChangelogFeeds.datedEntries(items)
+                if dated.count >= 3 {
+                    if client.debug { MetadataHTTPClient.trace("read feed \(feed.absoluteString) by date: \(dated.count) days") }
+                    return dated
+                }
+            }
         }
         // Docs sites (Mintlify and others) serve each page as Markdown at the same address plus ".md".
         if entries.count < 3, url.pathExtension.isEmpty, url.path.count > 1, let host = url.host?.lowercased(),
@@ -806,7 +891,7 @@ public struct ChangelogResolver: Sendable {
                 return fromMarkdown
             }
         }
-        let embedded = ChangelogFeeds.embeddedEntries(in: html)
+        let embedded = entries.count >= 2 ? [] : ChangelogFeeds.embeddedEntries(in: html)
         if ChangelogDocument.isMeaningful(embedded) {
             if client.debug { MetadataHTTPClient.trace("read embedded data on \(url.absoluteString): \(embedded.count) entries") }
             return embedded
@@ -852,11 +937,15 @@ public struct ChangelogResolver: Sendable {
     /// ranked so the product's own Mac release notes come first. Bounded to a few requests.
     func discoverChangelogPages(near base: URL, name: String) -> [URL] {
         guard let host = base.host?.lowercased(), let domain = HomebrewCaskCatalog.vendorDomain(host) else { return [] }
-        let hosts = Array(Set([host, "docs.\(domain)"]))
+        // The site, its docs subdomain, and a releases subdomain (releases.1password.com).
+        let hosts = Array(Set([host, "docs.\(domain)", "releases.\(domain)"]))
         var candidates: [URL] = []
+        // Subdomains that don't exist (most sites have no docs. or releases.) aren't guessed at further.
+        var liveHosts = hosts
         for site in hosts {
             guard let robotsURL = URL(string: "https://\(site)/robots.txt") else { continue }
-            let robots = (try? fetchText(robotsURL, resource: .changelogPage(host: site))) ?? ""
+            let robots: String
+            do { robots = try fetchText(robotsURL, resource: .changelogPage(host: site)) } catch let error as MetadataHTTPError where site != host && error.isUnreachableHost { liveHosts.removeAll { $0 == site }; continue } catch { robots = "" }
             var maps = robots.matches(of: #/(?im)^sitemap:\s*(\S+)/#).compactMap { URL(string: String($0.1)) }
             if maps.isEmpty, let fallback = URL(string: "https://\(site)/sitemap.xml") { maps = [fallback] }
             var fetched = 0
@@ -871,13 +960,18 @@ public struct ChangelogResolver: Sendable {
                 }
             }
         }
-        for site in hosts { for path in Self.discoveryPaths { if let url = URL(string: "https://\(site)/\(path)") { candidates.append(url) } } }
+        var guesses: Set<String> = []
+        func guess(_ url: URL?) { if let url { candidates.append(url); guesses.insert(url.absoluteString) } }
+        for site in liveHosts { for path in Self.discoveryPaths { guess(URL(string: "https://\(site)/\(path)")) } }
+        // Beside a homepage deep in a docs site: /docs/miniconda/main has /docs/miniconda/release-notes.
+        let folder = base.deletingLastPathComponent()
+        if base.pathComponents.count > 2, folder.path.count > 1 { for path in ["release-notes", "changelog"] { guess(folder.appending(path: path)) } }
         var seen = Set<String>()
         let unique = candidates.filter { isPublicHTTPSURL($0) && seen.insert($0.absoluteString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))).inserted }
         let ranked = unique.map { ($0, Self.discoveryScore($0, name: name)) }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
         // The common paths are guesses: keep only those that answer.
         return ranked.filter { url in
-            guard Self.discoveryPaths.contains(where: { url.path == "/" + $0 }) else { return true }
+            guard guesses.contains(url.absoluteString) else { return true }
             guard let host = url.host?.lowercased() else { return false }
             return (try? client.fetch(url, resource: .changelogPage(host: host))) != nil
         }
@@ -1021,24 +1115,64 @@ public struct ChangelogResolver: Sendable {
             return [.page(URL(string: "https://docs.flutter.dev/release/release-notes")!)]
         case (.homebrewCask, "gcloud-cli"), (.homebrewCask, "google-cloud-sdk"):
             return [.page(URL(string: "https://cloud.google.com/sdk/docs/release-notes")!)]
+        case (.homebrewCask, "steam"):
+            return [.steam(appID: "593110")]
+        case (.homebrewCask, "1password"), (.nativeApp, "com.1password.1password"):
+            return [.page(URL(string: "https://releases.1password.com/mac/stable/")!)]
+        case (.homebrewCask, "claude"), (.nativeApp, "com.anthropic.claudefordesktop"):
+            return [.page(URL(string: "https://support.claude.com/en/articles/12138966-claude-desktop-release-notes")!)]
+        case (.homebrewCask, "microsoft-edge"), (.nativeApp, "com.microsoft.edgemac"):
+            return [.page(URL(string: "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel")!)]
+        case (.homebrewCask, "windows-app"), (.nativeApp, "com.microsoft.rdc.macos"):
+            return [.page(URL(string: "https://learn.microsoft.com/en-us/windows-app/whats-new?tabs=macos")!)]
+        case (.homebrewCask, "miniconda"):
+            return [.page(URL(string: "https://www.anaconda.com/docs/getting-started/miniconda/release-notes")!)]
+        case (.homebrewCask, "mongodb-compass"), (.nativeApp, "com.mongodb.compass"):
+            return [.githubReleases(GitHubRepository(owner: "mongodb-js", name: "compass"))]
+        case (.homebrewCask, let name) where name.hasPrefix("temurin"):
+            // temurin@21, or the latest (unsuffixed) by its installed major version.
+            let major = name.split(separator: "@").dropFirst().first.map(String.init) ?? version.split(separator: ".").first.map(String.init)
+            return major.flatMap(Int.init).map { [.adoptium(major: $0)] } ?? []
         default:
             break
         }
+        // Office for Mac's apps share one page of release notes, dated per update.
+        let office = ["microsoft-word", "microsoft-excel", "microsoft-powerpoint", "microsoft-outlook", "microsoft-onenote", "microsoft-office", "microsoft-office-businesspro",
+                      "com.microsoft.Word", "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.microsoft.Outlook", "com.microsoft.onenote.mac"]
+        if [.homebrewCask, .nativeApp].contains(item.kind), office.contains(item.bundleIdentifier ?? item.name) {
+            return [.page(URL(string: "https://learn.microsoft.com/en-us/officeupdates/release-notes-office-for-mac")!)]
+        }
+        // JetBrains' IDEs: the releases API carries each version's "what's new".
+        if let code = jetBrainsProductCodes[item.bundleIdentifier ?? item.name], let url = URL(string: "https://data.services.jetbrains.com/products/releases?code=\(code)&type=release") {
+            return [.updateFeed(url)]
+        }
         // Release notes at an address built from the version, for the installed and latest versions.
-        let versions = [item.installedVersion, item.availableVersion].compactMap { $0.map(ChangelogVersion.normalized) }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        func pages(_ template: (String, [String]) -> String?) -> [Source] {
-            versions.compactMap { version in
-                let parts = version.split(separator: ".").map(String.init)
-                return template(version, parts).flatMap(URL.init(string:)).map { Source.versionPage($0, version: version) }
+        let versions = [item.availableVersion, item.installedVersion].compactMap { $0.map(ChangelogVersion.normalized) }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        // The latest and installed versions' pages, then (with `earlier`, which steps back one
+        // release) the few before the installed one, for a history.
+        func pages(earlier: (([Int]) -> [Int]?)? = nil, _ template: (String, [String]) -> String?) -> [Source] {
+            var all = versions
+            if let earlier, var parts = versions.last.map({ $0.split(separator: ".").compactMap { Int($0) } }) {
+                for _ in 0..<5 {
+                    guard let previous = earlier(parts) else { break }
+                    parts = previous
+                    let version = previous.map(String.init).joined(separator: ".")
+                    if !all.contains(version) { all.append(version) }
+                }
             }
+            let urls = all.compactMap { version -> VersionedURL? in
+                let parts = version.split(separator: ".").map(String.init)
+                return template(version, parts).flatMap(URL.init(string:)).map { VersionedURL(url: $0, version: version) }
+            }
+            return urls.isEmpty ? [] : [.versionPages(urls)]
         }
         switch (item.kind, item.bundleIdentifier ?? item.name) {
         case (.homebrewCask, "firefox"), (.nativeApp, "org.mozilla.firefox"):
-            return pages { version, _ in "https://www.mozilla.org/en-US/firefox/\(version)/releasenotes/" }
+            return pages(earlier: { $0.count >= 2 && $0[0] > 1 ? [$0[0] - 1, 0] : nil }) { version, _ in "https://www.mozilla.org/en-US/firefox/\(version)/releasenotes/" }
         case (.homebrewCask, "visual-studio-code"), (.nativeApp, "com.microsoft.VSCode"):
-            return pages { _, parts in parts.count >= 2 ? "https://code.visualstudio.com/updates/v\(parts[0])_\(parts[1])" : nil }
+            return pages(earlier: { $0.count >= 2 && $0[1] > 0 ? [$0[0], $0[1] - 1] : nil }) { _, parts in parts.count >= 2 ? "https://code.visualstudio.com/updates/v\(parts[0])_\(parts[1])" : nil }
         case (.homebrewCask, "blender"), (.nativeApp, "org.blenderfoundation.blender"):
-            return pages { _, parts in parts.count >= 2 ? "https://www.blender.org/download/releases/\(parts[0])-\(parts[1])/" : nil }
+            return pages(earlier: { $0.count >= 2 && $0[1] > 0 ? [$0[0], $0[1] - 1] : nil }) { _, parts in parts.count >= 2 ? "https://www.blender.org/download/releases/\(parts[0])-\(parts[1])/" : nil }
         case (.homebrewCask, "libreoffice"), (.nativeApp, "org.libreoffice.script"):
             return pages { _, parts in parts.count >= 2 ? "https://wiki.documentfoundation.org/ReleaseNotes/\(parts[0]).\(parts[1])" : nil }
         case (.homebrewCask, let name) where name.hasPrefix("dotnet-sdk"):
@@ -1050,6 +1184,16 @@ public struct ChangelogResolver: Sendable {
             return []
         }
     }
+
+    static let jetBrainsProductCodes: [String: String] = [
+        "intellij-idea": "IIU", "com.jetbrains.intellij": "IIU", "intellij-idea-ce": "IIC", "com.jetbrains.intellij.ce": "IIC",
+        "pycharm": "PCP", "com.jetbrains.pycharm": "PCP", "pycharm-ce": "PCC", "com.jetbrains.pycharm.ce": "PCC",
+        "webstorm": "WS", "com.jetbrains.WebStorm": "WS", "goland": "GO", "com.jetbrains.goland": "GO",
+        "clion": "CL", "com.jetbrains.CLion": "CL", "phpstorm": "PS", "com.jetbrains.PhpStorm": "PS",
+        "rider": "RD", "com.jetbrains.rider": "RD", "rubymine": "RM", "com.jetbrains.rubymine": "RM",
+        "datagrip": "DG", "com.jetbrains.datagrip": "DG", "rustrover": "RR", "com.jetbrains.rustrover": "RR",
+        "dataspell": "DS", "com.jetbrains.dataspell": "DS", "jetbrains-toolbox": "TBA", "com.jetbrains.toolbox": "TBA",
+    ]
 
     /// Homebrew's API: a formula's homepage and source, or a cask's homepage and download URL.
     private func homebrewAPIHints(token: String, cask: Bool, into hints: inout Hints) {
