@@ -63,7 +63,7 @@ final class SiftCLITests: XCTestCase {
         // `sift --json apps <TAB>` (a global flag before the subcommand) silently produced zero
         // completions. Guard against regressing back to positional indexing.
         let script = CompletionRenderer.script(for: .fish)
-        XCTAssertTrue(script.contains(#"string match -r -- "^apps\$|^show\$|^log\$""#))
+        XCTAssertTrue(script.contains(#"string match -r -- "^apps\$|^show\$|^log\$|^changelog\$""#))
         XCTAssertFalse(script.contains("(commandline -opc)[2]"))
     }
 

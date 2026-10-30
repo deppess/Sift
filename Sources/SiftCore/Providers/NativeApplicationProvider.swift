@@ -174,6 +174,14 @@ public struct NativeApplicationProvider: Sendable {
         return NativeInventoryResult(applications: applications.sorted { $0.path < $1.path }, warnings: warnings, complete: complete, scannedRoots: scannedRoots, candidatePaths: candidatePaths)
     }
 
+    /// One bundle read the way discovery reads it, for an app already in the catalog.
+    public func application(atPath path: String) -> NativeApplication? {
+        let url = URL(filePath: path, directoryHint: .isDirectory)
+        let isLink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+        guard let bundle = resolvedBundle(url, isSymbolicLink: isLink) else { return nil }
+        return try? application(at: url, bundle: bundle, root: url.deletingLastPathComponent(), classification: .user)
+    }
+
     private func application(at url: URL, bundle: URL, root: URL, classification: ApplicationClassification) throws -> NativeApplication? {
         let values = try bundle.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { return nil }

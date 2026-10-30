@@ -5,6 +5,8 @@ struct MarkdownTerminalRenderer: MarkupVisitor {
     typealias Result = String
 
     private let style: TerminalStyle
+    /// False prints a link's text alone, as compact changelogs do.
+    var linkDestinations = true
     private var listDepth = 0
     private var orderedListIndices: [Int] = []
 
@@ -24,8 +26,9 @@ struct MarkdownTerminalRenderer: MarkupVisitor {
         var omitted = 0
         var index = 0
         while index < blocks.count {
+            // Headings that only restate what the entry is ("What's Changed", "Changelog").
             if let heading = blocks[index] as? Heading,
-               heading.plainText.caseInsensitiveCompare("release notes") == .orderedSame {
+               ["release notes", "what's changed", "what’s changed", "changelog", "changes", "what's new", "what’s new"].contains(heading.plainText.trimmingCharacters(in: .whitespaces).lowercased()) {
                 index += 1
                 continue
             }
@@ -91,7 +94,7 @@ struct MarkdownTerminalRenderer: MarkupVisitor {
 
     mutating func visitLink(_ link: Link) -> String {
         let label = defaultVisit(link).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let destination = link.destination, !destination.isEmpty, destination != label else { return label }
+        guard linkDestinations, let destination = link.destination, !destination.isEmpty, destination != label else { return label }
         return "\(label) (\(destination))"
     }
 

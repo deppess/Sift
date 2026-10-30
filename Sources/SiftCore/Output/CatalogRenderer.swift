@@ -49,19 +49,39 @@ public enum CatalogRenderer {
         }
         if let notes {
             let coverage = notes.coverage == "complete" ? "complete range" : notes.coverage == "repositoryCommits" ? "repository commits" : "target release"
-            lines.append("Notes: \(coverage) · sift show \(item.selector.terminalInline) --full")
+            lines.append("Changelog: \(coverage) · sift changelog \(item.selector.terminalInline)")
         }
         else if let nativeNotes {
             if let content = nativeNotes.content {
                 let body = content.split(separator: "\n", omittingEmptySubsequences: false).map { String($0).terminalInline }
                 let shown = full ? body : Array(body.prefix(12))
-                lines.append("Notes:")
+                lines.append("Changelog:")
                 lines.append(contentsOf: shown)
-                if shown.count < body.count { lines.append("… sift show \(item.selector.terminalInline) --full") }
+                if shown.count < body.count { lines.append("… sift changelog \(item.selector.terminalInline)") }
             }
             if let source = nativeNotes.sourceURL { lines.append("Source: \(source.terminalInline)") }
         }
-        else if item.updateAvailable { lines.append("Notes: unavailable") }
+        else { lines.append("Changelog: sift changelog \(item.selector.terminalInline)") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The item's details and what changed, from the cached changelog: the versions newer than
+    /// the installed one (or the latest release when it is current).
+    public static func detail(_ item: CatalogItem, changelog: Changelog, style: TerminalStyle = TerminalStyle(enabled: false)) -> String {
+        var lines = detail(item, notes: nil).split(separator: "\n", omittingEmptySubsequences: false).map(String.init).filter { !$0.hasPrefix("Changelog:") }
+        let newEntries = changelog.newEntries
+        let shown = newEntries.isEmpty ? Array(changelog.entries.prefix(1)) : Array(newEntries.prefix(3))
+        lines.append("Changelog: \(changelog.source.terminalInline)\(newEntries.isEmpty ? "" : " · \(newEntries.count) new")")
+        for entry in shown {
+            let date = entry.date.map { "  \(style.label($0.formatted(.dateTime.year().month(.abbreviated).day())))" } ?? ""
+            lines.append("")
+            lines.append("\(style.heading(entry.version.terminalInline))\(date)")
+            let body = ChangelogRenderer.render(entry.content, full: false, style: style).split(separator: "\n", omittingEmptySubsequences: false)
+            lines += body.prefix(12).map { "  \($0)" }
+            if body.count > 12 { lines.append(style.label("  …")) }
+        }
+        lines.append("")
+        lines.append(style.label("Full changelog: sift changelog \(item.selector.terminalInline)\(changelog.entries.count > shown.count ? " (\(changelog.entries.count) versions)" : "")"))
         return lines.joined(separator: "\n")
     }
 

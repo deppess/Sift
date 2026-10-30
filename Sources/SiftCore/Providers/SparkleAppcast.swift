@@ -115,8 +115,21 @@ public struct SparkleAppcastItem: Equatable, Sendable {
     public let maximumSystemVersion: String?
     public let releaseNotesHTML: String?
     public let releaseNotesURL: String?
+    /// The item's `pubDate` as the feed writes it (RFC 822).
+    public var publishedAt: String?
 
     public var displayVersion: String { shortVersion ?? version }
+
+    public init(version: String, shortVersion: String?, channel: String?, minimumSystemVersion: String?, maximumSystemVersion: String?, releaseNotesHTML: String?, releaseNotesURL: String?, publishedAt: String? = nil) {
+        self.version = version
+        self.shortVersion = shortVersion
+        self.channel = channel
+        self.minimumSystemVersion = minimumSystemVersion
+        self.maximumSystemVersion = maximumSystemVersion
+        self.releaseNotesHTML = releaseNotesHTML
+        self.releaseNotesURL = releaseNotesURL
+        self.publishedAt = publishedAt
+    }
 }
 
 /// Parses a Sparkle appcast (an RSS feed). External entities are never resolved and only the
@@ -191,7 +204,8 @@ public final class SparkleAppcastParser: NSObject, XMLParserDelegate {
             minimumSystemVersion: fields["minimumSystemVersion"],
             maximumSystemVersion: fields["maximumSystemVersion"],
             releaseNotesHTML: fields["description"],
-            releaseNotesURL: fields["releaseNotesLink"] ?? fields["fullReleaseNotesLink"]
+            releaseNotesURL: fields["releaseNotesLink"] ?? fields["fullReleaseNotesLink"],
+            publishedAt: fields["pubDate"]
         )
     }
 

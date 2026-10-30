@@ -18,6 +18,14 @@ public enum MetadataResource: Equatable, Sendable {
     case electronUpdateFeed(host: String)
     /// A Sparkle appcast; only the host the application's own bundle declares is allowed.
     case sparkleAppcast(host: String)
+    /// A changelog or release-notes web page on the host its package or app names.
+    case changelogPage(host: String)
+    /// Package metadata naming a project's repository and homepage: npm, PyPI, crates.io, Homebrew.
+    case packageRegistry
+    /// A Steam game's announcements and patch notes.
+    case steamNews
+    /// An App Store listing page, for its version history.
+    case appStorePage
 }
 
 public struct MetadataHTTPResponse: Sendable {
@@ -200,6 +208,15 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         case let .sparkleAppcast(host):
             // Feeds commonly redirect to a CDN or object store (some go to S3), as Sparkle allows.
             return MetadataHTTPPolicy(cacheKey: "sparkle-appcast-v1", allowedHosts: [host.lowercased()], responseLimit: 4_194_304, accept: "application/rss+xml, application/xml, text/xml", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, redirectsToPublicHosts: true, maxAge: 60 * 60)
+        case let .changelogPage(host):
+            // Project sites move their changelogs behind redirects to docs hosts and CDNs.
+            return MetadataHTTPPolicy(cacheKey: "changelog-page-v1", allowedHosts: [host.lowercased()], responseLimit: 8 * 1_048_576, accept: "text/html, text/markdown, text/plain;q=0.9, */*;q=0.5", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, redirectsToPublicHosts: true)
+        case .packageRegistry:
+            return MetadataHTTPPolicy(cacheKey: "package-registry-v1", allowedHosts: ["registry.npmjs.org", "pypi.org", "crates.io", "formulae.brew.sh"], responseLimit: 16 * 1_048_576, accept: "application/json", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 24 * 60 * 60)
+        case .steamNews:
+            return MetadataHTTPPolicy(cacheKey: "steam-news-v1", allowedHosts: ["api.steampowered.com"], responseLimit: 16 * 1_048_576, accept: "application/json", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+        case .appStorePage:
+            return MetadataHTTPPolicy(cacheKey: "app-store-page-v1", allowedHosts: ["apps.apple.com"], responseLimit: 8 * 1_048_576, accept: "text/html", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true)
         case .githubChangelog:
             return MetadataHTTPPolicy(cacheKey: "github-changelog-v2", allowedHosts: ["raw.githubusercontent.com"], responseLimit: 2_097_152, accept: "text/plain", headers: [:], token: nil, serialGitHub: false, rateLimitKey: nil)
         case .githubReference: return githubPolicy("github-reference", responseLimit: 2_097_152)

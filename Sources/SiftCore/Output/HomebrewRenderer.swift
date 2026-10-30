@@ -7,7 +7,7 @@ public enum HomebrewRenderer {
         let coverage = notes.coverage == "complete" ? style.success("complete range") : notes.coverage == "repositoryCommits" ? style.warning("repository commits") : style.warning("target release")
         var renderer = MarkdownTerminalRenderer(style: style)
         let content = renderer.render(notes.content, full: full)
-        return "\(title)  \(version)\n\(style.label("Notes:")) \(coverage)\n\(content)\n\(style.label("Source:")) \(notes.sourceURL.terminalInline)"
+        return "\(title)  \(version)\n\(style.label("Changelog:")) \(coverage)\n\(content)\n\(style.label("Source:")) \(notes.sourceURL.terminalInline)"
     }
 
 }

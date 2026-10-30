@@ -47,6 +47,10 @@ public enum SiftCLI {
                 let progress = refreshProgress(invocation)
                 progress?("Refreshing…")
                 let summary = try RefreshCoordinator(database: database).refresh(homebrewUpdate: homebrewUpdate, progress: progress)
+                // Changelogs for what's new are fetched now, so `sift changelog` and `sift show`
+                // answer from the cache; a failure here never fails the refresh.
+                progress?("Fetching changelogs…")
+                _ = try? ChangelogService(database: database).prefetch { done, total in progress?("Fetching changelogs \(done)/\(total)…") }
                 progress?("")
                 print(invocation.json ? try RefreshRenderer.json(summary) : RefreshRenderer.humanReadable(summary))
                 return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
@@ -96,11 +100,33 @@ public enum SiftCLI {
                 }
                 print(invocation.json ? try LogRenderer.json(entries) : LogRenderer.humanReadable(entries, style: TerminalStyle(enabled: colorEnabled(invocation))))
                 return EXIT_SUCCESS
+            case let .changelog(name):
+                let item: CatalogItem
+                switch try database.resolveCatalogItem(name, includeAll: true) {
+                case let .item(resolved): item = resolved
+                case .missing: throw InvocationError.missingCatalogItem(name)
+                case let .ambiguous(matches): throw InvocationError.ambiguousSelector(name, matches.map(\.selector))
+                }
+                let style = TerminalStyle(enabled: colorEnabled(invocation))
+                let progress = refreshProgress(invocation)
+                progress?("Fetching the changelog for \(item.name.terminalInline)…")
+                let outcome = try ChangelogService(database: Database.writer(url: databaseURL)).changelog(for: item, refetch: invocation.fetch)
+                progress?("")
+                switch outcome {
+                case let .changelog(changelog):
+                    print(invocation.json ? try ChangelogRenderer.json(changelog) : ChangelogRenderer.humanReadable(changelog, all: invocation.includeAll, full: invocation.full, style: style))
+                    return EXIT_SUCCESS
+                case let .unavailable(itemName, tried):
+                    print(invocation.json ? try JSONOutput.encode(["name": itemName, "changelog": nil as String?, "tried": tried.joined(separator: "\n")]) : ChangelogRenderer.unavailable(name: itemName, tried: tried, style: style))
+                    return EXIT_FAILURE
+                }
             case let .show(name):
                 switch try database.resolveCatalogItem(name, includeAll: invocation.includeAll) {
                 case let .item(item):
                     let notes = try releaseNotes(for: item, database: database)
-                    if let notes {
+                    if !invocation.json, let changelog = try ChangelogService.cached(for: item, database: database) {
+                        print(CatalogRenderer.detail(item, changelog: changelog, style: TerminalStyle(enabled: colorEnabled(invocation))))
+                    } else if let notes {
                         print(invocation.json ? try CatalogRenderer.json(notes) : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: colorEnabled(invocation))))
                     } else {
                         let nativeNotes = try item.kind == .nativeApp && item.updateAvailable ? item.path.flatMap { try database.nativeReleaseNotes(path: $0, targetVersion: item.availableVersion!) } : nil
@@ -151,7 +177,7 @@ public enum SiftCLI {
             let entries: [UpdateLogEntry] = []
             print(invocation.json ? try LogRenderer.json(entries) : LogRenderer.humanReadable(entries))
             return EXIT_SUCCESS
-        case let .apps(.some(selector)), let .show(selector):
+        case let .apps(.some(selector)), let .show(selector), let .changelog(selector):
             throw InvocationError.missingCatalogItem(selector)
         case .refresh, .completions, .complete:
             return EXIT_FAILURE
@@ -193,9 +219,9 @@ extension String {
 }
 
 struct Invocation {
-    enum Command { case dashboard, refresh, apps(String?), updates, log(String?), show(String), completions(CompletionShell), complete(String, String) }
+    enum Command { case dashboard, refresh, apps(String?), updates, log(String?), show(String), changelog(String), completions(CompletionShell), complete(String, String) }
 
-    static let usage = "Usage: sift [refresh|apps [name]|updates|log [name]|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
+    static let usage = "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
 
     let command: Command
     let json: Bool
@@ -207,6 +233,7 @@ struct Invocation {
     let noColor: Bool
     let updateHomebrew: Bool?
     let since: Date?
+    let fetch: Bool
 
     init(arguments: [String], now: Date = .now) throws {
         var command: Command = .dashboard
@@ -220,6 +247,7 @@ struct Invocation {
         var noColor = false
         var updateHomebrew: Bool?
         var since: Date?
+        var fetch = false
         var index = 0
 
         while index < arguments.count {
@@ -248,6 +276,9 @@ struct Invocation {
             case "--no-update-homebrew":
                 guard updateHomebrew == nil else { throw InvocationError.duplicateOption(argument) }
                 updateHomebrew = false
+            case "--fetch":
+                guard !fetch else { throw InvocationError.duplicateOption("--fetch") }
+                fetch = true
             case "--since":
                 guard since == nil else { throw InvocationError.duplicateOption("--since") }
                 index += 1
@@ -284,6 +315,12 @@ struct Invocation {
                     command = .log(nil)
                 }
                 hasCommand = true
+            case "changelog":
+                guard !hasCommand else { throw InvocationError.duplicateCommand }
+                index += 1
+                guard index < arguments.count, !arguments[index].hasPrefix("-") else { throw InvocationError.missingChangelogName }
+                command = .changelog(arguments[index])
+                hasCommand = true
             case "show":
                 guard !hasCommand else { throw InvocationError.duplicateCommand }
                 index += 1
@@ -312,6 +349,7 @@ struct Invocation {
         }
         if includeAll, !command.supportsIncludeAll { throw InvocationError.optionNotSupported("--all", command: command) }
         if full, !command.supportsFull { throw InvocationError.optionNotSupported("--full", command: command) }
+        if fetch, !command.supportsFetch { throw InvocationError.optionNotSupported("--fetch", command: command) }
         if since != nil, !command.supportsSince { throw InvocationError.optionNotSupported("--since", command: command) }
         if let updateHomebrew, !command.supportsUpdateHomebrew { throw InvocationError.optionNotSupported(updateHomebrew ? "--update-homebrew" : "--no-update-homebrew", command: command) }
         self.command = command
@@ -324,6 +362,7 @@ struct Invocation {
         self.noColor = noColor
         self.updateHomebrew = updateHomebrew
         self.since = since
+        self.fetch = fetch
     }
 
     /// `30d`, `2w`, `12h`, or a calendar date (`2026-10-01`, local midnight).
@@ -351,6 +390,7 @@ enum InvocationError: LocalizedError {
     case invalidCompletionShell
     case missingShowPackage
     case invalidSince
+    case missingChangelogName
     case missingCatalogItem(String)
     case ambiguousSelector(String, [String])
     case invalidCompletionRequest
@@ -364,6 +404,7 @@ enum InvocationError: LocalizedError {
         case let .unrecognizedArgument(argument): "Unrecognized argument: \(argument)."
         case .invalidCompletionShell: "completions requires one of: fish, bash, zsh."
         case .missingShowPackage: "show requires a package name."
+        case .missingChangelogName: "changelog requires the name of an app, game, or package."
         case .invalidSince: "--since requires a duration (30d, 2w, 12h) or a date (YYYY-MM-DD)."
         case let .missingCatalogItem(selector): "No cached software matches \(selector). Run 'sift refresh' to update the catalog."
         case let .ambiguousSelector(selector, matches): "\(selector) matches multiple records: \(matches.joined(separator: ", "))."
@@ -382,6 +423,7 @@ private extension Invocation.Command {
         case .updates: "updates"
         case .log: "log"
         case .show: "show"
+        case .changelog: "changelog"
         case .completions: "completions"
         case .complete: "completion lookup"
         }
@@ -389,16 +431,21 @@ private extension Invocation.Command {
 
     var supportsIncludeAll: Bool {
         switch self {
-        case .apps, .log, .show, .complete, .updates: true
+        case .apps, .log, .show, .changelog, .complete, .updates: true
         case .dashboard, .refresh, .completions: false
         }
     }
 
     var supportsFull: Bool {
         switch self {
-        case .show: true
+        case .show, .changelog: true
         case .dashboard, .refresh, .apps, .updates, .log, .completions, .complete: false
         }
+    }
+
+    var supportsFetch: Bool {
+        if case .changelog = self { return true }
+        return false
     }
 
     var supportsSince: Bool {
@@ -409,7 +456,7 @@ private extension Invocation.Command {
     var supportsUpdateHomebrew: Bool {
         switch self {
         case .refresh: true
-        case .dashboard, .apps, .updates, .log, .show, .completions, .complete: false
+        case .dashboard, .apps, .updates, .log, .show, .changelog, .completions, .complete: false
         }
     }
 }
