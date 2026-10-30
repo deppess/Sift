@@ -339,7 +339,10 @@ public struct ChangelogResolver: Sendable {
                     // A page that covers every version is split, and this version's part kept;
                     // a script-built page is rendered first.
                     let split = read(html, url: link, render: true)
-                    let own = split.first { ChangelogVersion.matches($0.version, ChangelogVersion.normalized(item.displayVersion)) }?.content
+                    let itemVersion = ChangelogVersion.normalized(item.displayVersion)
+                    // This version's own section, or the newest section that says it covers later versions.
+                    let own = split.first { ChangelogVersion.matches($0.version, itemVersion) }?.content
+                        ?? split.first(where: { $0.title == ChangelogDocument.cumulativeTitle && ChangelogVersion.token(in: $0.version).map { SparkleVersion.compare($0, itemVersion) != .orderedDescending } ?? false })?.content
                     let whole = HTMLMarkdown.convert(html)
                     // One entry for a different version (iTerm2 links every item to the latest
                     // release's notes) isn't this item's; an unversioned page is.
@@ -1225,7 +1228,7 @@ public struct ChangelogResolver: Sendable {
         }
         if path.contains("/steamapps/common/"), let appID = steamAppID(forPath: path) { hints.add(.steam(appID: appID)) }
         if let application {
-            let bundled = Self.bundleChangelogFiles(application.bundlePath)
+            let bundled = Self.bundleChangelogFiles(application.bundlePath) + Self.appDataChangelogFiles(name: item.name, bundleIdentifier: bundleIdentifier, home: homeDirectory)
             if !bundled.isEmpty { hints.add(.localFiles(bundled)) }
             let urls = BundleURLScanner.urls(in: application)
             if let repository = BundleURLScanner.releaseRepository(in: urls, for: application) { hints.add(repository) }
@@ -1251,6 +1254,23 @@ public struct ChangelogResolver: Sendable {
                 homebrewAPIHints(token: entry.token, cask: true, into: &hints)
             }
         }
+    }
+
+    /// Changelog files an app keeps in its own data folders (VirtualDJ saves the one it downloads
+    /// to Cache/changelog.txt), two levels deep.
+    static func appDataChangelogFiles(name: String, bundleIdentifier: String?, home: String) -> [URL] {
+        let homeURL = URL(filePath: home, directoryHint: .isDirectory)
+        let names = [name, bundleIdentifier].compactMap { $0 }.filter { !$0.isEmpty && !$0.contains("/") && !$0.hasPrefix(".") }
+        var folders: [URL] = []
+        for folder in names {
+            folders += [homeURL.appending(path: "Library/Application Support/\(folder)"), homeURL.appending(path: "Library/Caches/\(folder)"), homeURL.appending(path: "Documents/\(folder)")]
+        }
+        var found: [URL] = []
+        for folder in folders {
+            found += changelogFiles(in: folder)
+            for sub in ["Cache", "cache", "Resources", "Docs"] { found += changelogFiles(in: folder.appending(path: sub)) }
+        }
+        return found
     }
 
     /// "com.bjango.istatmenus" names bjango.com.

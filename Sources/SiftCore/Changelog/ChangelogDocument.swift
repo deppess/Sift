@@ -54,7 +54,9 @@ enum ChangelogDocument {
                 bodyLines.remove(at: first)
             }
             let version = ChangelogVersion.token(in: start.text) ?? start.text
-            entries.append(ChangelogEntry(version: version, title: cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
+            // "BetterTouchTool >= 6.943": everything since that version, marked so it can apply to later ones.
+            let cumulative = start.text.contains(">=") || start.text.contains("≥") || start.text.range(of: #"(?i)\b(and later|or later|and newer|or newer|onwards)\b"#, options: .regularExpression) != nil
+            entries.append(ChangelogEntry(version: version, title: cumulative ? ChangelogDocument.cumulativeTitle : cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
         }
         // Point releases written as paragraphs inside an entry ("go1.27.1 (released 2026-09-01)
         // includes fixes to …"), split into entries of their own.
@@ -90,6 +92,9 @@ enum ChangelogDocument {
     /// "* Changes in Wget 1.25.0"), FFmpeg ("version 7.1:"), tmux ("CHANGES FROM 3.5a TO 3.6"),
     /// Bash ("This document details the changes between this version, bash-5.3-release, …"), and
     /// a version at the start of a line followed by a blank or underline.
+    /// The title of a section that covers its version and every later one.
+    static let cumulativeTitle = "and later"
+
     static func plainTextHeadings(_ lines: [String]) -> [(index: Int, level: Int, text: String)] {
         var headings: [(Int, Int, String)] = []
         for (index, line) in lines.enumerated() {
