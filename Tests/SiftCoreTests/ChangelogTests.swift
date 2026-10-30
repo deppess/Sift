@@ -65,6 +65,8 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogResolver.ownProductReleases(taplo, name: "taplo", preferCLI: true).map(\.version), ["0.10.0", "0.9.3"])
         let iperf = ["3.19", "3.18", "iperf-3.17"].map(release)
         XCTAssertEqual(ChangelogResolver.ownProductReleases(iperf, name: "iperf3").map(\.version), ["3.19", "3.18", "3.17"])
+        let codex = ["rust-v0.166.0", "rust-v0.165.1"].map(release)
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(codex, name: "codex").map(\.version), ["0.166.0", "0.165.1"])
         let tools = ["gopls/v0.17.0", "gopls/v0.16.2"].map(release)
         XCTAssertEqual(ChangelogResolver.ownProductReleases(tools, name: "goimports").map(\.version), [], "another product's releases aren't goimports'")
         XCTAssertTrue(ChangelogVersion.looselyMatches("26.1.5", "26.1.5.5384"))

@@ -59,9 +59,9 @@ struct HomebrewLivecheck: Equatable {
 /// Release notes in a vendor's JSON update endpoint (VS Code's `notes`, Postman's `notes`,
 /// Raycast's `body`): a release object, a list of them, or an object wrapping a list.
 enum UpdateFeedJSON {
-    private static let versionKeys = ["version", "productVersion", "name", "latestVersion", "tag_name", "tagName"]
-    private static let notesKeys = ["notes", "releaseNotes", "release_notes", "body", "changelog", "changes", "description"]
-    private static let dateKeys = ["pub_date", "pubDate", "date", "timestamp", "published_at", "releaseDate", "release_date"]
+    private static let versionKeys = ["version", "productVersion", "release-version", "name", "latestVersion", "tag_name", "tagName"]
+    private static let notesKeys = ["notes", "releaseNotes", "release_notes", "release-notes", "body", "changelog", "changes", "description"]
+    private static let dateKeys = ["pub_date", "pubDate", "date", "timestamp", "published_at", "releaseDate", "release_date", "release-date"]
 
     /// Entries with text, and links (a `notes` field holding a URL) to read as pages.
     static func read(_ data: Data) -> (entries: [ChangelogEntry], links: [URL]) {

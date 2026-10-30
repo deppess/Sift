@@ -118,6 +118,12 @@ public struct ChangelogResolver: Sendable {
         case forge(host: String, path: String)
         /// A vendor's JSON update endpoint (from Homebrew's livecheck) that carries release notes.
         case updateFeed(URL)
+        /// A feed of posts for several products, kept to the posts whose title has `title`, each
+        /// versioned by the first version in its text (Chrome's releases blog).
+        case filteredFeed(URL, title: String)
+        /// One version's release-notes page at an address that follows a pattern (Firefox's
+        /// /firefox/159.0/releasenotes/).
+        case versionPage(URL, version: String)
         case page(URL)
 
         var label: String {
@@ -132,6 +138,8 @@ public struct ChangelogResolver: Sendable {
             case let .githubTags(repository): "GitHub tags and commits (\(repository.path))"
             case let .forge(host, path): "\(host)/\(path)"
             case let .updateFeed(url): "the update feed at \(url.host ?? "its vendor")"
+            case let .filteredFeed(url, _): url.host ?? "the vendor's feed"
+            case let .versionPage(url, _): "\(url.host ?? "the vendor")'s release notes"
             case let .page(url): url.host.map { "\($0)\(url.path.count > 1 ? url.path : "")" } ?? url.absoluteString
             }
         }
@@ -145,7 +153,7 @@ public struct ChangelogResolver: Sendable {
             case let .githubReleases(repository): "https://github.com/\(repository.path)/releases"
             case let .githubFile(repository), let .githubTags(repository): "https://github.com/\(repository.path)"
             case let .forge(host, path): "https://\(host)/\(path)"
-            case let .updateFeed(url): url.absoluteString
+            case let .updateFeed(url), let .filteredFeed(url, _), let .versionPage(url, _): url.absoluteString
             case let .page(url): url.absoluteString
             }
         }
@@ -244,6 +252,8 @@ public struct ChangelogResolver: Sendable {
         case let .githubTags(repository): try githubTags(repository)
         case let .forge(host, path): try forge(host: host, path: path, name: hints.name)
         case let .updateFeed(url): try updateFeed(url, name: hints.name)
+        case let .filteredFeed(url, title): try filteredFeed(url, title: title)
+        case let .versionPage(url, version): try versionPage(url, version: version)
         case let .page(url): try page(url, name: hints.name, installed: hints.installed)
         }
     }
@@ -501,8 +511,10 @@ public struct ChangelogResolver: Sendable {
         let key = BundleURLScanner.matchKey(name)
         // One kind of tag: unprefixed, or named for this item, is all the item's; one named for
         // something else (only gopls/ tags, for goimports) isn't.
+        // A prefix that is a language or a generic word (Codex's rust-v0.166.0) isn't another product.
+        let generic: Set<String> = ["rust", "go", "py", "python", "node", "js", "ts", "swift", "cli", "app", "desktop", "stable", "main", "core", "release", "macos", "mac"]
         if groups.count == 1, let only = groups.keys.first {
-            return only.isEmpty || key.isEmpty || key.contains(only) || only.contains(key) ? entries : []
+            return only.isEmpty || key.isEmpty || key.contains(only) || only.contains(key) || generic.contains(only) ? entries : []
         }
         let named = groups.keys.filter { !$0.isEmpty && (key.contains($0) || $0.contains(key)) }
         // The closest name: "server" for bash-language-server; for a command-line package, the
@@ -513,7 +525,8 @@ public struct ChangelogResolver: Sendable {
         }
         // Unprefixed tags are the repository's main product and stay with the chosen group;
         // other products' prefixed tags go.
-        let kept = (best.map { groups[$0] ?? [] } ?? []) + (groups[""] ?? [])
+        let genericGroups = groups.filter { generic.contains($0.key) }.values.flatMap { $0 }
+        let kept = (best.map { groups[$0] ?? [] } ?? []) + (groups[""] ?? []) + (best == nil ? genericGroups : [])
         return kept.sorted { left, right in
             guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
             return SparkleVersion.compare(a, b) == .orderedDescending
@@ -595,6 +608,29 @@ public struct ChangelogResolver: Sendable {
             if ChangelogDocument.isMeaningful(linked) { return Self.merge(feed.entries, linked) }
         }
         return feed.entries
+    }
+
+    private func filteredFeed(_ url: URL, title: String) throws -> [ChangelogEntry] {
+        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
+        let items = ChangelogFeeds.entries(fromFeed: try client.fetch(url, resource: .changelogPage(host: host)).body)
+        return items.compactMap { item in
+            guard (item.title ?? item.version).localizedCaseInsensitiveContains(title), let version = ChangelogVersion.token(in: String(item.content.prefix(600))) else { return nil }
+            return ChangelogEntry(version: version, title: item.title ?? item.version, date: item.date, content: item.content, sourceURL: item.sourceURL)
+        }
+    }
+
+    /// A page for one version: its own entry when the page splits by version, or else the whole
+    /// page as that version's notes.
+    private func versionPage(_ url: URL, version: String) throws -> [ChangelogEntry] {
+        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
+        let html = try fetchText(url, resource: .changelogPage(host: host))
+        let split = read(html, url: url, render: true)
+        // Split only when the sections say something (not VS Code's monthly page, whose
+        // sub-headings carry versions of extensions with no text of their own).
+        let withText = split.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
+        if withText * 2 > split.count, split.contains(where: { ChangelogVersion.matches($0.version, version) || ChangelogVersion.looselyMatches($0.version, version) }) { return split }
+        let whole = HTMLMarkdown.convert(html)
+        return whole.isEmpty || ChangelogDocument.isPlaceholder(whole) ? split : [ChangelogEntry(version: version, content: whole, sourceURL: url.absoluteString)]
     }
 
     enum ForgeKind { case gitlab, forgejo }
@@ -968,6 +1004,39 @@ public struct ChangelogResolver: Sendable {
             return [.steam(appID: "593110")]
         case (.homebrewCask, "claude-code"), (.homebrewFormula, "claude-code"):
             return [.githubFile(GitHubRepository(owner: "anthropics", name: "claude-code"))]
+        case (.homebrewCask, "google-chrome"), (.nativeApp, "com.google.Chrome"):
+            return [.filteredFeed(URL(string: "https://chromereleases.googleblog.com/feeds/posts/default/-/Stable%20updates?redirect=false&max-results=25")!, title: "Stable Channel Update for Desktop")]
+        case (.homebrewCask, "android-studio"), (.nativeApp, "com.google.android.studio"):
+            return [.page(URL(string: "https://developer.android.com/studio/releases")!)]
+        case (.homebrewCask, "flutter"), (.homebrewFormula, "flutter"):
+            return [.page(URL(string: "https://docs.flutter.dev/release/release-notes")!)]
+        case (.homebrewCask, "gcloud-cli"), (.homebrewCask, "google-cloud-sdk"):
+            return [.page(URL(string: "https://cloud.google.com/sdk/docs/release-notes")!)]
+        default:
+            break
+        }
+        // Release notes at an address built from the version, for the installed and latest versions.
+        let versions = [item.installedVersion, item.availableVersion].compactMap { $0.map(ChangelogVersion.normalized) }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        func pages(_ template: (String, [String]) -> String?) -> [Source] {
+            versions.compactMap { version in
+                let parts = version.split(separator: ".").map(String.init)
+                return template(version, parts).flatMap(URL.init(string:)).map { Source.versionPage($0, version: version) }
+            }
+        }
+        switch (item.kind, item.bundleIdentifier ?? item.name) {
+        case (.homebrewCask, "firefox"), (.nativeApp, "org.mozilla.firefox"):
+            return pages { version, _ in "https://www.mozilla.org/en-US/firefox/\(version)/releasenotes/" }
+        case (.homebrewCask, "visual-studio-code"), (.nativeApp, "com.microsoft.VSCode"):
+            return pages { _, parts in parts.count >= 2 ? "https://code.visualstudio.com/updates/v\(parts[0])_\(parts[1])" : nil }
+        case (.homebrewCask, "blender"), (.nativeApp, "org.blenderfoundation.blender"):
+            return pages { _, parts in parts.count >= 2 ? "https://www.blender.org/download/releases/\(parts[0])-\(parts[1])/" : nil }
+        case (.homebrewCask, "libreoffice"), (.nativeApp, "org.libreoffice.script"):
+            return pages { _, parts in parts.count >= 2 ? "https://wiki.documentfoundation.org/ReleaseNotes/\(parts[0]).\(parts[1])" : nil }
+        case (.homebrewCask, let name) where name.hasPrefix("dotnet-sdk"):
+            return versions.prefix(1).compactMap { version in
+                let parts = version.split(separator: ".")
+                return parts.count >= 2 ? URL(string: "https://raw.githubusercontent.com/dotnet/core/main/release-notes/\(parts[0]).\(parts[1])/releases.json").map { .updateFeed($0) } : nil
+            }
         default:
             return []
         }
