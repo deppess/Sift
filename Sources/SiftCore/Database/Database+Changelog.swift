@@ -36,9 +36,9 @@ extension Database {
                     INSERT INTO changelog_history (subject, version, title, published_at, content, source_url, source, position, first_seen_at, last_seen_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(subject, version) DO UPDATE SET
-                        title = COALESCE(excluded.title, changelog_history.title),
+                        title = CASE WHEN ?11 = 1 THEN COALESCE(excluded.title, changelog_history.title) ELSE excluded.title END,
                         published_at = COALESCE(excluded.published_at, changelog_history.published_at),
-                        content = CASE WHEN ? = 1 AND changelog_history.content != '' THEN changelog_history.content ELSE excluded.content END,
+                        content = CASE WHEN ?11 = 1 AND changelog_history.content != '' THEN changelog_history.content ELSE excluded.content END,
                         source_url = COALESCE(excluded.source_url, changelog_history.source_url),
                         source = excluded.source,
                         position = excluded.position,

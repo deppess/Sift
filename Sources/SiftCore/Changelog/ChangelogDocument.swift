@@ -69,10 +69,13 @@ enum ChangelogDocument {
                 entryDate = found
                 bodyLines.remove(at: first)
             }
+            // Bash's sentence headings wrap onto the next line, which isn't part of the notes.
+            let sentenceHeading = ["this document details the changes", "this is a terse description"].contains { start.text.lowercased().hasPrefix($0) }
+            if sentenceHeading { bodyLines = Array(bodyLines.drop { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) }
             let version = byDay ? entryDate.map(dayVersion) ?? start.text : ChangelogVersion.token(in: start.text) ?? start.text
             // "BetterTouchTool >= 6.943": everything since that version, marked so it can apply to later ones.
             let cumulative = start.text.contains(">=") || start.text.contains("≥") || start.text.range(of: #"(?i)\b(and later|or later|and newer|or newer|onwards)\b"#, options: .regularExpression) != nil
-            entries.append(ChangelogEntry(version: version, title: cumulative ? ChangelogDocument.cumulativeTitle : cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
+            entries.append(ChangelogEntry(version: version, title: cumulative ? ChangelogDocument.cumulativeTitle : sentenceHeading ? nil : cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
         }
         // Point releases written as paragraphs inside an entry ("go1.27.1 (released 2026-09-01)
         // includes fixes to …"), split into entries of their own.
@@ -125,6 +128,8 @@ enum ChangelogDocument {
                 || lower.firstMatch(of: #/^(version|release|changes in|noteworthy changes|what's new in|what’s new in|new in)\b/#) != nil
                 || lower.hasPrefix("changes from ")
                 || lower.hasPrefix("this document details the changes between this version")
+                // Bash's NEWS: "This is a terse description of the new features added to bash-5.3 since …"
+                || lower.hasPrefix("this is a terse description of the new features added to")
                 // Not a wrapped sentence that happens to start with a number ("52.5s\".").
                 || (lower.firstMatch(of: #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#) != nil && !lower.hasSuffix(".") && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
                 // A version alone on its line with a date next ("2.0" / "November 2026").
@@ -140,7 +145,7 @@ enum ChangelogDocument {
             // second line but is always a heading.
             // Likewise an Org-style "* Changes in Emacs 30.2" with its text right below.
             let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: #/^\* (?:[\w-]+ )?changes in\b/#) != nil
-            if isHeading, standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version") { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
+            if isHeading, standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version") || lower.hasPrefix("this is a terse description") { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
         }
         if headings.isEmpty {
             // "Tor Browser 16.0 - October 28 2026" or "2012-04-02: atool 0.39.0 released." at the

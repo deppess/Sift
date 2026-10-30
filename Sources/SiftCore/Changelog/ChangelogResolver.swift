@@ -317,7 +317,7 @@ public struct ChangelogResolver: Sendable {
 
     private func fetch(_ source: Source, hints: Hints) throws -> [ChangelogEntry] {
         switch source {
-        case let .localFiles(urls): try localFiles(urls, installed: hints.installed)
+        case let .localFiles(urls): try localFiles(urls)
         case let .sparkle(url, padding): try sparkle(url, padding: padding)
         case let .appStore(bundleIdentifier): try appStore(bundleIdentifier)
         case let .steam(appID): try steamNews(appID)
@@ -378,17 +378,17 @@ public struct ChangelogResolver: Sendable {
 
     /// The best of the installed changelog files: the one with the installed version, then the
     /// one with the most versions (a git-log ChangeLog loses to a release-by-release NEWS).
-    private func localFiles(_ urls: [URL], installed: String?) throws -> [ChangelogEntry] {
+    private func localFiles(_ urls: [URL]) throws -> [ChangelogEntry] {
         let parsed = urls.map { url -> [ChangelogEntry] in
             guard let data = try? Data(contentsOf: url) else { return [] }
             let text = String(decoding: data, as: UTF8.self)
             return ["html", "htm"].contains(url.pathExtension.lowercased()) ? Self.pageEntries(text, url: url) : ChangelogDocument.entries(fromMarkdown: text, sourceURL: nil)
         }
-        return parsed.max { left, right in
-            let a = installed.map { ChangelogVersion.installedIndex(in: left, installed: $0) != nil } ?? false
-            let b = installed.map { ChangelogVersion.installedIndex(in: right, installed: $0) != nil } ?? false
-            return a == b ? left.count < right.count : !a
-        } ?? []
+        // The fullest file leads and the others fill in what it lacks (Bash's CHANGES stops at
+        // 5.3-rc2; its NEWS has 5.3 itself).
+        let ordered = parsed.filter { !$0.isEmpty }.sorted { $0.count > $1.count }
+        guard let lead = ordered.first else { return [] }
+        return ordered.dropFirst().reduce(lead) { Self.merge($0, $1) }
     }
 
     // MARK: Sparkle

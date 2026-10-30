@@ -18,6 +18,18 @@ public enum ChangelogAudit {
                     flags.append("missing-latest(\(available))")
                 }
             }
+            // A release newer than anything the update check reported: the checker may have
+            // missed an update (or the changelog lists a pre-release or another platform's build).
+            let known = changelog.availableVersion ?? changelog.installedVersion
+            if let known, let newest = versioned.compactMap({ ChangelogVersion.token(in: $0.version) }).max(by: { SparkleVersion.compare($0, $1) == .orderedAscending }),
+               newest.range(of: #"(?i)(alpha|beta|rc|pre|dev)"#, options: .regularExpression) == nil,
+               // A year-numbered tag (FL Studio's "2024.2.2", an old date tag) against ordinary versions isn't comparable.
+               !(Int(newest.prefix { $0.isNumber }).map { $0 >= 1990 } ?? false) || (Int(ChangelogVersion.normalized(known).prefix { $0.isNumber }).map { $0 >= 1990 } ?? false),
+               ChangelogVersion.sameLine([ChangelogEntry(version: newest, content: "")], installed: ChangelogVersion.normalized(known)),
+               SparkleVersion.compare(newest, ChangelogVersion.normalized(known)) == .orderedDescending,
+               !ChangelogVersion.looselyMatches(newest, ChangelogVersion.normalized(known)) {
+                flags.append("newer-than-update-check(\(newest))")
+            }
             // Versions far from the installed one: another product's tags, or a number that
             // isn't a version (a standard, a year).
             if let installed = changelog.installedVersion.map(ChangelogVersion.normalized), let major = Int(installed.prefix { $0.isNumber }) {
