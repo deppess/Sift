@@ -242,6 +242,9 @@ final class ChangelogTests: XCTestCase {
         let gemini = ["2026.10.13", "2026.09.30"].map { ChangelogEntry(version: $0, content: "- x") }
         XCTAssertTrue(ChangelogVersion.isCalendarDated(gemini, installed: "1.135.1"))
         XCTAssertFalse(ChangelogVersion.isCalendarDated(gemini, installed: "2026.09.30"), "a calendar-versioned project's own versions")
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: "# Ansible 14 Release Notes\n\n## v14\\.5\\.0\n\n- a\n\n## v14\\.4\\.0\n\n- b", sourceURL: nil).map(\.version), ["14.5.0", "14.4.0"])
+        XCTAssertEqual(ChangelogDocument.entries(fromMarkdown: "# Docker Engine version 29 release notes\n\n## 29.9.2\n\n- a\n\n## 29.9.1\n\n- b\n\n## 29.9.0\n\n- c", sourceURL: nil).map(\.version), ["29.9.2", "29.9.1", "29.9.0"], "the page title isn't an entry")
+        XCTAssertEqual(ChangelogResolver.withoutDayEntries([ChangelogEntry(version: "2026-10-28", content: "- news"), ChangelogEntry(version: "17.11", content: "- fix")]).map(\.version), ["17.11"])
         let hub = #"<a href="/changelog/bionic-v1.1.10">Bionic</a><a href="/changelog/lmstudio">LM Studio</a>"#
         XCTAssertEqual(ChangelogResolver.productSection(in: hub, base: URL(string: "https://lmstudio.ai/changelog")!, name: "lm-studio")?.absoluteString, "https://lmstudio.ai/changelog/lmstudio")
     }

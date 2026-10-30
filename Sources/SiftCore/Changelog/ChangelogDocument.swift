@@ -42,6 +42,9 @@ enum ChangelogDocument {
             versioned = headings
         }
         guard !versioned.isEmpty else { return [] }
+        // A page title naming the major version ("Docker Engine version 29 release notes") over
+        // the real version headings isn't an entry of its own.
+        if versioned.count >= 3, versioned.filter({ $0.level <= versioned[0].level }).count == 1 { versioned.removeFirst() }
         // The first version heading sets the depth: version headings at its level or above are
         // entries, deeper ones (a "### 2.1.1 fixes" under "## 2.1.1") stay inside them. FL
         // Studio lists recent releases as h3 and older majors as h2, and both count.
@@ -184,7 +187,9 @@ enum ChangelogDocument {
         guard level <= 6, line.dropFirst(level).first == " " else { return nil }
         var text = line.dropFirst(level).trimmingCharacters(in: .whitespaces)
         while text.hasSuffix("#") { text.removeLast() }
-        return (level, stripInlineMarkdown(text.trimmingCharacters(in: .whitespaces)))
+        // Escaped punctuation ("v14\.5\.0" in Ansible's generated changelogs) reads as itself.
+        let unescaped = text.replacing(#/\\([\\.\-_*()\[\]#+!])/#) { String($0.1) }
+        return (level, stripInlineMarkdown(unescaped.trimmingCharacters(in: .whitespaces)))
     }
 
     private static func isSetextUnderline(_ lines: [String], after index: Int) -> Bool {

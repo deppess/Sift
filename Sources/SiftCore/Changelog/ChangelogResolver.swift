@@ -266,6 +266,11 @@ public struct ChangelogResolver: Sendable {
             if let github = GitHubSource.parse(Self.repositoryRoot(url)) { add(github.repository); return }
             guard isPublicHTTPSURL(url) else { return }
             if let forge = Self.forgeRepository(url) { add(.forge(host: forge.host, path: forge.path)); return }
+            // A GNU package's NEWS file in its Savannah repository (gnu.org/software/wget).
+            if ["gnu.org", "www.gnu.org"].contains(url.host?.lowercased() ?? ""), let package = url.path.firstMatch(of: #/^/software/([a-z0-9_+-]+)/#)?.1,
+               let news = URL(string: "https://cgit.git.savannah.gnu.org/cgit/\(package).git/plain/NEWS") {
+                add(.releaseNotes(news))
+            }
             add(.page(url))
         }
 
@@ -841,7 +846,8 @@ public struct ChangelogResolver: Sendable {
         let isChangelogPage = known || Self.looksLikeChangelogURL(url)
         // A homepage's own text, then its changelog links, and only then its feeds (often a
         // blog covering other products) and embedded data.
-        var entries = isChangelogPage ? read(html, url: url, render: true) : Self.pageEntries(html, url: url)
+        // A homepage's dated news items (PostgreSQL's, Docker's) aren't its changelog.
+        var entries = isChangelogPage ? read(html, url: url, render: true) : Self.withoutDayEntries(Self.pageEntries(html, url: url))
         // Versions of another product (a homepage listing the vendor's other app) don't stop the search.
         let fits = { (found: [ChangelogEntry]) in ChangelogVersion.sameLine(found, installed: installed) }
         // A homepage's own couple of versions (a "what's new" teaser) don't beat its changelog link.
@@ -902,7 +908,7 @@ public struct ChangelogResolver: Sendable {
         // Only then the homepage's feeds and embedded data, keeping posts that name the item
         // (a company blog covers its other products too).
         if !isChangelogPage {
-            let more = read(html, url: url, render: false, name: name)
+            let more = Self.withoutDayEntries(read(html, url: url, render: false, name: name))
             if ChangelogDocument.isMeaningful(more) && more.count >= 2 && fits(more) { return more }
             if entries.isEmpty { entries = more }
         }
@@ -1095,6 +1101,10 @@ public struct ChangelogResolver: Sendable {
         return score
     }
 
+    static func withoutDayEntries(_ entries: [ChangelogEntry]) -> [ChangelogEntry] {
+        entries.filter { $0.version.firstMatch(of: #/^\d{4}-\d{2}-\d{2}$/#) == nil }
+    }
+
     /// On a changelog page, links one level down named for a year, newest first: /changelog/2026.
     static func yearSections(in html: String, base: URL) -> [URL] {
         let folder = base.path.hasSuffix("/") ? base.path : base.path + "/"
@@ -1238,6 +1248,14 @@ public struct ChangelogResolver: Sendable {
             return [.releaseNotes(URL(string: "https://support.google.com/a/answer/7577057?hl=en")!)]
         case (.homebrewCask, "chatgpt"), (.nativeApp, "com.openai.chat"):
             return [.releaseNotes(URL(string: "https://help.openai.com/en/articles/9703738-chatgpt-macos-app-release-notes")!)]
+        case (.homebrewFormula, "zsh"):
+            return [.githubFile(GitHubRepository(owner: "zsh-users", name: "zsh"))]
+        case (.homebrewFormula, "glib"):
+            return [.forge(host: "gitlab.gnome.org", path: "GNOME/glib")]
+        case (.homebrewFormula, "docker"):
+            return version.split(separator: ".").first.map { [.releaseNotes(URL(string: "https://docs.docker.com/engine/release-notes/\($0)/")!)] } ?? []
+        case (.homebrewFormula, "ansible"):
+            return version.split(separator: ".").first.map { [.releaseNotes(URL(string: "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/\($0)/CHANGELOG-v\($0).md")!)] } ?? []
         case (.homebrewCask, "steam"):
             return [.steam(appID: "593110")]
         case (.homebrewCask, "1password"), (.nativeApp, "com.1password.1password"):
@@ -1296,6 +1314,14 @@ public struct ChangelogResolver: Sendable {
             return pages(earlier: { $0.count >= 2 && $0[1] > 0 ? [$0[0], $0[1] - 1] : nil }) { _, parts in parts.count >= 2 ? "https://code.visualstudio.com/updates/v\(parts[0])_\(parts[1])" : nil }
         case (.homebrewCask, "blender"), (.nativeApp, "org.blenderfoundation.blender"):
             return pages(earlier: { $0.count >= 2 && $0[1] > 0 ? [$0[0], $0[1] - 1] : nil }) { _, parts in parts.count >= 2 ? "https://www.blender.org/download/releases/\(parts[0])-\(parts[1])/" : nil }
+        case (.homebrewFormula, let name) where name.hasPrefix("postgresql") || name == "libpq":
+            return pages(earlier: { $0.count >= 2 && $0[1] > 0 ? [$0[0], $0[1] - 1] : nil }) { version, _ in "https://www.postgresql.org/docs/release/\(version)/" }
+        case (.homebrewFormula, "git"):
+            return pages(earlier: { $0.count >= 2 && $0[1] > 0 ? [$0[0], $0[1] - 1, 0] : nil }) { version, _ in "https://raw.githubusercontent.com/git/git/master/Documentation/RelNotes/\(version).adoc" }
+        case (.homebrewFormula, "gcc"):
+            return pages(earlier: { $0.first.map { $0 > 10 ? [$0 - 1] : nil } ?? nil }) { _, parts in "https://gcc.gnu.org/gcc-\(parts[0])/changes.html" }
+        case (.homebrewFormula, "qemu"):
+            return pages(earlier: { $0.count >= 2 ? ($0[1] > 0 ? [$0[0], $0[1] - 1] : [$0[0] - 1, 2]) : nil }) { _, parts in parts.count >= 2 ? "https://wiki.qemu.org/ChangeLog/\(parts[0]).\(parts[1])" : nil }
         case (.homebrewCask, "libreoffice"), (.nativeApp, "org.libreoffice.script"):
             return pages { _, parts in parts.count >= 2 ? "https://wiki.documentfoundation.org/ReleaseNotes/\(parts[0]).\(parts[1])" : nil }
         case (.homebrewCask, let name) where name.hasPrefix("dotnet-sdk"):
