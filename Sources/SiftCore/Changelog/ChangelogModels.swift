@@ -113,7 +113,13 @@ enum ChangelogVersion {
                 return trimmed.isEmpty ? "0" : String(trimmed)
             }
         }
-        return key(token) == key(installed)
+        if key(token) == key(installed) { return true }
+        // Leading zeros ("019" and "19") and a build number after the release ("26.1.5.5384"
+        // installed, "26.1.5" listed).
+        let numbers = { (value: String) in value.split(separator: ".").map { part in Int(part).map(String.init) ?? String(part) } }
+        let (a, b) = (numbers(token), numbers(installed))
+        if a == b { return true }
+        return a.count >= 3 && b.count == a.count + 1 && Array(b.prefix(a.count)) == a
     }
 
     /// The index of the installed version's entry: an exact match, or else a loose one.

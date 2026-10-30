@@ -59,6 +59,23 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries[1].date, ChangelogDocument.utcDate(year: 2026, month: 5, day: 14))
     }
 
+    func testMonorepoReleasesKeepTheItemsOwnTags() {
+        func release(_ tag: String) -> ChangelogEntry { ChangelogEntry(version: ChangelogVersion.token(in: tag)!, content: "- \(tag)", sourceURL: "https://github.com/o/r/releases/tag/\(tag)") }
+        let taplo = ["release-taplo-cli-0.10.0", "release-taplo-0.14.0", "release-taplo-cli-0.9.3", "release-even-better-toml-0.21.0"].map(release)
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(taplo, name: "taplo", preferCLI: true).map(\.version), ["0.10.0", "0.9.3"])
+        let iperf = ["3.19", "3.18", "iperf-3.17"].map(release)
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(iperf, name: "iperf3").map(\.version), ["3.19", "3.18", "3.17"])
+        let tools = ["gopls/v0.17.0", "gopls/v0.16.2"].map(release)
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(tools, name: "goimports").map(\.version), [], "another product's releases aren't goimports'")
+        XCTAssertTrue(ChangelogVersion.looselyMatches("26.1.5", "26.1.5.5384"))
+    }
+
+    func testPointReleasesWrittenAsParagraphsAreEntries() {
+        let entries = ChangelogDocument.entries(fromMarkdown: "## go1.27.0 (released 2026-08-19)\n\nMajor.\n\ngo1.27.2 (released 2026-10-07) includes security fixes.\n\ngo1.27.1 (released 2026-09-01) includes fixes.\n", sourceURL: nil)
+        XCTAssertEqual(entries.map(\.version), ["1.27.2", "1.27.1", "1.27.0"])
+        XCTAssertEqual(entries[0].date, ChangelogDocument.utcDate(year: 2026, month: 10, day: 7))
+    }
+
     func testCodeBlocksOnAPageDontSwallowTheHeadingsAfterThem() {
         let html = "<h2>go1.27.0 (released 2026-08-19)</h2><p>Major release.</p><pre>go install x</pre><h2>go1.26.0 (released 2026-02-10)</h2><p>Older.</p>"
         let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://go.dev/doc/devel/release")!)

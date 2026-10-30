@@ -44,6 +44,8 @@ public struct ChangelogResolver: Sendable {
         var hints = Hints()
         hints.name = subject.item.name
         hints.installed = subject.item.installedVersion.map(ChangelogVersion.normalized)
+        if let available = subject.item.availableVersion, available != subject.item.installedVersion { hints.latest = ChangelogVersion.normalized(available) }
+        hints.commandLine = subject.item.kind == .homebrewFormula || subject.item.kind == .package
         gatherHints(subject, into: &hints)
         var tried: [String] = []
         var lastError: String?
@@ -66,7 +68,10 @@ public struct ChangelogResolver: Sendable {
                     // (a short ChangeLog in the package, a feed of recent releases): the next
                     // source or two may cover more, and the better one wins.
                     let versioned = entries.filter { ChangelogVersion.token(in: $0.version) == $0.version }.count * 2 >= entries.count
-                    let coversInstalled = hints.installed.map { ChangelogVersion.installedIndex(in: entries, installed: $0) != nil } ?? true
+                    // Covered means the installed version and, when there is an update, the update:
+                    // a changelog file installed with the package stops at the installed version.
+                    let coversInstalled = (hints.installed.map { ChangelogVersion.installedIndex(in: entries, installed: $0) != nil } ?? true)
+                        && (hints.latest.map { latest in ChangelogVersion.installedIndex(in: entries, installed: latest) != nil || entries.first.flatMap { ChangelogVersion.token(in: $0.version) }.map { SparkleVersion.compare($0, latest) != .orderedAscending } ?? false } ?? true)
                     if versioned, !coversInstalled, extraTries < 2 {
                         if partial.map({ entries.count > $0.1.count }) ?? true { partial = (source, entries) }
                         extraTries += 1
@@ -140,6 +145,10 @@ public struct ChangelogResolver: Sendable {
     struct Hints {
         var name = ""
         var installed: String?
+        /// The available update, which a complete changelog must also cover.
+        var latest: String?
+        /// A command-line package (a formula, a cargo, npm, or uv tool), not an app.
+        var commandLine = false
         private var ordered: [Source] = []
         private var repositories: [String] = []
         private var files: [URL] = []
@@ -207,7 +216,7 @@ public struct ChangelogResolver: Sendable {
         case let .appStore(bundleIdentifier): try appStore(bundleIdentifier)
         case let .steam(appID): try steamNews(appID)
         case let .blackmagic(product): try blackmagic(product)
-        case let .githubReleases(repository): try githubHistory(repository, installed: hints.installed)
+        case let .githubReleases(repository): try githubHistory(repository, installed: hints.installed, name: hints.name, preferCLI: hints.commandLine)
         case let .githubFile(repository): try githubFile(repository)
         case let .githubTags(repository): try githubTags(repository)
         case let .page(url): try page(url, name: hints.name)
@@ -409,7 +418,7 @@ public struct ChangelogResolver: Sendable {
 
     // MARK: GitHub
 
-    private func githubReleases(_ repository: GitHubRepository) throws -> [ChangelogEntry] {
+    private func githubReleases(_ repository: GitHubRepository, name currentName: String = "", preferCLI: Bool = false) throws -> [ChangelogEntry] {
         guard let owner = encodeGitHubPathComponent(repository.owner), let name = encodeGitHubPathComponent(repository.name) else { throw MetadataHTTPError.unsupportedURL }
         var entries: [ChangelogEntry] = []
         for page in 1...githubPages {
@@ -434,19 +443,53 @@ public struct ChangelogResolver: Sendable {
                 if sections.count > 1, let own = sections.first(where: { ChangelogVersion.matches($0.version, version) }) { body = own.content }
                 // "GitHub CLI 2.103.3" says nothing the version doesn't; "Christmas release" does.
                 let titled = title.flatMap { $0.contains(version) || $0 == tag ? nil : $0.nonEmpty }
-                entries.append(ChangelogEntry(version: version, title: titled, date: date, content: body, sourceURL: release["html_url"] as? String))
+                entries.append(ChangelogEntry(version: version, title: titled, date: date, content: body, sourceURL: release["html_url"] as? String ?? "https://github.com/\(repository.path)/releases/tag/\(tag)"))
             }
             if releases.count < 100 { break }
         }
-        return entries
+        return Self.ownProductReleases(entries, name: currentName, preferCLI: preferCLI)
+    }
+
+    /// In a repository that releases several products (golang/tools' gopls/v0.17, taplo's
+    /// release-taplo-cli-0.9, bash-language-server's vscode-client-1.0), the releases whose tag
+    /// prefix names this item; with no prefix naming it, only the unprefixed tags.
+    static func ownProductReleases(_ entries: [ChangelogEntry], name: String, preferCLI: Bool = false) -> [ChangelogEntry] {
+        func prefix(_ entry: ChangelogEntry) -> String {
+            guard let tag = entry.sourceURL?.components(separatedBy: "/releases/tag/").dropFirst().first?.removingPercentEncoding else { return "" }
+            return BundleURLScanner.matchKey(String(tag.prefix { !$0.isNumber }).replacingOccurrences(of: "release", with: ""))
+                .replacing(#/v$/#, with: "")
+        }
+        let groups = Dictionary(grouping: entries, by: prefix)
+        let key = BundleURLScanner.matchKey(name)
+        // One kind of tag: unprefixed, or named for this item, is all the item's; one named for
+        // something else (only gopls/ tags, for goimports) isn't.
+        if groups.count == 1, let only = groups.keys.first {
+            return only.isEmpty || key.isEmpty || key.contains(only) || only.contains(key) ? entries : []
+        }
+        let named = groups.keys.filter { !$0.isEmpty && (key.contains($0) || $0.contains(key)) }
+        // The closest name: "server" for bash-language-server; for a command-line package, the
+        // CLI's tags ("taplocli") over the library's ("taplo").
+        let best = named.max { a, b in
+            let score = { (p: String) in (preferCLI && p.contains("cli") ? 200 : 0) + (p == key ? 100 : 0) + p.count }
+            return score(a) < score(b)
+        }
+        // Unprefixed tags are the repository's main product and stay with the chosen group;
+        // other products' prefixed tags go.
+        let kept = (best.map { groups[$0] ?? [] } ?? []) + (groups[""] ?? [])
+        return kept.sorted { left, right in
+            guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
+            return SparkleVersion.compare(a, b) == .orderedDescending
+        }
     }
 
     /// A repository's releases, with its changelog file filling in versions the releases don't
     /// cover (projects that started publishing releases late, or skip some).
-    private func githubHistory(_ repository: GitHubRepository, installed: String?) throws -> [ChangelogEntry] {
-        let releases = try githubReleases(repository)
+    private func githubHistory(_ repository: GitHubRepository, installed: String?, name: String = "", preferCLI: Bool = false) throws -> [ChangelogEntry] {
+        let releases = try githubReleases(repository, name: name, preferCLI: preferCLI)
         let coversInstalled = installed.map { ChangelogVersion.installedIndex(in: releases, installed: $0) != nil } ?? true
-        guard releases.count < 30 || !coversInstalled || !ChangelogDocument.isMeaningful(releases) else { return releases }
+        // Old releases without notes (kitty's) are filled from the repository's changelog too.
+        let withText = releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
+        guard releases.count < 30 || !coversInstalled || withText * 10 < releases.count * 8 else { return releases }
         let file = (try? githubFile(repository)) ?? []
         guard !file.isEmpty else { return releases }
         return Self.merge(releases, file)
@@ -702,6 +745,8 @@ public struct ChangelogResolver: Sendable {
             return [.page(URL(string: "https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/WhatsNew.htm")!)]
         case (.nativeApp, "com.valvesoftware.steam"):
             return [.steam(appID: "593110")]
+        case (.homebrewCask, "claude-code"), (.homebrewFormula, "claude-code"):
+            return [.githubFile(GitHubRepository(owner: "anthropics", name: "claude-code"))]
         default:
             return []
         }

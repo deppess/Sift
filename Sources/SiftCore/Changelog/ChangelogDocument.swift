@@ -52,6 +52,23 @@ enum ChangelogDocument {
             let version = ChangelogVersion.token(in: start.text) ?? start.text
             entries.append(ChangelogEntry(version: version, title: cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
         }
+        // Point releases written as paragraphs inside an entry ("go1.27.1 (released 2026-09-01)
+        // includes fixes to …"), split into entries of their own.
+        entries = entries.flatMap { entry -> [ChangelogEntry] in
+            let lines = entry.content.components(separatedBy: "\n")
+            let starts = lines.indices.filter { lines[$0].firstMatch(of: #/^(?:[a-z]{1,12})?v?\d+(\.\d+)+\s+\(released\b/#) != nil }
+            guard !starts.isEmpty else { return [entry] }
+            var split = [ChangelogEntry(version: entry.version, title: entry.title, date: entry.date, content: tidy(lines[..<starts[0]].joined(separator: "\n")), sourceURL: entry.sourceURL)]
+            for (position, start) in starts.enumerated() {
+                let end = position + 1 < starts.count ? starts[position + 1] : lines.count
+                let text = lines[start..<end].joined(separator: "\n")
+                split.append(ChangelogEntry(version: ChangelogVersion.token(in: lines[start]) ?? entry.version, date: date(in: lines[start]), content: tidy(text), sourceURL: entry.sourceURL))
+            }
+            return split.sorted { left, right in
+                guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
+                return SparkleVersion.compare(a, b) == .orderedDescending
+            }
+        }
         // A version repeated as its own entry's title ("1.9.8" then "1.9.8 · A Whole Glance")
         // is one entry.
         var merged: [ChangelogEntry] = []
