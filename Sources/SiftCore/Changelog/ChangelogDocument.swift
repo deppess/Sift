@@ -125,7 +125,8 @@ enum ChangelogDocument {
                 || lower.firstMatch(of: #/^(version|release|changes in|noteworthy changes|what's new in|what’s new in|new in)\b/#) != nil
                 || lower.hasPrefix("changes from ")
                 || lower.hasPrefix("this document details the changes between this version")
-                || (lower.firstMatch(of: #/^v?\d+(\.\d+)+/#) != nil && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
+                // Not a wrapped sentence that happens to start with a number ("52.5s\".").
+                || (lower.firstMatch(of: #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#) != nil && !lower.hasSuffix(".") && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
                 // A version alone on its line with a date next ("2.0" / "November 2026").
                 || (line.count <= 40 && lower.firstMatch(of: #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#) != nil
                     && (date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil || shortDateLine(before: index, in: lines) != nil))
@@ -137,7 +138,9 @@ enum ChangelogDocument {
                 || ["-", "*", "•", "+"].contains(where: { next.hasPrefix($0 + " ") }) || next.allSatisfy { "=-~^*".contains($0) }
             // Bash's "This document details the changes between this version, …" wraps onto a
             // second line but is always a heading.
-            if isHeading, standsAlone || lower.hasPrefix("this document details the changes between this version") { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
+            // Likewise an Org-style "* Changes in Emacs 30.2" with its text right below.
+            let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: #/^\* (?:[\w-]+ )?changes in\b/#) != nil
+            if isHeading, standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version") { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
         }
         if headings.isEmpty {
             // "Tor Browser 16.0 - October 28 2026" or "2012-04-02: atool 0.39.0 released." at the

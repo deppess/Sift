@@ -105,6 +105,8 @@ enum ChangelogVersion {
     static func normalized(_ installed: String) -> String {
         var value = installed.trimmingCharacters(in: .whitespaces)
         if let paren = value.firstIndex(of: "(") { value = String(value[..<paren]).trimmingCharacters(in: .whitespaces) }
+        // Java 8's 8,504,01 is 8.0.504 (update 504).
+        if let match = value.firstMatch(of: #/^(\d+),(\d+),\d+$/#) { value = "\(match.1).0.\(match.2)" }
         if let comma = value.firstIndex(of: ",") { value = String(value[..<comma]) }
         if let match = value.firstMatch(of: #/^(.+)_\d+$/#) { value = String(match.1) }
         // Miniconda's py314_26.9.4-0: the Python build prefix and package revision go.
@@ -135,8 +137,8 @@ enum ChangelogVersion {
             }
         }
         if key(token) == key(installed) { return true }
-        // A channel letter on the installed version (Zen's 1.24b, Shottr's 1.9.3b).
-        if let match = installed.firstMatch(of: #/^(\d+(?:\.\d+)+)[a-z]$/#), String(match.1) == token { return true }
+        // A channel letter or build on the installed version (Zen's 1.24b, Xcodes' 4.1.1b41).
+        if let match = installed.firstMatch(of: #/^(\d+(?:\.\d+)+)[a-z]+\d*$/#), String(match.1) == token { return true }
         // Leading zeros ("019" and "19") and a build number after the release ("26.1.5.5384"
         // installed, "26.1.5" listed).
         let numbers = { (value: String) in value.split(separator: ".").map { part in Int(part).map(String.init) ?? String(part) } }

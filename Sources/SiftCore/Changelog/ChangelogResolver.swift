@@ -150,7 +150,13 @@ public struct ChangelogResolver: Sendable {
         guard let lead = ranked.first else { return .unavailable([]) }
         var entries = lead.entries
         var labels = [lead.source.label]
-        for other in ranked.dropFirst() where lead.sameLine && other.sameLine {
+        // Same origin (two files of one repository, Emacs' NEWS and NEWS.30) is the same project
+        // even when its versions are an older line.
+        func origin(_ candidate: Candidate) -> String? {
+            guard let url = candidate.source.url.flatMap(URL.init(string:)), let host = url.host?.lowercased() else { return nil }
+            return ([host] + url.pathComponents.dropFirst().prefix(2)).joined(separator: "/")
+        }
+        for other in ranked.dropFirst() where lead.sameLine && (other.sameLine || origin(other) != nil && origin(other) == origin(lead)) {
             let merged = merge(entries, other.entries)
             if merged.count > entries.count { entries = merged; labels.append(other.source.label) }
         }
@@ -1023,7 +1029,7 @@ public struct ChangelogResolver: Sendable {
         return entries
     }
 
-    private static let discoveryPaths = ["changelog", "release-notes", "releasenotes", "releases", "whats-new", "updates", "docs/changelog", "docs/release-notes"]
+    private static let discoveryPaths = ["changelog", "release-notes", "releasenotes", "releases", "whats-new", "updates", "docs/changelog", "docs/release-notes", "support/changelog", "help/release-notes"]
 
     /// Changelog pages on the vendor's own site the homepage doesn't link plainly: those its
     /// sitemaps list (from robots.txt, on the site and its docs subdomain), then common paths,
@@ -1256,6 +1262,12 @@ public struct ChangelogResolver: Sendable {
             return version.split(separator: ".").first.map { [.releaseNotes(URL(string: "https://docs.docker.com/engine/release-notes/\($0)/")!)] } ?? []
         case (.homebrewFormula, "ansible"):
             return version.split(separator: ".").first.map { [.releaseNotes(URL(string: "https://raw.githubusercontent.com/ansible-community/ansible-build-data/main/\($0)/CHANGELOG-v\($0).md")!)] } ?? []
+        case (.homebrewCask, "signal"), (.nativeApp, "org.whispersystems.signal-desktop"):
+            return [.githubReleases(GitHubRepository(owner: "signalapp", name: "Signal-Desktop"))]
+        case (.homebrewCask, "emacs-app"), (.homebrewCask, "emacs"), (.nativeApp, "org.gnu.Emacs"):
+            // This major's NEWS, then the previous major's (NEWS.30 beside it).
+            guard let major = version.split(separator: ".").first.flatMap({ Int($0) }) else { return [] }
+            return ["NEWS", "NEWS.\(major - 1)"].map { .releaseNotes(URL(string: "https://raw.githubusercontent.com/emacs-mirror/emacs/emacs-\(major)/etc/\($0)")!) }
         case (.homebrewCask, "steam"):
             return [.steam(appID: "593110")]
         case (.homebrewCask, "1password"), (.nativeApp, "com.1password.1password"):
