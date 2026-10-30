@@ -4,7 +4,9 @@ import Foundation
 /// their level, list items become bullets, code stays code, and page chrome (navigation, headers,
 /// footers, scripts) is dropped. Links keep only their text. Nothing is fetched or executed.
 enum HTMLMarkdown {
-    static func convert(_ html: String) -> String {
+    /// `skipChrome` drops navigation and sidebars; a page whose content sits inside one (an
+    /// unclosed `<nav>`) is converted again without it, see `ChangelogResolver.pageEntries`.
+    static func convert(_ html: String, skipChrome: Bool = true) -> String {
         var output = ""
         var index = html.startIndex
         var skipping: [String] = []
@@ -42,7 +44,9 @@ enum HTMLMarkdown {
             }
             switch name {
             // Buttons stay: accordion changelogs put each version's header in one.
-            case "script", "style", "head", "nav", "footer", "noscript", "svg", "template", "aside":
+            case "script", "style", "head", "noscript", "svg", "template":
+                if !isClosing, !tag.hasSuffix("/") { skipping.append(name) }
+            case "nav", "footer", "aside" where skipChrome:
                 if !isClosing, !tag.hasSuffix("/") { skipping.append(name) }
             case "h1", "h2", "h3", "h4", "h5", "h6":
                 if isClosing { newline(2) } else {

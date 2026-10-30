@@ -244,7 +244,7 @@ public struct ChangelogResolver: Sendable {
         case let .githubTags(repository): try githubTags(repository)
         case let .forge(host, path): try forge(host: host, path: path, name: hints.name)
         case let .updateFeed(url): try updateFeed(url, name: hints.name)
-        case let .page(url): try page(url, name: hints.name)
+        case let .page(url): try page(url, name: hints.name, installed: hints.installed)
         }
     }
 
@@ -315,7 +315,7 @@ public struct ChangelogResolver: Sendable {
         var linkedPages = 0
         var linkedSplit: [ChangelogEntry]?
         for item in items {
-            var content = item.releaseNotesHTML.map(HTMLMarkdown.convert) ?? ""
+            var content = item.releaseNotesHTML.map { HTMLMarkdown.convert($0) } ?? ""
             var source: String?
             // A feed that only links to its notes: the linked page, for the newest releases.
             // The link is the item's releaseNotesLink, or one inside the placeholder text itself.
@@ -655,7 +655,7 @@ public struct ChangelogResolver: Sendable {
     /// The page itself when it lists versions, or else the changelog its links point to. Each
     /// page is read as HTML, then through the feeds it advertises, then through the JSON it embeds
     /// for its scripts, and last rendered in WebKit when its content is built by scripts.
-    func page(_ url: URL, name: String = "") throws -> [ChangelogEntry] {
+    func page(_ url: URL, name: String = "", installed: String? = nil) throws -> [ChangelogEntry] {
         guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
         let html = try fetchText(url, resource: .changelogPage(host: host))
         let isChangelogPage = Self.looksLikeChangelogURL(url)
@@ -686,7 +686,12 @@ public struct ChangelogResolver: Sendable {
             let linked: String
             do { linked = try fetchText(link, resource: .changelogPage(host: linkHost)) } catch { linkError = linkError ?? error; continue }
             let linkedEntries = read(linked, url: link, render: true)
-            if ChangelogDocument.isMeaningful(linkedEntries) { return linkedEntries }
+            // A link that yields a real changelog wins; a couple of stray versions (a newsletter
+            // page) only stands in if nothing better turns up.
+            if ChangelogDocument.isMeaningful(linkedEntries) {
+                if linkedEntries.count >= 3 { return linkedEntries }
+                if linkedEntries.count > entries.count { entries = linkedEntries }
+            }
         }
         // Only then the homepage's feeds and embedded data, keeping posts that name the item
         // (a company blog covers its other products too).
@@ -696,6 +701,27 @@ public struct ChangelogResolver: Sendable {
             if entries.isEmpty { entries = more }
         }
         if ChangelogDocument.isMeaningful(repositoryHistory) { return repositoryHistory }
+        // Still little or nothing: the changelog the vendor's sitemap or docs site lists.
+        if !isChangelogPage, entries.count < 3 {
+            // Of the top few, the one with the installed version, or else the most versions.
+            var best: [ChangelogEntry] = []
+            for candidate in discoverChangelogPages(near: url, name: name).prefix(6) {
+                guard let candidateHost = candidate.host?.lowercased(), let text = try? fetchText(candidate, resource: .changelogPage(host: candidateHost)) else { continue }
+                var found = read(text, url: candidate, render: true)
+                // An index of editions ("/release-notes" listing Mac, Windows, Linux) leads to the Mac one.
+                if found.count < 3, let mac = HTMLMarkdown.links(in: text, base: candidate).map(\.url).first(where: { link in
+                    link.host == candidate.host && link.path.hasPrefix(candidate.path) && link.path != candidate.path && ["mac", "macos", "osx"].contains(link.lastPathComponent.lowercased())
+                }), let macText = try? fetchText(mac, resource: .changelogPage(host: candidateHost)) {
+                    found = read(macText, url: mac, render: true)
+                }
+                guard ChangelogDocument.isMeaningful(found), found.count >= 3 else { continue }
+                if client.debug { MetadataHTTPClient.trace("discovered changelog page \(candidate.absoluteString): \(found.count) versions") }
+                let covers = installed.map { ChangelogVersion.installedIndex(in: found, installed: $0) != nil } ?? false
+                if covers { return found }
+                if found.count > best.count { best = found }
+            }
+            if best.count > entries.count { return best }
+        }
         // The page itself may be built by scripts even though its address doesn't say changelog.
         if !ChangelogDocument.isMeaningful(entries), !Self.looksLikeChangelogURL(url), ChangelogFeeds.looksScriptBuilt(html) {
             let rendered = renderedEntries(url)
@@ -725,6 +751,16 @@ public struct ChangelogResolver: Sendable {
                 return releases
             }
         }
+        // Docs sites (Mintlify and others) serve each page as Markdown at the same address plus ".md".
+        if entries.count < 3, url.pathExtension.isEmpty, url.path.count > 1, let host = url.host?.lowercased(),
+           let markdownURL = URL(string: url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + ".md"),
+           let markdown = try? fetchText(markdownURL, resource: .changelogPage(host: host)), markdown.range(of: "<html", options: .caseInsensitive) == nil {
+            let fromMarkdown = ChangelogDocument.entries(fromMarkdown: markdown, sourceURL: url.absoluteString)
+            if fromMarkdown.count >= 3, ChangelogDocument.isMeaningful(fromMarkdown) {
+                if client.debug { MetadataHTTPClient.trace("read the Markdown copy \(markdownURL.absoluteString): \(fromMarkdown.count) versions") }
+                return fromMarkdown
+            }
+        }
         let embedded = ChangelogFeeds.embeddedEntries(in: html)
         if ChangelogDocument.isMeaningful(embedded) {
             if client.debug { MetadataHTTPClient.trace("read embedded data on \(url.absoluteString): \(embedded.count) entries") }
@@ -750,7 +786,87 @@ public struct ChangelogResolver: Sendable {
 
     static func pageEntries(_ text: String, url: URL) -> [ChangelogEntry] {
         let isHTML = text.range(of: "<html", options: .caseInsensitive) != nil || text.range(of: "<h[1-6]", options: [.regularExpression, .caseInsensitive]) != nil
-        return ChangelogDocument.entries(fromMarkdown: isHTML ? HTMLMarkdown.convert(text) : text, sourceURL: url.absoluteString)
+        guard isHTML else { return ChangelogDocument.entries(fromMarkdown: text, sourceURL: url.absoluteString) }
+        let entries = ChangelogDocument.entries(fromMarkdown: HTMLMarkdown.convert(text), sourceURL: url.absoluteString)
+        // Content inside what looked like page chrome (ngrok's changelog sits in an unclosed <nav>):
+        // the raw page has version headings the conversion lost.
+        if entries.count < 3 {
+            let rawVersionHeadings = text.matches(of: #/(?is)<h[1-4][^>]*>(.{0,200}?)</h[1-4]>/#).filter { ChangelogVersion.token(in: HTMLText.plainText(from: String($0.1))) != nil }.count
+            if rawVersionHeadings >= 3 {
+                let unskipped = ChangelogDocument.entries(fromMarkdown: HTMLMarkdown.convert(text, skipChrome: false), sourceURL: url.absoluteString)
+                if unskipped.count > entries.count { return unskipped }
+            }
+        }
+        return entries
+    }
+
+    private static let discoveryPaths = ["changelog", "release-notes", "releasenotes", "releases", "whats-new", "updates", "docs/changelog", "docs/release-notes"]
+
+    /// Changelog pages on the vendor's own site the homepage doesn't link plainly: those its
+    /// sitemaps list (from robots.txt, on the site and its docs subdomain), then common paths,
+    /// ranked so the product's own Mac release notes come first. Bounded to a few requests.
+    func discoverChangelogPages(near base: URL, name: String) -> [URL] {
+        guard let host = base.host?.lowercased(), let domain = HomebrewCaskCatalog.vendorDomain(host) else { return [] }
+        let hosts = Array(Set([host, "docs.\(domain)"]))
+        var candidates: [URL] = []
+        for site in hosts {
+            guard let robotsURL = URL(string: "https://\(site)/robots.txt") else { continue }
+            let robots = (try? fetchText(robotsURL, resource: .changelogPage(host: site))) ?? ""
+            var maps = robots.matches(of: #/(?im)^sitemap:\s*(\S+)/#).compactMap { URL(string: String($0.1)) }
+            if maps.isEmpty, let fallback = URL(string: "https://\(site)/sitemap.xml") { maps = [fallback] }
+            var fetched = 0
+            var queue = Array(maps.prefix(3))
+            while let map = queue.first, fetched < 6 {
+                queue.removeFirst()
+                fetched += 1
+                guard let mapHost = map.host?.lowercased(), HomebrewCaskCatalog.vendorDomain(mapHost) == domain, let xml = try? fetchText(map, resource: .changelogPage(host: mapHost)) else { continue }
+                for match in xml.matches(of: #/<loc>\s*([^<\s]+)\s*</loc>/#) {
+                    guard let url = URL(string: HTMLText.decodeEntities(String(match.1))) else { continue }
+                    if url.pathExtension.lowercased() == "xml" { if Self.sitemapLooksRelevant(url) { queue.append(url) } } else if Self.looksLikeChangelogURL(url) { candidates.append(url) }
+                }
+            }
+        }
+        for site in hosts { for path in Self.discoveryPaths { if let url = URL(string: "https://\(site)/\(path)") { candidates.append(url) } } }
+        var seen = Set<String>()
+        let unique = candidates.filter { isPublicHTTPSURL($0) && seen.insert($0.absoluteString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))).inserted }
+        let ranked = unique.map { ($0, Self.discoveryScore($0, name: name)) }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
+        // The common paths are guesses: keep only those that answer.
+        return ranked.filter { url in
+            guard Self.discoveryPaths.contains(where: { url.path == "/" + $0 }) else { return true }
+            guard let host = url.host?.lowercased() else { return false }
+            return (try? client.fetch(url, resource: .changelogPage(host: host))) != nil
+        }
+    }
+
+    /// Child sitemaps worth opening: pages, docs, or changelogs, not blog posts or products by locale.
+    static func sitemapLooksRelevant(_ url: URL) -> Bool {
+        let path = url.path.lowercased()
+        if ["blog", "post", "news", "article", "image", "video", "author", "tag", "categor", "customer", "event", "job", "career", "store", "shop"].contains(where: path.contains) { return false }
+        return true
+    }
+
+    static func discoveryScore(_ url: URL, name: String) -> Int {
+        let path = url.path.lowercased()
+        let segments = path.split(separator: "/").map(String.init)
+        guard let last = segments.last else { return 0 }
+        var score = 0
+        let exact = ["changelog", "release-notes", "releasenotes", "releases", "whats-new", "updates", "history", "changes", "release-history", "version-history"]
+        if exact.contains(last) || exact.contains(where: { segments.dropLast().last == $0 && ["mac", "macos", "osx", "desktop"].contains(last) }) { score += 50 }
+        else if looksLikeChangelogURL(url) { score += 15 }
+        // The product's own words in the path: "desktop" for docker-desktop.
+        let words = name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { $0.count >= 3 }
+        score += words.filter { path.contains($0) }.count * 15
+        if ["mac", "macos", "osx"].contains(where: { segments.contains($0) }) { score += 10 }
+        // What an installed package is, as opposed to a vendor's hosted services: ngrok's agent
+        // changelog over its AI gateway's.
+        if ["agent", "cli", "desktop", "app", "client"].contains(where: { word in segments.dropLast().contains(where: { $0.contains(word) }) }) { score += 10 }
+        if ["windows", "linux", "ios", "android", "api", "sdk", "enterprise", "server"].contains(where: { word in segments.contains(where: { $0.contains(word) }) }) { score -= 25 }
+        if ["blog", "news", "article", "post", "press", "community", "forum"].contains(where: path.contains) { score -= 40 }
+        // Localized copies (/ja-jp/, /de/) and deep paths lose.
+        if segments.contains(where: { $0.firstMatch(of: #/^[a-z]{2}(-[a-z]{2})?$/#) != nil && !["io", "go"].contains($0) }) { score -= 30 }
+        score -= max(0, segments.count - 3) * 5
+        if url.host?.hasPrefix("docs.") == true { score += 5 }
+        return score
     }
 
     /// A github.com/owner/repo link whose repository (or owner) is named like the item: mpv.io

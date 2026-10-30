@@ -115,6 +115,14 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(UpdateFeedJSON.read(Data(#"{"productVersion":"1.144.0","notes":"https://code.visualstudio.com/updates/v1_144"}"#.utf8)).links.map(\.absoluteString), ["https://code.visualstudio.com/updates/v1_144"])
     }
 
+    func testDiscoveredPagesRankTheProductsOwnReleaseNotesFirst() {
+        let urls = ["https://docs.docker.com/engine/release-notes/", "https://docs.docker.com/desktop/release-notes/", "https://www.docker.com/blog/whats-new-in-docker-1-13/", "https://www.docker.com/ja-jp/blog/whats-new-in-docker-1-13/"].map { URL(string: $0)! }
+        let ranked = urls.map { ($0.absoluteString, ChangelogResolver.discoveryScore($0, name: "docker-desktop")) }.sorted { $0.1 > $1.1 }
+        XCTAssertEqual(ranked.first?.0, "https://docs.docker.com/desktop/release-notes/")
+        XCTAssertTrue(ranked.filter { $0.0.contains("blog") }.allSatisfy { $0.1 <= 0 })
+        XCTAssertGreaterThan(ChangelogResolver.discoveryScore(URL(string: "https://slack.com/release-notes/mac")!, name: "slack"), ChangelogResolver.discoveryScore(URL(string: "https://slack.com/release-notes/windows")!, name: "slack"))
+    }
+
     func testCodeBlocksOnAPageDontSwallowTheHeadingsAfterThem() {
         let html = "<h2>go1.27.0 (released 2026-08-19)</h2><p>Major release.</p><pre>go install x</pre><h2>go1.26.0 (released 2026-02-10)</h2><p>Older.</p>"
         let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://go.dev/doc/devel/release")!)
