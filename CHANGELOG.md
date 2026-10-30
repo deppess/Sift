@@ -9,6 +9,10 @@
 - Placeholder text that only points elsewhere is never shown as a changelog; when nothing is found, Sift lists where it looked.
 - `sift refresh` prefetches changelogs for pending updates and recent changes; `sift show` displays what's new from that cache.
 - "Notes" is now "Changelog" everywhere.
+- Every changelog read is kept per version, so feeds that only list recent releases build a full history over time.
+- More sources: changelog files inside app bundles, plain-text NEWS/CHANGES formats, GitHub releases merged with the repository changelog, tags and commits for repositories with neither, RSS/Atom feeds and embedded data on project sites, JavaScript-built pages rendered in WebKit, PyPI/npm/crates.io metadata for Homebrew formulae, and a homepage's link to the project's own repository.
+- Helpers installed with another app show that app's changelog.
+- GitHub requests use the GitHub CLI's login when no token is set; `SIFT_DEBUG=1` traces every request.
 
 ### Update log
 

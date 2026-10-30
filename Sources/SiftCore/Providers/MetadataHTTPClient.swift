@@ -106,6 +106,9 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         }
     }
 
+    /// Whether GitHub requests carry a token (and so have 5,000 requests an hour, not 60).
+    var hasGitHubToken: Bool { githubToken() != nil }
+
     /// `SIFT_DEBUG=1` traces every metadata request and changelog decision to standard error.
     var debug: Bool { environment["SIFT_DEBUG"].map { !$0.isEmpty && $0 != "0" } ?? false }
 
@@ -268,7 +271,27 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     }
 
     private func githubToken() -> String? {
-        [environment["GITHUB_TOKEN"], environment["GH_TOKEN"]].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty }.first
+        if let token = [environment["GITHUB_TOKEN"], environment["GH_TOKEN"]].compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty }).first { return token }
+        guard environment["SIFT_NO_GH_TOKEN"] == nil else { return nil }
+        return Self.ghToken.withLock { cached in
+            if let cached { return cached.token }
+            let token = Self.readGHToken(environment: environment)
+            cached = (token, ())
+            return token
+        }
+    }
+
+    /// The GitHub CLI's login (`gh auth token`), read once per run: the user's own credential,
+    /// which raises GitHub's limit from 60 to 5,000 requests an hour.
+    private static let ghToken = GHTokenBox()
+
+    private static func readGHToken(environment: [String: String]) -> String? {
+        let candidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/opt/local/bin/gh"].map { URL(filePath: $0) }
+        guard let gh = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }),
+              let result = try? CommandRunner().run(executable: gh, arguments: ["auth", "token", "--hostname", "github.com"], environment: environment.filter { ["HOME", "PATH", "XDG_CONFIG_HOME", "GH_CONFIG_DIR", "USER"].contains($0.key) }, timeout: 5, outputLimit: 4_096),
+              result.status == 0 else { return nil }
+        let token = String(decoding: result.stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty || token.contains(where: \.isWhitespace) ? nil : token
     }
 
     private func tokenFingerprint(_ token: String) -> String {
@@ -469,4 +492,11 @@ private final class HTTPDataResult: @unchecked Sendable {
     func wait(timeout: DispatchTime) -> Bool { semaphore.wait(timeout: timeout) == .success }
     func waitForCompletion(timeout: DispatchTime) -> Bool { completionSemaphore.wait(timeout: timeout) == .success }
     func value() -> Result<(Data, HTTPURLResponse), Error> { lock.withLock { if let failure { return .failure(failure) }; guard let response else { return .failure(MetadataHTTPError.invalidResponse) }; return .success((data, response)) } }
+}
+
+/// A once-per-process cache for the GitHub CLI's token.
+private final class GHTokenBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (token: String?, Void)?
+    func withLock<T>(_ body: (inout (token: String?, Void)?) -> T) -> T { lock.withLock { body(&value) } }
 }

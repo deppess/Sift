@@ -28,7 +28,8 @@ public struct ChangelogResolver: Sendable {
     private let client: MetadataHTTPClient
     private let homeDirectory: String
     private let storefront: String
-    private let githubPages: Int
+    /// 100 releases a page; anonymous access has 60 requests an hour to spend.
+    private var githubPages: Int { client.hasGitHubToken ? 10 : 3 }
     /// Renders a script-built page to HTML (WebKit, in a child process); nil leaves such pages unread.
     private let renderer: (@Sendable (URL) -> String?)?
 
@@ -37,8 +38,6 @@ public struct ChangelogResolver: Sendable {
         self.renderer = renderer
         self.homeDirectory = homeDirectory
         self.storefront = storefront.count == 2 && storefront.allSatisfy(\.isLetter) ? storefront : "us"
-        // 100 releases a page; anonymous access has 60 requests an hour to spend.
-        githubPages = environment["GITHUB_TOKEN"] ?? environment["GH_TOKEN"] != nil ? 10 : 3
     }
 
     public func resolve(_ subject: ChangelogSubject) -> ChangelogResolution {
@@ -57,7 +56,9 @@ public struct ChangelogResolver: Sendable {
         for source in hints.sources {
             do {
                 let fetched = try fetch(source, hints: hints)
-                if versionsOnly == nil, fetched.filter({ ChangelogVersion.token(in: $0.version) == $0.version }).count >= 2 { versionsOnly = (source, fetched) }
+                // The app's own feed counts with a single version: it records each release as it appears.
+                let versionCount = fetched.filter { ChangelogVersion.token(in: $0.version) == $0.version }.count
+                if versionsOnly == nil, versionCount >= 2 || versionCount == 1 && { if case .sparkle = source { return true }; return false }() { versionsOnly = (source, fetched) }
                 let entries = fetched.filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 if client.debug { MetadataHTTPClient.trace("\(source.label): \(entries.count) entries, \(entries.filter { !ChangelogDocument.isPlaceholder($0.content) }.count) with real content") }
                 if ChangelogDocument.isMeaningful(entries) {
