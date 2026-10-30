@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Changelogs
+
+- `sift changelog <name>` shows the changelog of any app, game, or package in the terminal, newest first: the versions newer than the installed one by default, `--all` for the whole history, `--full` for links and download sections, `--fetch` to ask the source again.
+- Sources: changelog files the package installed, every item of an app's Sparkle feed (following release-notes links, including ones inside placeholder text), App Store version history, Steam patch notes, Blackmagic's downloads feed, GitHub releases and repository changelog files, and the changelog page on the project's website found from its package metadata.
+- Placeholder text that only points elsewhere is never shown as a changelog; when nothing is found, Sift lists where it looked.
+- `sift refresh` prefetches changelogs for pending updates and recent changes; `sift show` displays what's new from that cache.
+- "Notes" is now "Changelog" everywhere.
+
+### Update log
+
+- `sift log` lists every observed version change across apps, Homebrew, npm, uv, cargo, MacPorts, and Steam, grouped by day; `sift log <name>` and `--since` narrow it. `changes` remains as an alias.
+- `sift show` and `sift changelog` now accept npm, uv, cargo, MacPorts, and Steam packages (`npm:`, `uv:`, `cargo:`, `port:`, `steam:` selectors, or a Steam app ID).
+
+### Cache
+
+- Schema 16, applied in place to a 1.0 cache on first use, keeping its history.
+
 ## 1.0.0 - 2026-10-26
 
 First public release of the macOS software inventory observer.

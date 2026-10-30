@@ -1,21 +1,22 @@
 # Sift
 
-Sift is a macOS-native, CLI-first tool for answering two related questions:
+Sift is a macOS-native, CLI-first tool for answering three related questions:
 
 1. What installed software has an update available?
-2. What software version changed between Sift observations, and what changed in that release?
+2. What software version changed between Sift observations? (`sift log`)
+3. What changed in any app, game, or package, at any version? (`sift changelog`)
 
-Sift is an observer. It does not install updates, run in the background, inspect project dependency trees, or invent release notes.
+Sift is an observer. It does not install updates, run in the background, inspect project dependency trees, or invent changelogs. A changelog is always shown in the terminal: Sift never sends the user to a browser or the app, and text that only points elsewhere ("see our website") is treated as no changelog.
 
 ## Product Contract
 
 - Target macOS 15 and later. macOS 26 is the primary development platform.
 - Use Swift 6 and Swift Package Manager.
 - Persist state in SQLite at `~/Library/Application Support/Sift/sift.sqlite3` by default.
-- `sift`, `apps`, `updates`, `show`, and dynamic completion lookups read only cached state. They never run providers, make network requests, or write the database.
-- `sift refresh` is the only implemented command allowed to discover software, run provider commands, or fetch metadata.
+- `sift`, `apps`, `updates`, `log`, `show`, and dynamic completion lookups read only cached state. They never run providers, make network requests, or write the database (beyond upgrading an earlier 1.x schema in place).
+- `sift refresh` is the only command allowed to discover software or run provider commands. It and `sift changelog` are the only commands that fetch metadata: `changelog` fetches only the requested item's changelog, and only when its cached copy is missing or more than six hours old (or `--fetch` is given).
 - Cached dashboard and Homebrew update output mark data stale after 24 hours; no command refreshes implicitly. Failed or partial refreshes preserve cached data and surface their incomplete status.
-- Human-readable output is compact. Detailed provenance and release notes belong in detail commands.
+- Human-readable output is compact. Detailed provenance and changelogs belong in detail commands.
 - Version 1.0.0 is the first public release. Its JSON output is stable across 1.x: fields may be added, but none are renamed or removed.
 
 ## Name And Distribution
@@ -45,7 +46,7 @@ Explicitly deferred:
 - external `mas` dependency
 - pipx, mise, Go binaries, gems, and Squirrel.Mac update servers (no fixtures yet)
 - project dependency scanning
-- generic web scraping and AI summaries
+- AI summaries
 - Linux support
 
 ## Evidence Model
@@ -89,13 +90,27 @@ An app's executable may reveal the GitHub release check its own updater makes (`
 
 When reconciliation is uncertain, retain separate records and surface that uncertainty.
 
-## Release Notes
+## Changelogs
 
-Homebrew notes use provider metadata that identifies an exact upstream release. Native notes come from the item Sparkle would install (inline HTML is reduced to plain text; a notes link is shown, not fetched) or the App Store listing. Unavailable notes remain unknown. Sift does not scrape arbitrary pages or manufacture a summary.
+`sift changelog <name>` works for anything in the catalog: apps, games, Homebrew formulae and casks, npm, uv, cargo, MacPorts, and Steam packages. Entries are newest first and go as far back as the source does; by default the versions newer than the installed one are shown, then the installed version's own entry.
+
+Sources are tried in order, and the first with real content wins:
+
+1. A changelog file the package installed (a Homebrew keg, `node_modules`, the cargo registry source).
+2. The app's Sparkle feed, every item; an item that only links to its notes (as `releaseNotesLink` or a link inside its description) has the linked page read and the matching version kept.
+3. The App Store listing's version history (the lookup API's latest notes otherwise).
+4. Steam's news feed for the game (patch notes when the game tags them, every announcement otherwise).
+5. Blackmagic's downloads feed.
+6. The project's GitHub releases, then its repository changelog file (`CHANGELOG.md`, `NEWS`, `HISTORY.rst`, …).
+7. The project's own website: the homepage or changelog link its package metadata names (Homebrew, npm, PyPI, crates.io, Python `Project-URL`s, the cask for the app's bundle identifier, changelog links embedded in the bundle), followed to the page that lists versions.
+
+Pages are converted from HTML to Markdown and split at their version headings; nothing on them is executed. Sift identifies itself honestly and does not work around a site's bot checks, so a page that requires a full browser is reported as giving no changelog. The tried sources are listed when nothing is found. Changelogs are cached per item (`changelog_entries`, `changelog_state`) and kept until that item is fetched again; `refresh` prefetches the changelogs of pending updates and of anything that changed in the last week.
+
+The 1.0 per-update notes (`homebrew_release_notes`, `release_notes`) are still collected by `refresh` and shown by `sift show` when no changelog is cached.
 
 ## Persistence
 
-Sift 1.0.0 creates its schema (version 15) directly as a clean baseline; it does not carry forward the incremental pre-release migration history, and pre-release caches, including development builds of version 15, are intentionally unsupported. Its core tables include:
+Sift 1.0.0 creates its schema (version 15) directly as a clean baseline; it does not carry forward the incremental pre-release migration history, and pre-release caches, including development builds of version 15, are intentionally unsupported. Later versions are steps applied on top of the baseline in one transaction, so a 1.x cache keeps its history: version 16 adds `package_transitions` (version history for Homebrew and managed packages), `managed_packages.identifier` (a Steam app ID), `changelog_entries`, and `changelog_state`. A cache-only command that finds an older 1.x schema upgrades it in place first. Its core tables include:
 
 - `schema_migrations`
 - `settings`
@@ -127,7 +142,8 @@ sift refresh
 sift show <software>
 sift apps
 sift updates
-sift changes
+sift log [software] [--since <30d|2w|12h|YYYY-MM-DD>]   (`changes` is an alias)
+sift changelog <software> [--all] [--full] [--fetch]
 sift completions <fish|bash|zsh>
 ```
 
@@ -138,6 +154,8 @@ Initial global options:
 --json
 --all
 --full
+--fetch
+--since <duration|date>
 --no-color
 --update-homebrew|--no-update-homebrew
 --database <path>
@@ -166,7 +184,7 @@ Initial global options:
 }
 ```
 
-`updates`, `apps`, and `changes` write a JSON array of records, and `show` writes one record. Within 1.x, fields are only ever added; a change that would break an existing reader waits for 2.0, and the dashboard's `schemaVersion` changes with it.
+`updates`, `apps`, and `log` write a JSON array of records, and `show` and `changelog` write one record. Within 1.x, fields are only ever added; a change that would break an existing reader waits for 2.0, and the dashboard's `schemaVersion` changes with it.
 
 `lastAttemptAt` records the latest completed refresh attempt. `dataAsOf` records the newest successfully collected provider data and drives freshness: `unknown`, `current`, or `stale`. A failed attempt never makes cached data current. The stale threshold is 24 hours; “recently changed” means distinct installations with a transition observed in the previous seven days. JSON uses RFC 3339 timestamps, explicit `null` for unavailable values, stable string enums, standard output for data, and standard error for diagnostics.
 
@@ -174,14 +192,14 @@ Initial global options:
 
 - Run provider executables directly with argument arrays, never through a shell.
 - Use subprocess timeouts and output-size limits.
-- Permit only allowlisted HTTPS metadata hosts (`formulae.brew.sh`, `api.github.com`, `raw.githubusercontent.com`, `itunes.apple.com`, `www.blackmagicdesign.com`, `index.crates.io`); reject local and executable URL schemes. A Sparkle feed or electron-builder `latest-mac.yml` may use only the host its own app declares, over HTTPS, on a named public host (no IP literals, ports, credentials, or `.local` names); it may redirect only to another such public HTTPS host, as Sparkle itself allows.
+- Permit only allowlisted HTTPS metadata hosts (`formulae.brew.sh`, `api.github.com`, `raw.githubusercontent.com`, `itunes.apple.com`, `apps.apple.com`, `www.blackmagicdesign.com`, `index.crates.io`, `crates.io`, `registry.npmjs.org`, `pypi.org`, `api.steampowered.com`); reject local and executable URL schemes. A changelog page may use only the host its package metadata, app bundle, or feed names, on a named public HTTPS host, and may redirect only to another such host. A Sparkle feed or electron-builder `latest-mac.yml` may use only the host its own app declares, over HTTPS, on a named public host (no IP literals, ports, credentials, or `.local` names); it may redirect only to another such public HTTPS host, as Sparkle itself allows.
 - Disable XML external entities and bound feed and HTTP response sizes.
 - Bound redirect count, request duration, and HTTP concurrency.
-- Sanitize terminal control characters from provider and release-note content.
+- Sanitize terminal control characters from provider and changelog content.
 - Use restrictive permissions for Sift's state directory and database.
 - For custom databases, require an existing real parent directory that is private to the current user or sticky; reject symlinks and unsafe database files. Database files must be user-owned, regular, single-link files and are created or tightened to mode `0600`.
 - Record partial provider failures without discarding successful provider data.
-- Never execute provider metadata, feed content, or release-note content. Bundle scripts (Steam shortcuts) and other tools' databases (MacPorts' registry) are read, never run or written.
+- Never execute provider metadata, feed content, or changelog content. Bundle scripts (Steam shortcuts) and other tools' databases (MacPorts' registry) are read, never run or written.
 
 ## Licensing And Attribution
 

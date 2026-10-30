@@ -1,8 +1,8 @@
 # Sift
 
-Sift is a macOS-native command-line observer for installed software, available updates, observed version changes, and cached release notes. Version 1.0.0 supports macOS 15 and later.
+Sift is a macOS-native command-line observer for installed software: what has an update, a log of every version change it has seen, and the changelog of any app, game, or package, read right in the terminal. It supports macOS 15 and later.
 
-`sift refresh` collects everything; every other command reads the cache instantly and never touches the network.
+`sift refresh` collects everything. `sift changelog` fetches the one changelog you ask for when its cached copy is missing or old; every other command reads the cache instantly and never touches the network.
 
 Source: [Codeberg](https://codeberg.org/deppes/Sift) (primary) · [GitHub](https://github.com/deppess/Sift) (mirror)
 
@@ -39,8 +39,9 @@ swift run sift refresh
 swift run sift               # dashboard
 swift run sift updates       # everything with an update; --all adds dependencies
 swift run sift apps          # applications and where their updates come from
-swift run sift show <name>   # details and release notes; --full for complete notes
-swift run sift changes       # observed version changes
+swift run sift show <name>   # details and what's new
+swift run sift log           # every observed version change; log <name>, --since 30d
+swift run sift changelog <name>  # the changelog, newest first; --all for the whole history, --full for links and downloads
 swift test
 ./Scripts/test-integration
 ./Scripts/test-security
@@ -55,6 +56,18 @@ Use an isolated database while developing:
 swift run sift --database /tmp/sift.sqlite3
 ```
 
+## Changelogs
+
+`sift changelog <name>` takes any app, game, or package `sift show` knows: `sift changelog gh`, `sift changelog UTM`, `sift changelog steam:Balatro`, `sift changelog cargo:graf-rs`. It shows the versions newer than the one installed, then the installed version's own entry; `--all` shows everything the source has. The changelog always appears in the terminal; Sift never sends you to a browser.
+
+Sift looks, in order, for a changelog file the package installed, the app's update feed (following its release-notes links), the App Store's version history, Steam's patch notes, Blackmagic's downloads feed, the project's GitHub releases and repository changelog, and finally the changelog page on the project's own website, found from the homepage its package metadata names. Text that only points somewhere else ("see our website") doesn't count. When nothing is found it lists where it looked. A site that only serves pages to full web browsers can't be read.
+
+Changelogs are cached for six hours (`--fetch` asks again), and `sift refresh` prefetches them for everything with a pending update or a change in the last week, so `sift show` can display what's new without the network.
+
+## Update log
+
+Every refresh records what changed since the previous one, for apps, Homebrew, npm, uv, cargo, MacPorts, and Steam alike. `sift log` lists them by day, newest first; `sift log gh` shows one item's history and `--since 2w` (or `30d`, `12h`, `2026-10-01`) narrows the range. The log starts from Sift's first refresh; versions before that aren't known.
+
 ## Behavior
 
 `sift --help` writes usage to standard output and exits successfully. Argument errors exit with status 2. Data is always standard output; diagnostics are always standard error. A custom database parent directory must already exist, be a real directory, and either be private to the current user or sticky; database files must be user-owned regular single-link files.
@@ -63,9 +76,9 @@ swift run sift --database /tmp/sift.sqlite3
 
 `sift apps --all` adds system, CoreServices, inactive, auxiliary (helpers and build products), and launcher (Steam shortcut) records. Selectors match a bundle identifier, a name, or a unique name prefix (`sift show safari`). `sift refresh` runs `brew update` first only when that prefix's metadata is more than an hour old (or older than `HOMEBREW_AUTO_UPDATE_SECS` when set), judged from the timestamps Homebrew leaves on disk; `--update-homebrew` always updates and `--no-update-homebrew` never does. A failed update is a warning, and the refresh continues with the metadata already on disk. `--no-color` (or `NO_COLOR`) disables styled output.
 
-Set `GITHUB_TOKEN` or `GH_TOKEN` to raise GitHub's release-note rate limit from 60 to 5,000 requests an hour. Update feeds, store listings, and catalogs are asked again after an hour, release notes after six, each revalidated with its ETag. Homebrew's `info` and `outdated` output is reused while nothing it reads has changed (installed kegs and casks, linked and pinned state, the repository and tap checkouts, the API snapshots, and `HOMEBREW_*` settings), and for at most a day; the cask catalog's index and installer-receipt lookups are likewise kept until their source changes. The cache keeps only the latest observation of each app, so it doesn't grow with every refresh.
+Set `GITHUB_TOKEN` or `GH_TOKEN` to raise GitHub's rate limit from 60 to 5,000 requests an hour (and let `sift changelog` read up to 1,000 releases instead of 300). Update feeds, store listings, and catalogs are asked again after an hour, changelogs after six, each revalidated with its ETag. Homebrew's `info` and `outdated` output is reused while nothing it reads has changed (installed kegs and casks, linked and pinned state, the repository and tap checkouts, the API snapshots, and `HOMEBREW_*` settings), and for at most a day; the cask catalog's index and installer-receipt lookups are likewise kept until their source changes. The cache keeps only the latest observation of each app, so it doesn't grow with every refresh.
 
-Pre-1.0.0 development databases, including development builds of schema 15, are intentionally unsupported. Remove the old cache and run `sift refresh`.
+A cache from an earlier 1.x release is upgraded in place the first time a newer Sift opens it, keeping its history. Pre-1.0.0 development databases, including development builds of schema 15, are intentionally unsupported. Remove the old cache and run `sift refresh`.
 
 ## Naming conflict
 
