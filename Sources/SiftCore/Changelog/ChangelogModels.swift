@@ -124,6 +124,14 @@ enum ChangelogVersion {
 
     /// The index of the installed version's entry: an exact match, or else a loose one.
     static func installedIndex(in entries: [ChangelogEntry], installed: String) -> Int? {
-        entries.firstIndex { matches($0.version, installed) } ?? entries.firstIndex { looselyMatches($0.version, installed) }
+        if let index = entries.firstIndex(where: { matches($0.version, installed) }) ?? entries.firstIndex(where: { looselyMatches($0.version, installed) }) { return index }
+        // A patch level of a release line the project documents only as a whole (Bash 5.3.20 is
+        // patch 20 of 5.3, and CHANGES has one entry for 5.3).
+        let parts = installed.split(separator: ".")
+        guard parts.count == 3 else { return nil }
+        let line = parts.prefix(2).joined(separator: ".")
+        let tokens = entries.map { token(in: $0.version) }
+        guard !tokens.contains(where: { $0?.hasPrefix(line + ".") == true }) else { return nil }
+        return tokens.firstIndex { $0 == line }
     }
 }

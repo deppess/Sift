@@ -70,6 +70,10 @@ final class ChangelogTests: XCTestCase {
         let tools = ["gopls/v0.17.0", "gopls/v0.16.2"].map(release)
         XCTAssertEqual(ChangelogResolver.ownProductReleases(tools, name: "goimports").map(\.version), [], "another product's releases aren't goimports'")
         XCTAssertTrue(ChangelogVersion.looselyMatches("26.1.5", "26.1.5.5384"))
+        let bash = ["5.3", "5.2", "5.1"].map { ChangelogEntry(version: $0, content: "- x") }
+        XCTAssertEqual(ChangelogVersion.installedIndex(in: bash, installed: "5.3.20"), 0, "a patch level of a release documented as a whole")
+        let semver = ["1.3.0", "1.2.5", "1.2"].map { ChangelogEntry(version: $0, content: "- x") }
+        XCTAssertNil(ChangelogVersion.installedIndex(in: semver, installed: "1.2.4"), "a project that documents patches doesn't get one guessed")
     }
 
     func testPointReleasesWrittenAsParagraphsAreEntries() {
