@@ -1,0 +1,24 @@
+#!/bin/sh
+# Builds sift and signs the debug binary with a stable identity, so firewalls that identify
+# programs by code signature (Little Snitch) see the same program after every build. Swift
+# otherwise gives each build a new ad-hoc signature.
+#
+# One-time setup: Keychain Access > Certificate Assistant > Create a Certificate…
+#   Name: sift-dev   Identity Type: Self-Signed Root   Certificate Type: Code Signing
+# Set SIFT_SIGNING_IDENTITY to use a different certificate name.
+set -eu
+
+cd "$(dirname "$0")/.."
+identity="${SIFT_SIGNING_IDENTITY:-sift-dev}"
+
+swift build "$@"
+binary="$(swift build --show-bin-path "$@")/sift"
+
+if ! security find-identity -p codesigning | grep -q "\"$identity\""; then
+    echo "build-dev: no code signing certificate named \"$identity\"; $binary keeps its ad-hoc signature." >&2
+    echo "build-dev: create one in Keychain Access (see the comment at the top of this script)." >&2
+    exit 1
+fi
+
+codesign --force --sign "$identity" --identifier dev.sift.cli "$binary"
+codesign --display --verbose=1 "$binary" 2>&1 | grep -E '^(Identifier|Authority)='
