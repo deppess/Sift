@@ -4,7 +4,7 @@ Sift is a macOS-native command-line observer for installed software, available u
 
 `sift refresh` collects everything; every other command reads the cache instantly and never touches the network.
 
-Source: [Codeberg](https://codeberg.org/deppes/Sift) (primary) · [GitHub](https://github.com/deppess/SIft) (mirror)
+Source: [Codeberg](https://codeberg.org/deppes/Sift) (primary) · [GitHub](https://github.com/deppess/Sift) (mirror)
 
 ## Install
 
