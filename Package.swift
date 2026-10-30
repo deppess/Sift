@@ -14,7 +14,7 @@ let package = Package(
     targets: [
         .systemLibrary(name: "CSQLite"),
         .target(name: "SiftCore", dependencies: ["CSQLite", .product(name: "Markdown", package: "swift-markdown")]),
-        .target(name: "SiftCLI", dependencies: ["SiftCore"]),
+        .target(name: "SiftCLI", dependencies: ["SiftCore"], linkerSettings: [.linkedFramework("WebKit"), .linkedFramework("AppKit")]),
         .executableTarget(name: "Sift", dependencies: ["SiftCLI"]),
         .testTarget(name: "SiftCoreTests", dependencies: ["SiftCore"]),
         .testTarget(name: "SiftCLITests", dependencies: ["SiftCLI", "SiftCore"]),

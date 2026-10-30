@@ -29,9 +29,12 @@ public struct ChangelogResolver: Sendable {
     private let homeDirectory: String
     private let storefront: String
     private let githubPages: Int
+    /// Renders a script-built page to HTML (WebKit, in a child process); nil leaves such pages unread.
+    private let renderer: (@Sendable (URL) -> String?)?
 
-    public init(client: MetadataHTTPClient, homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path, storefront: String = Locale.current.region?.identifier.lowercased() ?? "us", environment: [String: String] = ProcessInfo.processInfo.environment) {
+    public init(client: MetadataHTTPClient, homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path, storefront: String = Locale.current.region?.identifier.lowercased() ?? "us", environment: [String: String] = ProcessInfo.processInfo.environment, renderer: (@Sendable (URL) -> String?)? = nil) {
         self.client = client
+        self.renderer = renderer
         self.homeDirectory = homeDirectory
         self.storefront = storefront.count == 2 && storefront.allSatisfy(\.isLetter) ? storefront : "us"
         // 100 releases a page; anonymous access has 60 requests an hour to spend.
@@ -43,9 +46,11 @@ public struct ChangelogResolver: Sendable {
         gatherHints(subject, into: &hints)
         var tried: [String] = []
         var lastError: String?
+        if client.debug { MetadataHTTPClient.trace("changelog sources for \(subject.item.selector): \(hints.sources.map(\.label).joined(separator: ", "))") }
         for source in hints.sources {
             do {
                 let entries = try fetch(source).filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                if client.debug { MetadataHTTPClient.trace("\(source.label): \(entries.count) entries, \(entries.filter { !ChangelogDocument.isPlaceholder($0.content) }.count) with real content") }
                 if ChangelogDocument.isMeaningful(entries) {
                     return .resolved(source: source.label, sourceURL: source.url, entries: entries)
                 }
@@ -324,6 +329,11 @@ public struct ChangelogResolver: Sendable {
             let data: Data
             do { data = try client.fetch(url, resource: .githubReleaseList).body }
             catch where page > 1 { break }
+            catch MetadataHTTPError.rateLimited, MetadataHTTPError.forbidden {
+                // Out of API quota: the releases feed has the latest ten without spending any.
+                let feed = URL(string: "https://github.com/\(owner)/\(name)/releases.atom")!
+                return ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage(host: "github.com")).body)
+            }
             guard let releases = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
             for release in releases where release["draft"] as? Bool != true && release["prerelease"] as? Bool != true {
                 guard let tag = release["tag_name"] as? String else { continue }
@@ -359,24 +369,74 @@ public struct ChangelogResolver: Sendable {
 
     // MARK: Web pages
 
-    /// The page itself when it lists versions, or else the changelog its links point to.
+    /// The page itself when it lists versions, or else the changelog its links point to. Each
+    /// page is read as HTML, then through the feeds it advertises, then through the JSON it embeds
+    /// for its scripts, and last rendered in WebKit when its content is built by scripts.
     func page(_ url: URL) throws -> [ChangelogEntry] {
         guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
         let html = try fetchText(url, resource: .changelogPage(host: host))
-        let entries = Self.pageEntries(html, url: url)
+        let entries = read(html, url: url, render: Self.looksLikeChangelogURL(url))
         if entries.count >= 2 || ChangelogDocument.isMeaningful(entries) && Self.looksLikeChangelogURL(url) { return entries }
+        var linkError: Error?
         for link in Self.changelogLinks(in: html, base: url).prefix(4) {
             guard let linkHost = link.host?.lowercased() else { continue }
             if linkHost == "github.com", let github = GitHubSource.parse(Hints.repositoryRoot(link)) {
                 let releases = (try? githubReleases(github.repository)) ?? []
                 if ChangelogDocument.isMeaningful(releases) { return releases }
+                let file = (try? githubFile(github.repository)) ?? []
+                if ChangelogDocument.isMeaningful(file) { return file }
                 continue
             }
-            guard let linked = try? fetchText(link, resource: .changelogPage(host: linkHost)) else { continue }
-            let linkedEntries = Self.pageEntries(linked, url: link)
+            if client.debug { MetadataHTTPClient.trace("following changelog link \(link.absoluteString)") }
+            let linked: String
+            do { linked = try fetchText(link, resource: .changelogPage(host: linkHost)) } catch { linkError = linkError ?? error; continue }
+            let linkedEntries = read(linked, url: link, render: true)
             if ChangelogDocument.isMeaningful(linkedEntries) { return linkedEntries }
         }
+        // The page itself may be built by scripts even though its address doesn't say changelog.
+        if !ChangelogDocument.isMeaningful(entries), !Self.looksLikeChangelogURL(url), ChangelogFeeds.looksScriptBuilt(html) {
+            let rendered = renderedEntries(url)
+            if ChangelogDocument.isMeaningful(rendered) { return rendered }
+        }
+        if entries.isEmpty, let linkError { throw linkError }
         return entries
+    }
+
+    /// One page's entries: its HTML, its advertised feeds, its embedded JSON, then (when allowed
+    /// and the page is script-built) WebKit's rendering of it.
+    private func read(_ html: String, url: URL, render: Bool) -> [ChangelogEntry] {
+        let entries = Self.pageEntries(html, url: url)
+        if entries.count >= 2, ChangelogDocument.isMeaningful(entries) { return entries }
+        for feed in ChangelogFeeds.advertisedFeeds(in: html, base: url).prefix(2) where isPublicHTTPSURL(feed) {
+            guard let feedHost = feed.host, let data = try? client.fetch(feed, resource: .changelogPage(host: feedHost)).body else { continue }
+            let items = ChangelogFeeds.entries(fromFeed: data)
+            // A blog feed counts only when its posts are releases.
+            if items.filter({ ChangelogVersion.token(in: $0.version) == $0.version }).count >= 2 {
+                if client.debug { MetadataHTTPClient.trace("read feed \(feed.absoluteString): \(items.count) items") }
+                return items
+            }
+        }
+        let embedded = ChangelogFeeds.embeddedEntries(in: html)
+        if ChangelogDocument.isMeaningful(embedded) {
+            if client.debug { MetadataHTTPClient.trace("read embedded data on \(url.absoluteString): \(embedded.count) entries") }
+            return embedded
+        }
+        if render, !ChangelogDocument.isMeaningful(entries), ChangelogFeeds.looksScriptBuilt(html) || entries.isEmpty {
+            let rendered = renderedEntries(url)
+            if ChangelogDocument.isMeaningful(rendered) { return rendered }
+        }
+        return entries
+    }
+
+    private func renderedEntries(_ url: URL) -> [ChangelogEntry] {
+        guard let renderer else { return [] }
+        if client.debug { MetadataHTTPClient.trace("rendering \(url.absoluteString) in WebKit") }
+        guard let html = renderer(url) else {
+            if client.debug { MetadataHTTPClient.trace("rendering \(url.absoluteString) failed") }
+            return []
+        }
+        let entries = Self.pageEntries(html, url: url)
+        return ChangelogDocument.isMeaningful(entries) ? entries : ChangelogFeeds.embeddedEntries(in: html)
     }
 
     static func pageEntries(_ text: String, url: URL) -> [ChangelogEntry] {

@@ -23,8 +23,8 @@ public struct ChangelogService: Sendable {
         self.resolver = resolver
     }
 
-    public init(database: Database) {
-        self.init(database: database, resolver: ChangelogResolver(client: MetadataHTTPClient(database: database)))
+    public init(database: Database, renderer: (@Sendable (URL) -> String?)? = nil) {
+        self.init(database: database, resolver: ChangelogResolver(client: MetadataHTTPClient(database: database), renderer: renderer))
     }
 
     /// The cached changelog only; never fetches. Used by `sift show`.

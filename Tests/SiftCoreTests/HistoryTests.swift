@@ -61,7 +61,7 @@ final class HistoryTests: XCTestCase {
             _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), nativeInventory: NativeInventoryResult(applications: [updated], scannedRoots: ["/Applications"])))
             // Back to exactly what 1.0.0 wrote.
             try database.execute("""
-                DROP TABLE package_transitions; DROP TABLE changelog_entries; DROP TABLE changelog_state;
+                DROP TABLE package_transitions; DROP TABLE changelog_history; DROP TABLE changelog_state;
                 ALTER TABLE managed_packages DROP COLUMN identifier;
                 DELETE FROM schema_migrations WHERE version > 15;
                 """)

@@ -94,7 +94,23 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     }
 
     public func fetch(_ url: URL, resource: MetadataResource) throws -> MetadataHTTPResponse {
-        try perform(url, policy: policy(for: resource))
+        guard debug else { return try perform(url, policy: policy(for: resource)) }
+        let started = Date()
+        do {
+            let response = try perform(url, policy: policy(for: resource))
+            Self.trace("GET \(url.absoluteString) -> \(response.body.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            return response
+        } catch {
+            Self.trace("GET \(url.absoluteString) -> \(error.localizedDescription) after \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            throw error
+        }
+    }
+
+    /// `SIFT_DEBUG=1` traces every metadata request and changelog decision to standard error.
+    var debug: Bool { environment["SIFT_DEBUG"].map { !$0.isEmpty && $0 != "0" } ?? false }
+
+    static func trace(_ message: String) {
+        FileHandle.standardError.write(Data("sift: \(message.terminalInline)\n".utf8))
     }
 
     /// `derive` applied to the response, saved next to it: while the cached response is the same

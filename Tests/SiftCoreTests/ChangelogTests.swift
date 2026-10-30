@@ -196,6 +196,57 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(try ChangelogService.cached(for: item, database: database)?.source, "GitHub releases (cli/cli)")
     }
 
+    func testHistoryAccumulatesAcrossFetchesAndKeepsRealTextOverPlaceholders() throws {
+        let database = try Database(url: url)
+        let selector = "app:com.example"
+        try database.storeChangelog(selector: selector, source: "feed", sourceURL: nil, entries: [ChangelogEntry(version: "2.0", content: "- Two"), ChangelogEntry(version: "1.0", content: "- One")], fetchedAt: Date(timeIntervalSince1970: 1_000))
+        // A one-item feed later: older versions stay, and a placeholder doesn't replace real text.
+        try database.storeChangelog(selector: selector, source: "feed", sourceURL: nil, entries: [ChangelogEntry(version: "3.0", content: "- Three"), ChangelogEntry(version: "2.0", content: "See our website for release notes.")], fetchedAt: Date(timeIntervalSince1970: 2_000))
+        let entries = try database.changelogEntries(selector: selector)
+        XCTAssertEqual(entries.map(\.version), ["3.0", "2.0", "1.0"])
+        XCTAssertEqual(entries[1].content, "- Two")
+    }
+
+    func testFeedsAreReadAsChangelogs() {
+        let atom = """
+            <?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+            <entry><title>v1.4.0</title><updated>2026-10-20T00:00:00Z</updated><link rel="alternate" href="https://github.com/o/r/releases/tag/v1.4.0"/><content type="html">&lt;ul&gt;&lt;li&gt;Faster&lt;/li&gt;&lt;/ul&gt;</content></entry>
+            <entry><title>Release 1.3.0: Spooky</title><updated>2026-10-01T00:00:00Z</updated><content type="html">&lt;p&gt;Ghosts&lt;/p&gt;</content></entry>
+            </feed>
+            """
+        let entries = ChangelogFeeds.entries(fromFeed: Data(atom.utf8))
+        XCTAssertEqual(entries.map(\.version), ["1.4.0", "1.3.0"])
+        XCTAssertEqual(entries[0].content, "- Faster")
+        XCTAssertEqual(entries[0].sourceURL, "https://github.com/o/r/releases/tag/v1.4.0")
+        let page = #"<head><link rel="alternate" type="application/rss+xml" href="/changelog/rss.xml"></head>"#
+        XCTAssertEqual(ChangelogFeeds.advertisedFeeds(in: page, base: URL(string: "https://example.com/")!).map(\.absoluteString), ["https://example.com/changelog/rss.xml"])
+    }
+
+    func testReleasesEmbeddedForScriptsAreRead() {
+        let html = """
+            <div id="__next"></div><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"releases":[
+            {"version":"5.2.0","date":"2026-10-02","changes":["New editor","Bug fixes"]},
+            {"version":"5.1.0","date":"2026-09-01","body":"<ul><li>Sync</li></ul>"},
+            {"name":"Pricing","description":"Plans start at $5"}]}}}</script>
+            """
+        let entries = ChangelogFeeds.embeddedEntries(in: html)
+        XCTAssertEqual(entries.map(\.version), ["5.2.0", "5.1.0"])
+        XCTAssertEqual(entries[0].content, "- New editor\n- Bug fixes")
+        XCTAssertEqual(entries[1].content, "- Sync")
+        XCTAssertTrue(ChangelogFeeds.looksScriptBuilt(html))
+        XCTAssertFalse(ChangelogFeeds.looksScriptBuilt("<html><body>" + String(repeating: "<p>Real changelog text here.</p>", count: 100) + "</body></html>"))
+    }
+
+    func testAScriptBuiltPageIsRenderedWhenItsHTMLHasNoVersions() throws {
+        let database = try Database(url: url)
+        MetadataURLProtocol.handler = { request in
+            request.url!.path == "/changelog" ? (200, Data("<html><body><div id=\"root\"></div><script src=a.js></script><script src=b.js></script><script src=c.js></script></body></html>".utf8), [:]) : (404, nil, [:])
+        }
+        let rendered = "<html><body><h2>2.1.0</h2><ul><li>Rendered by script</li></ul><h2>2.0.0</h2><ul><li>Older</li></ul></body></html>"
+        let resolver = ChangelogResolver(client: mockedClient(database), environment: [:], renderer: { _ in rendered })
+        XCTAssertEqual(try resolver.page(URL(string: "https://app.example.com/changelog")!).map(\.version), ["2.1.0", "2.0.0"])
+    }
+
     // MARK: Helpers
 
     private func mockedConfiguration() -> URLSessionConfiguration {

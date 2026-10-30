@@ -90,7 +90,7 @@ public enum DatabaseError: Error, LocalizedError {
 }
 
 public final class Database: @unchecked Sendable {
-    static let schemaVersion = 16
+    static let schemaVersion = 17
     /// The 1.0.0 schema every database starts from; later versions are applied as steps on top.
     static let baselineSchemaVersion = 15
     var handle: OpaquePointer?
@@ -342,6 +342,10 @@ public final class Database: @unchecked Sendable {
                 try execute(Self.schema16)
                 version = 16
             }
+            if version < 17 {
+                try execute(Self.schema17)
+                version = 17
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -385,6 +389,32 @@ public final class Database: @unchecked Sendable {
             fetched_at REAL NOT NULL
         );
         INSERT INTO schema_migrations (version) VALUES (16);
+        """
+
+    /// Changelog entries are kept per version instead of per fetch: a source that only lists its
+    /// latest releases (a one-item feed, Steam's last 100 posts) adds to the history Sift already
+    /// has instead of replacing it. `position` is the entry's place in the latest fetch (NULL once
+    /// the source stops listing it).
+    static let schema17 = """
+        CREATE TABLE changelog_history (
+            subject TEXT NOT NULL,
+            version TEXT NOT NULL,
+            title TEXT,
+            published_at REAL,
+            content TEXT NOT NULL,
+            source_url TEXT,
+            source TEXT,
+            position INTEGER,
+            first_seen_at REAL NOT NULL,
+            last_seen_at REAL NOT NULL,
+            PRIMARY KEY (subject, version)
+        );
+        INSERT OR IGNORE INTO changelog_history (subject, version, title, published_at, content, source_url, source, position, first_seen_at, last_seen_at)
+            SELECT entries.subject, entries.version, entries.title, entries.published_at, entries.content, entries.source_url, state.source, entries.position, COALESCE(state.fetched_at, 0), COALESCE(state.fetched_at, 0)
+            FROM changelog_entries AS entries LEFT JOIN changelog_state AS state ON state.subject = entries.subject
+            ORDER BY entries.position;
+        DROP TABLE changelog_entries;
+        INSERT INTO schema_migrations (version) VALUES (17);
         """
 
     private func createBaselineSchema() throws {

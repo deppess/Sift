@@ -1,9 +1,14 @@
 import Foundation
 import SiftCore
 import Darwin
+import Synchronization
 
 public enum SiftCLI {
     public static func run(arguments: [String]) -> Int32 {
+        // The page renderer's child process; see PageRenderer.
+        if arguments.count == 2, arguments[0] == "__render", let url = URL(string: arguments[1]), url.scheme?.lowercased() == "https" {
+            return PageRenderer.main(url: url, timeout: 25)
+        }
         do {
             let invocation = try Invocation(arguments: arguments)
             if invocation.help {
@@ -36,6 +41,37 @@ public enum SiftCLI {
                 }
                 return EXIT_SUCCESS
             }
+            if case let .sweep(filter) = invocation.command {
+                // Changelog coverage report: every catalog item, its source, and how many entries.
+                let databaseURL = invocation.databaseURL ?? SiftApplication.existingDefaultDatabaseURL()
+                guard let databaseURL else { return EXIT_FAILURE }
+                let database = try Database.writer(url: databaseURL)
+                let service = ChangelogService(database: database, renderer: renderPage)
+                let items = try database.catalogItems(includeAll: invocation.includeAll).filter { filter == nil || $0.updateSource == filter || $0.kind.rawValue == filter }
+                let results = Mutex([(Int, String)]())
+                DispatchQueue.concurrentPerform(iterations: items.count) { index in
+                    let item = items[index]
+                    let started = Date()
+                    let line: String
+                    switch Result(catching: { try service.changelog(for: item, refetch: invocation.fetch) }) {
+                    case let .success(.changelog(changelog)):
+                        line = ["ok", item.selector, item.updateSource ?? item.kind.rawValue, changelog.source, "\(changelog.entries.count)", "\(changelog.newEntries.count)", changelog.installedEntry == nil ? "no-installed-entry" : "", String(format: "%.1fs", Date().timeIntervalSince(started))].joined(separator: "\t")
+                    case let .success(.unavailable(_, tried)):
+                        line = ["MISS", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", tried.joined(separator: " | "), String(format: "%.1fs", Date().timeIntervalSince(started))].joined(separator: "\t")
+                    case let .failure(error):
+                        line = ["ERROR", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", error.localizedDescription, ""].joined(separator: "\t")
+                    }
+                    results.withLock { $0.append((index, line)) }
+                    FileHandle.standardError.write(Data("\r\u{1B}[2K\(results.withLock { $0.count })/\(items.count) \(item.name.terminalInline)".utf8))
+                }
+                FileHandle.standardError.write(Data("\r\u{1B}[2K".utf8))
+                let lines = results.withLock { $0.sorted { $0.0 < $1.0 }.map(\.1) }
+                print("status\tselector\tprovider\tsource\tentries\tnew\tdetail\ttime")
+                lines.forEach { print($0.terminalInline) }
+                let found = lines.filter { $0.hasPrefix("ok\t") }.count
+                FileHandle.standardError.write(Data("changelogs found: \(found)/\(lines.count)\n".utf8))
+                return EXIT_SUCCESS
+            }
             if case .refresh = invocation.command {
                 let databaseURL = try invocation.databaseURL ?? SiftApplication.defaultDatabaseURL()
                 let database = try Database(url: databaseURL)
@@ -50,7 +86,7 @@ public enum SiftCLI {
                 // Changelogs for what's new are fetched now, so `sift changelog` and `sift show`
                 // answer from the cache; a failure here never fails the refresh.
                 progress?("Fetching changelogs…")
-                _ = try? ChangelogService(database: database).prefetch { done, total in progress?("Fetching changelogs \(done)/\(total)…") }
+                _ = try? ChangelogService(database: database, renderer: renderPage).prefetch { done, total in progress?("Fetching changelogs \(done)/\(total)…") }
                 progress?("")
                 print(invocation.json ? try RefreshRenderer.json(summary) : RefreshRenderer.humanReadable(summary))
                 return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
@@ -110,7 +146,7 @@ public enum SiftCLI {
                 let style = TerminalStyle(enabled: colorEnabled(invocation))
                 let progress = refreshProgress(invocation)
                 progress?("Fetching the changelog for \(item.name.terminalInline)…")
-                let outcome = try ChangelogService(database: Database.writer(url: databaseURL)).changelog(for: item, refetch: invocation.fetch)
+                let outcome = try ChangelogService(database: Database.writer(url: databaseURL), renderer: renderPage).changelog(for: item, refetch: invocation.fetch)
                 progress?("")
                 switch outcome {
                 case let .changelog(changelog):
@@ -140,7 +176,7 @@ public enum SiftCLI {
                 return EXIT_FAILURE
             case .completions:
                 return EXIT_FAILURE
-            case .complete:
+            case .complete, .sweep:
                 return EXIT_FAILURE
             }
         } catch let error as InvocationError {
@@ -179,7 +215,7 @@ public enum SiftCLI {
             return EXIT_SUCCESS
         case let .apps(.some(selector)), let .show(selector), let .changelog(selector):
             throw InvocationError.missingCatalogItem(selector)
-        case .refresh, .completions, .complete:
+        case .refresh, .completions, .complete, .sweep:
             return EXIT_FAILURE
         }
     }
@@ -219,7 +255,7 @@ extension String {
 }
 
 struct Invocation {
-    enum Command { case dashboard, refresh, apps(String?), updates, log(String?), show(String), changelog(String), completions(CompletionShell), complete(String, String) }
+    enum Command { case dashboard, refresh, apps(String?), updates, log(String?), show(String), changelog(String), sweep(String?), completions(CompletionShell), complete(String, String) }
 
     static let usage = "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
 
@@ -327,6 +363,15 @@ struct Invocation {
                 guard index < arguments.count, !arguments[index].hasPrefix("-") else { throw InvocationError.missingShowPackage }
                 command = .show(arguments[index])
                 hasCommand = true
+            case "__sweep":
+                guard !hasCommand else { throw InvocationError.duplicateCommand }
+                if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("-") {
+                    index += 1
+                    command = .sweep(arguments[index])
+                } else {
+                    command = .sweep(nil)
+                }
+                hasCommand = true
             case "__complete":
                 guard !hasCommand else { throw InvocationError.duplicateCommand }
                 index += 1
@@ -426,26 +471,29 @@ private extension Invocation.Command {
         case .changelog: "changelog"
         case .completions: "completions"
         case .complete: "completion lookup"
+        case .sweep: "changelog sweep"
         }
     }
 
     var supportsIncludeAll: Bool {
         switch self {
-        case .apps, .log, .show, .changelog, .complete, .updates: true
+        case .apps, .log, .show, .changelog, .complete, .updates, .sweep: true
         case .dashboard, .refresh, .completions: false
         }
     }
 
     var supportsFull: Bool {
         switch self {
-        case .show, .changelog: true
+        case .show, .changelog, .sweep: true
         case .dashboard, .refresh, .apps, .updates, .log, .completions, .complete: false
         }
     }
 
     var supportsFetch: Bool {
-        if case .changelog = self { return true }
-        return false
+        switch self {
+        case .changelog, .sweep: true
+        default: false
+        }
     }
 
     var supportsSince: Bool {
@@ -456,7 +504,7 @@ private extension Invocation.Command {
     var supportsUpdateHomebrew: Bool {
         switch self {
         case .refresh: true
-        case .dashboard, .apps, .updates, .log, .show, .changelog, .completions, .complete: false
+        case .dashboard, .apps, .updates, .log, .show, .changelog, .sweep, .completions, .complete: false
         }
     }
 }
