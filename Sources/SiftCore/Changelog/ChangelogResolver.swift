@@ -600,8 +600,10 @@ public struct ChangelogResolver: Sendable {
             let linkedEntries = read(linked, url: link, render: true)
             if ChangelogDocument.isMeaningful(linkedEntries) { return linkedEntries }
         }
+        // Only then the homepage's feeds and embedded data, keeping posts that name the item
+        // (a company blog covers its other products too).
         if !isChangelogPage {
-            let more = read(html, url: url, render: false)
+            let more = read(html, url: url, render: false, name: name)
             if ChangelogDocument.isMeaningful(more) && more.count >= 2 { return more }
             if entries.isEmpty { entries = more }
         }
@@ -617,14 +619,19 @@ public struct ChangelogResolver: Sendable {
 
     /// One page's entries: its HTML, its advertised feeds, its embedded JSON, then (when allowed
     /// and the page is script-built) WebKit's rendering of it.
-    private func read(_ html: String, url: URL, render: Bool) -> [ChangelogEntry] {
+    private func read(_ html: String, url: URL, render: Bool, name: String = "") -> [ChangelogEntry] {
         let entries = Self.pageEntries(html, url: url)
         if entries.count >= 2, ChangelogDocument.isMeaningful(entries) { return entries }
         for feed in ChangelogFeeds.advertisedFeeds(in: html, base: url).prefix(2) where isPublicHTTPSURL(feed) {
             guard let feedHost = feed.host, let data = try? client.fetch(feed, resource: .changelogPage(host: feedHost)).body else { continue }
             let items = ChangelogFeeds.entries(fromFeed: data)
             // A blog feed counts only when most of its posts are releases, and only those are kept.
-            let releases = items.filter { ChangelogVersion.token(in: $0.version) == $0.version }
+            var releases = items.filter { ChangelogVersion.token(in: $0.version) == $0.version }
+            // Read from a homepage, a feed's posts count only when they name the item.
+            let key = BundleURLScanner.matchKey(name)
+            if !key.isEmpty, !Self.looksLikeChangelogURL(url) {
+                releases = releases.filter { BundleURLScanner.matchKey(($0.title ?? "") + " " + $0.version + " " + $0.content.prefix(200)).contains(key) }
+            }
             if releases.count >= 3 || releases.count >= 2 && releases.count * 5 >= items.count * 3 {
                 if client.debug { MetadataHTTPClient.trace("read feed \(feed.absoluteString): \(releases.count) releases") }
                 return releases
@@ -697,6 +704,16 @@ public struct ChangelogResolver: Sendable {
             guard score > 0 else { continue }
             let host = link.url.host?.lowercased() ?? ""
             if site != nil, HomebrewCaskCatalog.vendorDomain(host) == site { score += 20 } else if host != "github.com" { score -= 25 }
+            // On a site with several products, a link inside this product's section
+            // (/products/microsnitch/…) wins, and one into a sibling product's section
+            // (/products/littlesnitch/…) loses.
+            if link.url.host?.lowercased() == base.host?.lowercased() {
+                let baseFolders = base.deletingLastPathComponent().pathComponents
+                let linkFolders = link.url.deletingLastPathComponent().pathComponents
+                let shared = zip(baseFolders, linkFolders).prefix { $0 == $1 }.count
+                if baseFolders.count > 2, shared == baseFolders.count { score += 25 }
+                else if baseFolders.count > 2, shared == baseFolders.count - 1, linkFolders.count >= baseFolders.count { score -= 60 }
+            }
             if score > 0 { scored.append((link.url, score)) }
         }
         var seen = Set<String>()

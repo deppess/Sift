@@ -42,7 +42,11 @@ enum ChangelogDocument {
             let nextHigher = headings.first { $0.index > start.index && $0.level < start.level }?.index ?? lines.count
             let end = min(nextVersion, nextHigher)
             var bodyLines = bodyStart < end ? Array(lines[bodyStart..<end]) : []
-            var entryDate = date(in: start.text)
+            var entryDate = date(in: start.text) ?? shortDateLine(before: start.index, in: lines)?.date
+            // The next entry's date written above its version isn't part of this entry.
+            if position + 1 < starts.count, let above = shortDateLine(before: starts[position + 1].index, in: lines), above.index >= bodyStart, above.index < end {
+                bodyLines.removeSubrange((above.index - bodyStart)..<bodyLines.count)
+            }
             // A date on its own first line ("14 September 2026") is the entry's date.
             if entryDate == nil, let first = bodyLines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
                bodyLines[first].count < 48, let found = date(in: bodyLines[first]) {
@@ -100,7 +104,8 @@ enum ChangelogDocument {
                 || lower.hasPrefix("this document details the changes between this version")
                 || (lower.firstMatch(of: #/^v?\d+(\.\d+)+/#) != nil && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
                 // A version alone on its line with a date next ("2.0" / "November 2026").
-                || (line.count <= 40 && lower.firstMatch(of: #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#) != nil && date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil)
+                || (line.count <= 40 && lower.firstMatch(of: #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#) != nil
+                    && (date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil || shortDateLine(before: index, in: lines) != nil))
             if isHeading { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
         }
         if headings.isEmpty {
@@ -113,6 +118,24 @@ enum ChangelogDocument {
             if indentedBelow.count >= 3 { headings = indentedBelow.map { ($0, 1, lines[$0].trimmingCharacters(in: .whitespaces)) } }
         }
         return headings.map { (index: $0.0, level: $0.1, text: $0.2) }
+    }
+
+    /// A date alone on the non-blank line above `index` ("26 October, 2026" written
+    /// above "5.0.2").
+    static func shortDateLine(before index: Int, in lines: [String]) -> (index: Int, date: Date)? {
+        // Only for a bare version line, and only the line directly above it.
+        guard index < lines.count, !lines[index].hasPrefix("#") else { return nil }
+        var seen = 0
+        var position = index - 1
+        while position >= 0, seen < 1 {
+            let line = lines[position].trimmingCharacters(in: .whitespaces)
+            if !line.isEmpty {
+                seen += 1
+                if line.count <= 32, let found = date(in: line), line.filter(\.isLetter).count <= 12 { return (position, found) }
+            }
+            position -= 1
+        }
+        return nil
     }
 
     /// Body lines with their common indentation removed, so indented NEWS bullets aren't read
@@ -200,12 +223,13 @@ enum ChangelogDocument {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         let patterns: [(Regex<Substring>, [String])] = [
             (try! Regex(#"(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b"#), ["MMMM d, yyyy", "MMM d, yyyy", "MMMM d yyyy", "MMM d yyyy", "MMM. d, yyyy"]),
-            (try! Regex(#"(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]* \d{4}\b"#), ["d MMMM yyyy", "d MMM yyyy"]),
+            (try! Regex(#"(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,? \d{4}\b"#), ["d MMMM yyyy", "d MMM yyyy", "d MMMM, yyyy", "d MMM, yyyy"]),
             (try! Regex(#"(?i)^\s*(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\s*$"#), ["MMMM yyyy"]),
         ]
         for (pattern, formats) in patterns {
             guard let match = text.firstMatch(of: pattern) else { continue }
-            let value = String(text[match.range]).replacingOccurrences(of: "Sept", with: "Sep")
+            // "Sept." is "Sep", but "September" stays whole.
+            let value = String(text[match.range]).replacing(#/(?i)\bsept\b\.?/#, with: "Sep")
             for format in formats {
                 formatter.dateFormat = format
                 if let date = formatter.date(from: value) { return date }

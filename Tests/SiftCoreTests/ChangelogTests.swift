@@ -76,6 +76,19 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries[0].date, ChangelogDocument.utcDate(year: 2026, month: 10, day: 7))
     }
 
+    func testDatesWrittenAboveTheirVersionsBelongToThem() {
+        let page = "<h1>Changelog</h1><p>26 October, 2026</p><p>5.0.2</p><ul><li>OCR fix</li></ul><p>18 September, 2026</p><p>5.0.1</p><ul><li>Minor fixes</li></ul>"
+        let entries = ChangelogResolver.pageEntries(page, url: URL(string: "https://cleanshot.com/changelog")!)
+        XCTAssertEqual(entries.map(\.version), ["5.0.2", "5.0.1"])
+        XCTAssertEqual(entries[0].content, "- OCR fix")
+        XCTAssertEqual(entries[1].date, ChangelogDocument.utcDate(year: 2026, month: 9, day: 18))
+    }
+
+    func testChangelogLinksStayInTheProductsOwnSection() {
+        let html = #"<a href="/products/littlesnitch/releasenotes.html">Release Notes</a> <a href="/products/microsnitch/releasenotes.html">Release Notes</a>"#
+        XCTAssertEqual(ChangelogResolver.changelogLinks(in: html, base: URL(string: "https://www.obdev.at/products/microsnitch/index.html")!).first?.path, "/products/microsnitch/releasenotes.html")
+    }
+
     func testCodeBlocksOnAPageDontSwallowTheHeadingsAfterThem() {
         let html = "<h2>go1.27.0 (released 2026-08-19)</h2><p>Major release.</p><pre>go install x</pre><h2>go1.26.0 (released 2026-02-10)</h2><p>Older.</p>"
         let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://go.dev/doc/devel/release")!)
