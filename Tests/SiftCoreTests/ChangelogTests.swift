@@ -249,6 +249,17 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogResolver.productSection(in: hub, base: URL(string: "https://lmstudio.ai/changelog")!, name: "lm-studio")?.absoluteString, "https://lmstudio.ai/changelog/lmstudio")
     }
 
+    func testADatedLogCountsWhatCameAfterTheInstall() {
+        let day = { (d: Int) in ChangelogDocument.utcDate(year: 2026, month: 10, day: d)! }
+        let entries = [21, 7].map { ChangelogEntry(version: "2026-10-\(String(format: "%02d", $0))", date: day($0), content: "- x") } + [ChangelogEntry(version: "2026-09-28", date: ChangelogDocument.utcDate(year: 2026, month: 9, day: 28), content: "- y")]
+        var changelog = Changelog(selector: "cask:claude", name: "Claude", installedVersion: "4.4212.0", availableVersion: nil, source: "support.claude.com", sourceURL: nil, entries: entries, fetchedAt: .now)
+        XCTAssertTrue(changelog.isDatedLog)
+        XCTAssertEqual(changelog.newEntries.count, 0, "no install date, nothing to compare")
+        changelog.installedAt = day(5)
+        XCTAssertEqual(changelog.newEntries.map(\.version), ["2026-10-21", "2026-10-07"])
+        XCTAssertNil(changelog.installedEntry)
+    }
+
     // MARK: Resolving
 
     func testGitHubReleasesAreTheChangelogAndPagesFollowUntilShort() throws {

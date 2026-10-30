@@ -15,7 +15,9 @@ public enum ChangelogRenderer {
         } else {
             header = "\(style.title(changelog.name.terminalInline))  \(installed)"
         }
-        let newCount = newEntries.isEmpty ? "" : "  ·  \(newEntries.count) new \(newEntries.count == 1 ? "version" : "versions")"
+        let newCount = newEntries.isEmpty ? "" : changelog.isDatedLog
+            ? "  ·  \(newEntries.count) \(newEntries.count == 1 ? "update" : "updates") since this copy was installed"
+            : "  ·  \(newEntries.count) new \(newEntries.count == 1 ? "version" : "versions")"
         lines.append(header + style.label(newCount))
         lines.append(style.label("Changelog from \(changelog.source.terminalInline) · \(count(changelog.entries.count, changelog))"))
         if let stale = changelog.staleReason { lines.append(style.warning(stale.terminalInline)) }

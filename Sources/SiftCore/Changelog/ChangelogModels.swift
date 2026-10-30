@@ -33,6 +33,9 @@ public struct Changelog: Codable, Equatable, Sendable {
     public let fetchedAt: Date
     /// Why a cached copy is shown instead of a fresh one, when fetching failed.
     public var staleReason: String?
+    /// When the installed copy was installed or last updated, which places it in a changelog
+    /// written by date instead of version (Claude's, Figma's release notes).
+    public var installedAt: Date?
 
     public init(selector: String, name: String, installedVersion: String?, availableVersion: String?, source: String, sourceURL: String?, entries: [ChangelogEntry], fetchedAt: Date, staleReason: String? = nil) {
         self.selector = selector
@@ -49,6 +52,11 @@ public struct Changelog: Codable, Equatable, Sendable {
     /// Entries newer than the installed version, newest first; empty when it is current or
     /// can't be placed.
     public var newEntries: [ChangelogEntry] {
+        // A log by date: what was released after the installed copy arrived, give or take a day.
+        if isDatedLog {
+            guard let installedAt else { return [] }
+            return entries.filter { $0.date.map { $0 > installedAt.addingTimeInterval(24 * 60 * 60) } ?? false }
+        }
         guard let installedVersion else { return [] }
         let installed = ChangelogVersion.normalized(installedVersion)
         if let index = ChangelogVersion.installedIndex(in: entries, installed: installed) { return Array(entries[..<index]) }
@@ -59,6 +67,15 @@ public struct Changelog: Codable, Equatable, Sendable {
             guard let token = ChangelogVersion.token(in: entry.version) else { return false }
             return SparkleVersion.compare(token, installed) == .orderedDescending
         })
+    }
+
+    /// Entries by date rather than version: day-numbered, or calendar numbers for an app with
+    /// ordinary versions.
+    public var isDatedLog: Bool {
+        let dated = entries.filter { $0.date != nil }.count
+        guard dated * 2 >= entries.count, !entries.isEmpty else { return false }
+        let versioned = entries.filter { ChangelogVersion.token(in: $0.version) == $0.version }.count
+        return versioned == 0 || ChangelogVersion.isCalendarDated(entries, installed: installedVersion.map(ChangelogVersion.normalized))
     }
 
     /// The entry for the installed version itself, when the source has one.

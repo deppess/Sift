@@ -33,7 +33,9 @@ public struct ChangelogService: Sendable {
         let entries = try database.changelogEntries(selector: item.selector)
         guard !entries.isEmpty else { return nil }
         let versions = try parentApplication(of: item, database: database) ?? item
-        return Changelog(selector: item.selector, name: item.name, installedVersion: versions.installedVersion, availableVersion: versions.availableVersion, source: source, sourceURL: state.sourceURL, entries: entries, fetchedAt: state.fetchedAt)
+        var changelog = Changelog(selector: item.selector, name: item.name, installedVersion: versions.installedVersion, availableVersion: versions.availableVersion, source: source, sourceURL: state.sourceURL, entries: entries, fetchedAt: state.fetchedAt)
+        changelog.installedAt = installDate(of: versions)
+        return changelog
     }
 
     public func changelog(for item: CatalogItem, refetch: Bool = false, now: Date = .now) throws -> ChangelogOutcome {
@@ -59,7 +61,9 @@ public struct ChangelogService: Sendable {
             try database.storeChangelog(selector: item.selector, source: source, sourceURL: sourceURL, entries: entries, fetchedAt: now)
             // The whole stored history, in version order, not just this fetch.
             let history = try database.changelogEntries(selector: item.selector)
-            return .changelog(Changelog(selector: item.selector, name: item.name, installedVersion: target.installedVersion, availableVersion: target.availableVersion, source: source, sourceURL: sourceURL, entries: history.isEmpty ? entries : history, fetchedAt: now))
+            var changelog = Changelog(selector: item.selector, name: item.name, installedVersion: target.installedVersion, availableVersion: target.availableVersion, source: source, sourceURL: sourceURL, entries: history.isEmpty ? entries : history, fetchedAt: now)
+            changelog.installedAt = Self.installDate(of: target)
+            return .changelog(changelog)
         case let .unavailable(tried):
             try database.storeChangelogMiss(selector: item.selector, status: "unavailable", detail: tried.joined(separator: "\n"), fetchedAt: now)
             if var cached {
@@ -99,6 +103,18 @@ public struct ChangelogService: Sendable {
             progress?(done, due.count)
         }
         return due.count
+    }
+
+    /// When the installed copy arrived: the app bundle's Info.plist (rewritten by every install
+    /// and update), or the Homebrew keg or Caskroom folder for its version.
+    static func installDate(of item: CatalogItem) -> Date? {
+        var candidates: [String] = []
+        if let path = item.path { candidates += [path + "/Contents/Info.plist", path] }
+        if let prefix = item.prefix, let version = item.installedVersion {
+            let name = item.fullName ?? item.name
+            candidates.append(prefix + (item.kind == .homebrewCask ? "/Caskroom/" : "/Cellar/") + name + "/" + version)
+        }
+        return candidates.lazy.compactMap { try? FileManager.default.attributesOfItem(atPath: $0)[.modificationDate] as? Date }.first
     }
 
     static func parentApplication(of item: CatalogItem, database: Database) throws -> CatalogItem? {
