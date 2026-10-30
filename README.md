@@ -4,6 +4,20 @@ Sift is a macOS-native command-line observer for installed software, available u
 
 `sift refresh` collects everything; every other command reads the cache instantly and never touches the network.
 
+Source: [Codeberg](https://codeberg.org/deppes/Sift) (primary) · [GitHub](https://github.com/deppess/SIft) (mirror)
+
+## Install
+
+Requires macOS 15 or later and Swift 6 (Xcode 16 or the Swift toolchain).
+
+```sh
+git clone https://codeberg.org/deppes/Sift.git
+cd Sift
+swift build -c release
+install "$(swift build -c release --show-bin-path)/sift" /usr/local/bin/sift
+sift refresh
+```
+
 ## What it tracks
 
 | Source | How Sift reads it | Updates from |
@@ -59,4 +73,4 @@ An unrelated `sift` formula exists in Homebrew Core and provides a binary of the
 
 ## License
 
-Sift is licensed under GPL-3.0-or-later. See [PROJECT.md](PROJECT.md) for architecture, scope, security, and attribution requirements.
+Sift is licensed under the GNU General Public License v3.0 or later; see [LICENSE](LICENSE). Third-party attributions are in [NOTICE](NOTICE). See [PROJECT.md](PROJECT.md) for architecture, scope, security, and attribution requirements.
