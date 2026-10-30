@@ -541,7 +541,7 @@ public struct ChangelogResolver: Sendable {
 
     // MARK: GitHub
 
-    private func githubReleases(_ repository: GitHubRepository, name currentName: String = "", preferCLI: Bool = false) throws -> [ChangelogEntry] {
+    private func githubReleases(_ repository: GitHubRepository, name currentName: String = "", preferCLI: Bool = false, prereleases: Bool = false) throws -> [ChangelogEntry] {
         guard let owner = encodeGitHubPathComponent(repository.owner), let name = encodeGitHubPathComponent(repository.name) else { throw MetadataHTTPError.unsupportedURL }
         var entries: [ChangelogEntry] = []
         for page in 1...githubPages {
@@ -565,7 +565,7 @@ public struct ChangelogResolver: Sendable {
                 return Self.ownProductReleases(items, name: currentName, preferCLI: preferCLI)
             }
             guard let releases = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
-            for release in releases where release["draft"] as? Bool != true && release["prerelease"] as? Bool != true {
+            for release in releases where release["draft"] as? Bool != true && (prereleases || release["prerelease"] as? Bool != true) {
                 guard let tag = release["tag_name"] as? String else { continue }
                 let title = (release["name"] as? String)?.trimmingCharacters(in: .whitespaces)
                 let version = ChangelogVersion.token(in: tag) ?? title.flatMap(ChangelogVersion.token(in:)) ?? tag
@@ -626,7 +626,9 @@ public struct ChangelogResolver: Sendable {
     /// A repository's releases, with its changelog file filling in versions the releases don't
     /// cover (projects that started publishing releases late, or skip some).
     private func githubHistory(_ repository: GitHubRepository, installed: String?, name: String = "", preferCLI: Bool = false) throws -> [ChangelogEntry] {
-        let releases = try githubReleases(repository, name: name, preferCLI: preferCLI)
+        // A pre-release installed (PowerShell Preview's 7.7.0-rc.1) is documented among the pre-releases.
+        let installedPrerelease = installed?.range(of: #"(?i)(alpha|beta|rc|preview|pre)"#, options: .regularExpression) != nil
+        let releases = try githubReleases(repository, name: name, preferCLI: preferCLI, prereleases: installedPrerelease)
         let coversInstalled = installed.map { ChangelogVersion.installedIndex(in: releases, installed: $0) != nil } ?? true
         // Old releases without notes (kitty's) are filled from the repository's changelog too.
         let withText = releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
@@ -716,7 +718,11 @@ public struct ChangelogResolver: Sendable {
         guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
         let items = ChangelogFeeds.entries(fromFeed: try client.fetch(url, resource: .changelogPage(host: host)).body)
         return items.compactMap { item in
-            guard (item.title ?? item.version).localizedCaseInsensitiveContains(title), let version = ChangelogVersion.token(in: String(item.content.prefix(600))) else { return nil }
+            guard (item.title ?? item.version).localizedCaseInsensitiveContains(title), var version = ChangelogVersion.token(in: String(item.content.prefix(600))) else { return nil }
+            // "156.0.8078.79/.80 for Windows and Mac": the Mac build is the later one.
+            if let alternative = item.content.firstMatch(of: try! Regex("\(NSRegularExpression.escapedPattern(for: version))/\\.(\\d+)")), let last = alternative.output[1].substring {
+                version = version.split(separator: ".").dropLast().joined(separator: ".") + "." + last
+            }
             return ChangelogEntry(version: version, title: item.title ?? item.version, date: item.date, content: item.content, sourceURL: item.sourceURL)
         }
     }
@@ -840,6 +846,16 @@ public struct ChangelogResolver: Sendable {
         let fits = { (found: [ChangelogEntry]) in ChangelogVersion.sameLine(found, installed: installed) }
         // A homepage's own couple of versions (a "what's new" teaser) don't beat its changelog link.
         if fits(entries), entries.count >= (isChangelogPage ? 2 : 3) || ChangelogDocument.isMeaningful(entries) && isChangelogPage { return entries }
+        // An index of years (Warp's /changelog links /changelog/2026, /changelog/2025): the newest two.
+        if isChangelogPage, entries.count < 3 {
+            let years = Self.yearSections(in: html, base: url)
+            var found: [ChangelogEntry] = []
+            for year in years.prefix(2) {
+                guard let yearHost = year.host?.lowercased(), let text = try? fetchText(year, resource: .changelogPage(host: yearHost)) else { continue }
+                found = Self.merge(found, read(text, url: year, render: true))
+            }
+            if ChangelogDocument.isMeaningful(found), found.count >= 3, fits(found) { return found }
+        }
         // A changelog hub listing another product first (LM Studio's /changelog is Bionic's) links
         // the item's own section (/changelog/lmstudio).
         if isChangelogPage, let section = Self.productSection(in: html, base: url, name: name), let sectionHost = section.host?.lowercased(),
@@ -1079,6 +1095,18 @@ public struct ChangelogResolver: Sendable {
         return score
     }
 
+    /// On a changelog page, links one level down named for a year, newest first: /changelog/2026.
+    static func yearSections(in html: String, base: URL) -> [URL] {
+        let folder = base.path.hasSuffix("/") ? base.path : base.path + "/"
+        var seen = Set<Int>()
+        return HTMLMarkdown.links(in: html, base: base).compactMap { link -> (Int, URL)? in
+            guard link.url.host?.lowercased() == base.host?.lowercased(), link.url.path.hasPrefix(folder) else { return nil }
+            let rest = link.url.path.dropFirst(folder.count).split(separator: "/")
+            guard rest.count == 1, let year = Int(rest[0]), year >= 2000, year <= 2100, seen.insert(year).inserted else { return nil }
+            return (year, link.url)
+        }.sorted { $0.0 > $1.0 }.map(\.1)
+    }
+
     /// On a changelog page, a link one level down named for the item: /changelog/lmstudio.
     static func productSection(in html: String, base: URL, name: String) -> URL? {
         let key = BundleURLScanner.matchKey(name)
@@ -1204,6 +1232,12 @@ public struct ChangelogResolver: Sendable {
             return [.releaseNotes(URL(string: "https://unity.com/unity-hub/release-notes")!)]
         case (.homebrewCask, "postman"), (.nativeApp, "com.postmanlabs.mac"):
             return [.releaseNotes(URL(string: "https://www.postman.com/release-notes/postman-app/")!)]
+        case (.homebrewCask, "warp"), (.nativeApp, "dev.warp.Warp-Stable"):
+            return [.releaseNotes(URL(string: "https://docs.warp.dev/changelog")!)]
+        case (.homebrewCask, "google-drive"), (.nativeApp, "com.google.drivefs"):
+            return [.releaseNotes(URL(string: "https://support.google.com/a/answer/7577057?hl=en")!)]
+        case (.homebrewCask, "chatgpt"), (.nativeApp, "com.openai.chat"):
+            return [.releaseNotes(URL(string: "https://help.openai.com/en/articles/9703738-chatgpt-macos-app-release-notes")!)]
         case (.homebrewCask, "steam"):
             return [.steam(appID: "593110")]
         case (.homebrewCask, "1password"), (.nativeApp, "com.1password.1password"):

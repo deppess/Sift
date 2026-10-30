@@ -57,7 +57,11 @@ public enum SiftCLI {
                 guard let databaseURL else { return EXIT_FAILURE }
                 let database = try Database.writer(url: databaseURL)
                 let service = ChangelogService(database: database, renderer: renderPage)
-                let items = try database.catalogItems(includeAll: invocation.includeAll).filter { filter == nil || $0.updateSource == filter || $0.kind.rawValue == filter }
+                // A provider or kind, or a comma list of selectors and names to check just those.
+                let wanted = Set((filter ?? "").split(separator: ",").map { $0.lowercased() })
+                let items = try database.catalogItems(includeAll: invocation.includeAll).filter { item in
+                    filter == nil || item.updateSource == filter || item.kind.rawValue == filter || wanted.contains(item.selector.lowercased()) || wanted.contains(item.name.lowercased())
+                }
                 let results = Mutex([(Int, String)]())
                 DispatchQueue.concurrentPerform(iterations: items.count) { index in
                     let item = items[index]
