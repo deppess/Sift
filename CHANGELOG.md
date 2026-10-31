@@ -13,6 +13,18 @@
 - More sources: changelog files inside app bundles, plain-text NEWS/CHANGES formats, GitHub releases merged with the repository changelog, tags and commits for repositories with neither, RSS/Atom feeds and embedded data on project sites, JavaScript-built pages rendered in WebKit, PyPI/npm/crates.io metadata for Homebrew formulae, and a homepage's link to the project's own repository.
 - Helpers installed with another app show that app's changelog.
 - GitHub requests use the GitHub CLI's login when no token is set; `SIFT_DEBUG=1` traces every request.
+- Release notes written by date instead of version (Claude, Figma, Zoom, Google Drive, ChatGPT, Warp) are read as a dated log, and entries after the installed copy's install date count as new.
+- Short or partial sources are combined: an update feed listing only the latest release is merged with the project's GitHub history or the notes page it links to; versions from another product (a vendor's other app) are refused rather than shown.
+- Vendor sources for JetBrains IDEs, Temurin (Adoptium), 1Password, Microsoft Edge, Office for Mac, Windows App, Unity Hub, Postman, Signal, Emacs, Docker, Ansible, PostgreSQL, git, GCC, QEMU, and GNU packages' NEWS files.
+- Per-version release-note sites (VS Code, Firefox, Blender, PostgreSQL) show the previous few versions too.
+- Changelog hubs are followed to the item's own section (LM Studio) or to its newest years (Warp); monorepo releases keep the installed product's tags (Bitwarden desktop, not its CLI).
+- Installed versions with build stamps or channel letters (Word's 16.114.26102720, Zen's 1.24b, Miniconda's py314_26.9.4-0) match their changelog entries.
+- A re-read replaces a stored entry's title as well as its text.
+
+### Updates
+
+- MacPorts updates are checked against ports.macports.org when the local port index is over a week old (MacPorts can't sync after a macOS upgrade until it's reinstalled), so updates since the last sync aren't missed.
+- `sift refresh` shows each provider's notes and warnings.
 
 ### Update log
 
