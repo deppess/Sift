@@ -31,9 +31,15 @@
 - `sift log` lists every observed version change across apps, Homebrew, npm, uv, cargo, MacPorts, and Steam, grouped by day; `sift log <name>` and `--since` narrow it. `changes` remains as an alias.
 - `sift show` and `sift changelog` now accept npm, uv, cargo, MacPorts, and Steam packages (`npm:`, `uv:`, `cargo:`, `port:`, `steam:` selectors, or a Steam app ID).
 
+### Completions
+
+- `sift changelog`, `sift log`, and `sift show` complete cached app and package names; `sift completions` completes fish, bash, and zsh.
+- Flags are offered only for the subcommand that accepts them (`--fetch` after `changelog`, `--since` after `log`, `--update-homebrew` after `refresh`).
+- The zsh script completes on the first Tab when autoloaded from `fpath`.
+
 ### Cache
 
-- Schema 16, applied in place to a 1.0 cache on first use, keeping its history.
+- Schema 17, applied in place to a 1.0 cache on first use, keeping its history.
 
 ## 1.0.0 - 2026-10-26
 
