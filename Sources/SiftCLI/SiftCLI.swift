@@ -34,11 +34,12 @@ public enum SiftCLI {
                 return EXIT_SUCCESS
             }
             if case let .complete(target, prefix) = invocation.command {
-                guard target == "apps" || target == "show" else { return EXIT_SUCCESS }
+                // `log` and `changelog` take the same names as `show`.
+                guard ["apps", "show", "log", "changelog"].contains(target) else { return EXIT_SUCCESS }
                 let databaseURL = invocation.databaseURL ?? SiftApplication.existingDefaultDatabaseURL()
                 guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else { return EXIT_SUCCESS }
                 let database = try Database.readOnly(url: databaseURL)
-                let items = try target == "show" ? database.catalogItems(includeAll: invocation.includeAll) : database.nativeApplicationItems(includeAll: invocation.includeAll)
+                let items = try target == "apps" ? database.nativeApplicationItems(includeAll: invocation.includeAll) : database.catalogItems(includeAll: invocation.includeAll)
                 let matches = items.filter { $0.selector.localizedCaseInsensitiveHasPrefix(prefix) || $0.aliases.contains { $0.localizedCaseInsensitiveHasPrefix(prefix) } }
                 var aliasSelectors: [String: Set<String>] = [:]
                 for item in items {

@@ -84,8 +84,20 @@ final class SiftCLITests: XCTestCase {
         // subcommand out of position 2. Fixed to scan `$words` for "apps"/"show" instead of
         // assuming a fixed index, mirroring the bash and fish fixes.
         let script = CompletionRenderer.script(for: .zsh)
-        XCTAssertTrue(script.contains("for w in $words[1,-2]"))
+        XCTAssertTrue(script.contains("for w in $words[2,CURRENT-1]"))
         XCTAssertFalse(script.contains("case $words[2] in"))
+    }
+
+    func testCompletionsOfferChangelogFlagsNamesAndShells() {
+        let fish = CompletionRenderer.script(for: .fish)
+        XCTAssertTrue(fish.contains("-n '__fish_seen_subcommand_from changelog' -l fetch"))
+        XCTAssertTrue(fish.contains("-n '__fish_seen_subcommand_from completions' -a 'fish bash zsh'"))
+        let bash = CompletionRenderer.script(for: .bash)
+        XCTAssertTrue(bash.contains(#"changelog) words="--all --full --fetch" ;;"#))
+        XCTAssertTrue(bash.contains(#"completions) words="fish bash zsh" ;;"#))
+        let zsh = CompletionRenderer.script(for: .zsh)
+        XCTAssertTrue(zsh.contains("{_sift_names changelog}"))
+        XCTAssertTrue(zsh.contains("completions) _values shell fish bash zsh"))
     }
 
     func testAppsJSONRendersCachedNativeApplication() throws {
