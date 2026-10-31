@@ -28,6 +28,8 @@ public struct MacPortsInventory: Sendable {
     /// Latest available versions from the local port index, for installed ports only.
     public let index: [String: MacPortsIndexEntry]
     public let indexAvailable: Bool
+    /// When the local port index was last synced (`port selfupdate`/`sync`).
+    public var indexDate: Date? = nil
     public let warnings: [String]
 }
 
@@ -60,7 +62,20 @@ public struct MacPortsProvider: Sendable {
             for (name, entry) in Self.parsePortIndex(at: file, names: names) where index[name] == nil { index[name] = entry }
         }
         let warnings = indexFiles.isEmpty ? ["No synced MacPorts port index was found; run 'sudo port sync' to enable update checks."] : []
-        return MacPortsInventory(prefix: prefix.path, ports: ports, index: index, indexAvailable: !indexFiles.isEmpty, warnings: warnings)
+        let indexDate = indexFiles.compactMap { try? FileManager.default.attributesOfItem(atPath: $0.path)[.modificationDate] as? Date }.max()
+        return MacPortsInventory(prefix: prefix.path, ports: ports, index: index, indexAvailable: !indexFiles.isEmpty, indexDate: indexDate, warnings: warnings)
+    }
+
+    /// MacPorts' online port database: a port's current version, for checking against when the
+    /// local index hasn't been synced in a while. The API gives no revision.
+    public static func apiURL(for name: String) -> URL? {
+        name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_.+"))).flatMap { URL(string: "https://ports.macports.org/api/v1/ports/\($0)/") }
+    }
+
+    public static func apiEntry(_ data: Data) -> MacPortsIndexEntry? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let version = object["version"] as? String else { return nil }
+        let epoch = (object["epoch"] as? Int) ?? Int(object["epoch"] as? String ?? "") ?? 0
+        return MacPortsIndexEntry(epoch: epoch, version: version, revision: 0)
     }
 
     /// Whether `index` offers a newer version than the installed port, by MacPorts' ordering:

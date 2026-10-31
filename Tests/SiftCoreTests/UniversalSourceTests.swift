@@ -150,6 +150,13 @@ final class UniversalSourceTests: XCTestCase {
         XCTAssertFalse(MacPortsProvider.isOutdated(inventory.ports[1], index: try XCTUnwrap(inventory.index["zlib"])))
     }
 
+    func testMacPortsOnlinePortDatabaseEntry() throws {
+        let entry = try XCTUnwrap(MacPortsProvider.apiEntry(Data(#"{"name": "python313", "version": "3.13.18", "epoch": 0, "active": true}"#.utf8)))
+        XCTAssertEqual(entry, MacPortsIndexEntry(epoch: 0, version: "3.13.18", revision: 0))
+        XCTAssertEqual(MacPortsProvider.apiURL(for: "py313-Pillow")?.absoluteString, "https://ports.macports.org/api/v1/ports/py313-Pillow/")
+        XCTAssertNil(MacPortsProvider.apiEntry(Data("not json".utf8)))
+    }
+
     func testMacPortsVersionOrdering() {
         let ascending: [(String, String)] = [("1.3.1", "1.3.2"), ("1.9", "1.10"), ("20260512-3.1", "20260601-3.1"), ("1.0a", "1.0.1"), ("2.7", "2.7.1")]
         for (older, newer) in ascending {

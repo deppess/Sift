@@ -366,13 +366,31 @@ public struct RefreshCoordinator: Sendable {
     private func macPortsPhase(clock: RefreshClock) -> ManagedPhase {
         let startedAt = clock.now()
         let discovered = macPortsProvider.discover()
+        var warnings = discovered.warnings
+        var notes: [String] = []
+        // A local index more than a week old (MacPorts can't sync after a macOS upgrade until it's
+        // reinstalled) misses every update since: the online port database answers instead.
+        var online: [String: MacPortsIndexEntry] = [:]
+        let stale = discovered.indexDate.map { clock.now().timeIntervalSince($0) > 7 * 24 * 60 * 60 } ?? true
+        if discovered.prefix != nil, stale, !discovered.ports.isEmpty {
+            let client = metadataClient
+            let lookups = discovered.ports.map { port in
+                Concurrent { MacPortsProvider.apiURL(for: port.name).flatMap { try? client.fetch($0, resource: .macPortsPort).body }.flatMap(MacPortsProvider.apiEntry) }
+            }
+            for (port, lookup) in zip(discovered.ports, lookups) { if let entry = lookup.value { online[port.name] = entry } }
+            let age = discovered.indexDate.map { " is \(Int(clock.now().timeIntervalSince($0) / 86_400)) days old" } ?? " is missing"
+            // Every port answered: the data is complete, and the stale index is only worth a note.
+            if online.count == discovered.ports.count { notes.append("MacPorts' port index\(age); checked ports.macports.org instead. Run 'sudo port selfupdate' to sync it.") } else { warnings.append("MacPorts' port index\(age); checked ports.macports.org instead (\(online.count) of \(discovered.ports.count) ports). Run 'sudo port selfupdate' to sync it.") }
+        }
         let scopes = discovered.prefix.map { prefix in
             [ManagedPackageScope(scope: prefix, packages: discovered.ports.map { port in
-                let latest = discovered.index[port.name].flatMap { MacPortsProvider.isOutdated(port, index: $0) ? $0.displayVersion : nil }
+                // The online version, with the installed revision when it's the same version (the API has no revision).
+                let fresh = online[port.name].map { entry in entry.version == port.version && entry.epoch == port.epoch ? MacPortsIndexEntry(epoch: entry.epoch, version: entry.version, revision: max(port.revision, discovered.index[port.name].map { $0.version == entry.version ? $0.revision : 0 } ?? 0)) : entry }
+                let latest = (fresh ?? discovered.index[port.name]).flatMap { MacPortsProvider.isOutdated(port, index: $0) ? $0.displayVersion : nil }
                 return ManagedPackage(name: port.name, installedVersion: port.displayVersion, availableVersion: latest, requested: port.requested, applicationPaths: port.applicationPaths)
-            }, outdatedDataComplete: discovered.indexAvailable)]
+            }, outdatedDataComplete: discovered.indexAvailable || !online.isEmpty)]
         } ?? []
-        return managedPhase(provider: .macPorts, scopes: scopes, warnings: discovered.warnings, retainedMessage: "MacPorts was not found; cached MacPorts data was retained.", startedAt: startedAt, finishedAt: clock.now())
+        return managedPhase(provider: .macPorts, scopes: scopes, warnings: warnings, notes: notes, retainedMessage: "MacPorts was not found; cached MacPorts data was retained.", startedAt: startedAt, finishedAt: clock.now())
     }
 
     /// Installed crates from cargo's own record; latest versions from crates.io's sparse index,
@@ -421,11 +439,12 @@ public struct RefreshCoordinator: Sendable {
     /// No executables and no failures means the tool isn't installed at all, distinct from
     /// "installed but found nothing"; previously cached data is then retained as `.partial` rather
     /// than discarded. A provider that fails outright contributes no inventory.
-    private func managedPhase(provider: RefreshProvider, scopes: [ManagedPackageScope], warnings: [String], retainedMessage: String, startedAt: Date, finishedAt: Date) -> ManagedPhase {
+    /// `notes` are shown with the result without making it partial (the data is complete).
+    private func managedPhase(provider: RefreshProvider, scopes: [ManagedPackageScope], warnings: [String], notes: [String] = [], retainedMessage: String, startedAt: Date, finishedAt: Date) -> ManagedPhase {
         let absent = scopes.isEmpty && warnings.isEmpty
         let retained = absent && ((try? database.hasActiveManagedPackages(provider: provider)) ?? false)
         let status: ProviderRefreshStatus = retained ? .partial : warnings.isEmpty ? .success : scopes.isEmpty ? .failure : .partial
-        let result = ProviderRefreshResult(provider: provider, status: status, message: retained ? retainedMessage : warnings.nonEmptyJoined, warningCount: retained ? 1 : warnings.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: status == .success ? finishedAt : nil)
+        let result = ProviderRefreshResult(provider: provider, status: status, message: retained ? retainedMessage : (warnings + notes).nonEmptyJoined, warningCount: retained ? 1 : warnings.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: status == .success ? finishedAt : nil)
         return (status == .failure ? nil : ManagedPackageInventory(provider: provider, scopes: scopes), result)
     }
 }

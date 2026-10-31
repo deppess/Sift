@@ -19,6 +19,13 @@ public enum RefreshRenderer {
             lines.append("")
             lines.append("Providers")
             lines.append(contentsOf: TableFormatter.rows(summary.providerResults.map { [$0.provider.rawValue, $0.status.rawValue] }))
+            // What each provider had to say: why data is incomplete, or what to do about it.
+            let messages = summary.providerResults.compactMap { result in result.message.map { "\(result.provider.rawValue): \($0.terminalInline)" } }
+            if !messages.isEmpty {
+                lines.append("")
+                lines.append("Notes")
+                lines.append(contentsOf: messages.map { "  \($0)" })
+            }
         }
         lines.append("")
         lines.append(summary.status == .success ? "Refresh completed successfully." : "Refresh completed with incomplete provider data.")
