@@ -31,31 +31,6 @@ sift refresh
 
 For applications Sift asks the app's own updater first: its Sparkle feed (from Info.plist or its saved preferences), its Mac App Store listing, its Electron update manifest, or Blackmagic's downloads feed. When that can't be queried it falls back to Homebrew's public cask catalog matched by exact bundle identifier, then to the GitHub release check the app's executable makes, then to a cask with the same app name whose vendor domain the app references. Utilities installed alongside another app (same installer package or product folder) are reported as updated with it. Apps installed by a package manager, including those linked into a Homebrew Caskroom, are reported by that package manager. `sift show` explains every answer, and apps Sift can't check are listed with the reason.
 
-## Build and test
-
-```sh
-swift build
-swift run sift refresh
-swift run sift               # dashboard
-swift run sift updates       # everything with an update; --all adds dependencies
-swift run sift apps          # applications and where their updates come from
-swift run sift show <name>   # details and what's new
-swift run sift log           # every observed version change; log <name>, --since 30d
-swift run sift changelog <name>  # the changelog, newest first; --all for the whole history, --full for links and downloads
-swift test
-./Scripts/test-integration
-./Scripts/test-security
-./Scripts/benchmark
-```
-
-`swift test` runs the unit suites without touching the host's package managers or the network. `./Scripts/test-integration` runs the opt-in process, SQLite, permission, schema, and concurrency checks in unique temporary directories, including a real refresh of the host. `./Scripts/test-security` deterministically repeats the security regression and integration tests; it is not a fuzz harness. `./Scripts/benchmark` builds release configuration and reports repeated core-test timings. Set `SIFT_SECURITY_ITERATIONS` or `SIFT_BENCHMARK_ITERATIONS` to adjust runs; `SIFT_SECURITY_SEED` labels a security run.
-
-Use an isolated database while developing:
-
-```sh
-swift run sift --database /tmp/sift.sqlite3
-```
-
 ## Changelogs
 
 `sift changelog <name>` takes any app, game, or package `sift show` knows: `sift changelog gh`, `sift changelog UTM`, `sift changelog steam:Balatro`, `sift changelog cargo:graf-rs`. It shows the versions newer than the one installed, then the installed version's own entry; `--all` shows everything the source has. The changelog always appears in the terminal; Sift never sends you to a browser.
@@ -85,6 +60,31 @@ A cache from an earlier 1.x release is upgraded in place the first time a newer 
 ## Naming conflict
 
 An unrelated `sift` formula exists in Homebrew Core and provides a binary of the same name. This project intentionally retains the name. Do not expect `brew install sift` to install this project. A future Homebrew distribution would use a custom tap, but both binaries cannot coexist in the same Homebrew prefix.
+
+## Build and test
+
+```sh
+swift build
+swift run sift refresh
+swift run sift               # dashboard
+swift run sift updates       # everything with an update; --all adds dependencies
+swift run sift apps          # applications and where their updates come from
+swift run sift show <name>   # details and what's new
+swift run sift log           # every observed version change; log <name>, --since 30d
+swift run sift changelog <name>  # the changelog, newest first; --all for the whole history, --full for links and downloads
+swift test
+./Scripts/test-integration
+./Scripts/test-security
+./Scripts/benchmark
+```
+
+`swift test` runs the unit suites without touching the host's package managers or the network. `./Scripts/test-integration` runs the opt-in process, SQLite, permission, schema, and concurrency checks in unique temporary directories, including a real refresh of the host. `./Scripts/test-security` deterministically repeats the security regression and integration tests; it is not a fuzz harness. `./Scripts/benchmark` builds release configuration and reports repeated core-test timings. Set `SIFT_SECURITY_ITERATIONS` or `SIFT_BENCHMARK_ITERATIONS` to adjust runs; `SIFT_SECURITY_SEED` labels a security run.
+
+Use an isolated database while developing:
+
+```sh
+swift run sift --database /tmp/sift.sqlite3
+```
 
 ## License
 
