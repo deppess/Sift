@@ -1,4 +1,4 @@
-Sift is all rights reserved, view only. See LICENSE. Third-party components below keep their own licenses.
+Sift is AGPL-3.0-or-later. Third-party components below keep their own licenses.
 
 Sources/SiftCore/Providers/SparkleAppcast.swift (SparkleVersion) is a Swift port of
 Sparkle's version comparator, Sparkle/SUStandardVersionComparator.m, from
