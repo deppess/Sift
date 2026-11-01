@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Licensed under AGPL-3.0-or-later instead of GPL-3.0-or-later.
+
 ## 1.0.2 - 2026-10-31
 
 ### Changelogs
