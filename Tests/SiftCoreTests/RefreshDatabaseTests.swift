@@ -80,7 +80,9 @@ final class RefreshDatabaseTests: XCTestCase {
         let database = try Database(url: url)
         let successfulDate = Date(timeIntervalSince1970: 1_000)
         _ = try database.applyRefresh(refreshInput(at: successfulDate))
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), providerStatuses: Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, .failure) })))
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 2_000), providerStatuses: Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, .failure) })))
 
         let dashboard = try database.dashboard(now: Date(timeIntervalSince1970: 2_100), staleAfter: 1_500)
         XCTAssertEqual(dashboard.lastAttemptAt, Date(timeIntervalSince1970: 2_000))
@@ -138,17 +140,27 @@ final class RefreshDatabaseTests: XCTestCase {
         let url = temporaryDatabaseURL()
         do {
             let database = try Database(url: url)
-            let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path])))
+            let application = NativeApplication(
+                path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil,
+                classification: .user, discoveryRoot: "/Applications")
+            _ = try database.applyRefresh(
+                refreshInput(
+                    at: Date(timeIntervalSince1970: 1_000),
+                    nativeInventory: NativeInventoryResult(applications: [application], scannedRoots: ["/Applications"], candidatePaths: [application.path])))
 
             let startedAt = Date(timeIntervalSince1970: 2_000)
             let finishedAt = Date(timeIntervalSince1970: 2_001)
             let results = RefreshProvider.allCases.map { provider in
                 provider == .nativeApplications
-                    ? ProviderRefreshResult(provider: provider, status: .partial, message: "root unavailable", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt)
+                    ? ProviderRefreshResult(
+                        provider: provider, status: .partial, message: "root unavailable", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt)
                     : ProviderRefreshResult(provider: provider, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt)
             }
-            let summary = try database.applyRefresh(RefreshPersistenceInput(startedAt: startedAt, finishedAt: finishedAt, nativeInventory: NativeInventoryResult(applications: [], warnings: ["root unavailable"], complete: false, scannedRoots: ["/Applications"]), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results))
+            let summary = try database.applyRefresh(
+                RefreshPersistenceInput(
+                    startedAt: startedAt, finishedAt: finishedAt,
+                    nativeInventory: NativeInventoryResult(applications: [], warnings: ["root unavailable"], complete: false, scannedRoots: ["/Applications"]),
+                    homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results))
 
             XCTAssertEqual(summary.status, .partial)
             XCTAssertEqual(summary.providerResults.count, RefreshProvider.allCases.count)
@@ -167,7 +179,9 @@ final class RefreshDatabaseTests: XCTestCase {
         let results = RefreshProvider.allCases.map {
             ProviderRefreshResult(provider: $0, status: .success, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: finishedAt)
         }
-        let input = RefreshPersistenceInput(startedAt: startedAt, finishedAt: finishedAt, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results)
+        let input = RefreshPersistenceInput(
+            startedAt: startedAt, finishedAt: finishedAt, nativeInventory: NativeInventoryResult(applications: []),
+            homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], providerResults: results)
 
         _ = try database.applyRefresh(input)
         XCTAssertThrowsError(try database.applyRefresh(input)) { error in

@@ -22,19 +22,21 @@ final class UniversalSourceTests: XCTestCase {
     // MARK: - Homebrew cask catalog
 
     func testCaskCatalogMatchesOnlyByExactBundleIdentifierEvidence() throws {
-        let catalog = try HomebrewCaskCatalog(data: Data("""
-            [
-              {"token":"net-guard","version":"6.5","artifacts":[{"uninstall":[{"quit":"com.example.netguard"}]},{"app":["Net Guard.app"]}]},
-              {"token":"net-guard@nightly","version":"6.6","artifacts":[{"uninstall":[{"quit":"com.example.netguard"}]},{"app":["Net Guard.app"]}]},
-              {"token":"hypervise","version":"5.0.8","artifacts":[{"app":["Hypervise.app"]},{"zap":[{"trash":["~/Library/Containers/com.hypervise.Hypervise","~/Library/Preferences/com.hypervise.Hypervise.plist"]}]}]},
-              {"token":"hypervise@beta","version":"5.1.0","artifacts":[{"app":["Hypervise.app"]},{"zap":[{"trash":["~/Library/Preferences/com.hypervise.Hypervise.plist"]}]}]},
-              {"token":"beat-studio","version":"26.1.7.5421","artifacts":[{"pkg":["Install Beat Studio.pkg"]},{"zap":[{"trash":"~/Library/Preferences/com.example.beatstudio.plist"}]}]},
-              {"token":"lookalike","version":"9.0","artifacts":[{"app":["Net Guard.app"]}]},
-              {"token":"rolling","version":"latest","artifacts":[{"app":["Rolling.app"]},{"uninstall":[{"quit":"com.example.rolling"}]}]},
-              {"token":"twins-a","version":"1.0","artifacts":[{"uninstall":[{"quit":"com.example.twin"}]}]},
-              {"token":"twins-b","version":"1.1","artifacts":[{"uninstall":[{"quit":"com.example.twin"}]}]}
-            ]
-            """.utf8))
+        let catalog = try HomebrewCaskCatalog(
+            data: Data(
+                """
+                [
+                  {"token":"net-guard","version":"6.5","artifacts":[{"uninstall":[{"quit":"com.example.netguard"}]},{"app":["Net Guard.app"]}]},
+                  {"token":"net-guard@nightly","version":"6.6","artifacts":[{"uninstall":[{"quit":"com.example.netguard"}]},{"app":["Net Guard.app"]}]},
+                  {"token":"hypervise","version":"5.0.8","artifacts":[{"app":["Hypervise.app"]},{"zap":[{"trash":["~/Library/Containers/com.hypervise.Hypervise","~/Library/Preferences/com.hypervise.Hypervise.plist"]}]}]},
+                  {"token":"hypervise@beta","version":"5.1.0","artifacts":[{"app":["Hypervise.app"]},{"zap":[{"trash":["~/Library/Preferences/com.hypervise.Hypervise.plist"]}]}]},
+                  {"token":"beat-studio","version":"26.1.7.5421","artifacts":[{"pkg":["Install Beat Studio.pkg"]},{"zap":[{"trash":"~/Library/Preferences/com.example.beatstudio.plist"}]}]},
+                  {"token":"lookalike","version":"9.0","artifacts":[{"app":["Net Guard.app"]}]},
+                  {"token":"rolling","version":"latest","artifacts":[{"app":["Rolling.app"]},{"uninstall":[{"quit":"com.example.rolling"}]}]},
+                  {"token":"twins-a","version":"1.0","artifacts":[{"uninstall":[{"quit":"com.example.twin"}]}]},
+                  {"token":"twins-b","version":"1.1","artifacts":[{"uninstall":[{"quit":"com.example.twin"}]}]}
+                ]
+                """.utf8))
 
         // Quit stanza names the identifier; the stable cask wins over its @nightly variant.
         XCTAssertEqual(catalog.entry(bundleIdentifier: "com.example.NetGuard", bundleFileName: "Net Guard.app")?.token, "net-guard")
@@ -53,24 +55,31 @@ final class UniversalSourceTests: XCTestCase {
     }
 
     func testResolverFallsBackToCaskCatalogWhenUpdaterIsUnreadable() throws {
-        StubCatalogProtocol.body = #"[{"token":"canvas","version":"3.3.1,4501","artifacts":[{"app":["Canvas.app"]},{"uninstall":[{"quit":"com.canvasapp.canvas"}]}]}]"#
+        StubCatalogProtocol.body =
+            #"[{"token":"canvas","version":"3.3.1,4501","artifacts":[{"app":["Canvas.app"]},{"uninstall":[{"quit":"com.canvasapp.canvas"}]}]}]"#
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubCatalogProtocol.self]
         StubCatalogProtocol.requests = 0
         let database = try Database(url: root.appending(path: "sift.sqlite3"))
-        let resolver = NativeUpdateResolver(metadataClient: MetadataHTTPClient(database: database, configuration: configuration, environment: [:]), storefront: "us", systemVersion: "26.0")
+        let resolver = NativeUpdateResolver(
+            metadataClient: MetadataHTTPClient(database: database, configuration: configuration, environment: [:]), storefront: "us", systemVersion: "26.0")
         // Sparkle with a run-time feed: unreadable, so the catalog answers.
-        let canvas = NativeApplication(path: "/Applications/Canvas.app", bundleIdentifier: "com.canvasapp.canvas", displayName: "Canvas", shortVersion: "3.2.3", buildVersion: "3020300", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
+        let canvas = NativeApplication(
+            path: "/Applications/Canvas.app", bundleIdentifier: "com.canvasapp.canvas", displayName: "Canvas", shortVersion: "3.2.3", buildVersion: "3020300",
+            classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
         let check = resolver.resolve(canvas)
         XCTAssertEqual(check.authority, .homebrewCatalog)
         XCTAssertEqual(check.outcome, .available(version: "3.3.1", notes: nil))
         XCTAssertEqual(check.note, "Latest version from the Homebrew cask \u{201C}canvas\u{201D}.")
         // Unmatched apps keep the original explanation; the catalog was fetched only once.
-        let other = NativeApplication(path: "/Applications/Other.app", bundleIdentifier: "com.example.other", displayName: "Other", shortVersion: "1.0", buildVersion: "1", classification: .user, discoveryRoot: "/Applications")
+        let other = NativeApplication(
+            path: "/Applications/Other.app", bundleIdentifier: "com.example.other", displayName: "Other", shortVersion: "1.0", buildVersion: "1",
+            classification: .user, discoveryRoot: "/Applications")
         guard case .unchecked = resolver.resolve(other).outcome else { return XCTFail() }
         XCTAssertEqual(StubCatalogProtocol.requests, 1)
         // A new client (the next refresh) reads the catalog back from compressed cache storage.
-        let second = NativeUpdateResolver(metadataClient: MetadataHTTPClient(database: database, configuration: configuration, environment: [:]), storefront: "us", systemVersion: "26.0")
+        let second = NativeUpdateResolver(
+            metadataClient: MetadataHTTPClient(database: database, configuration: configuration, environment: [:]), storefront: "us", systemVersion: "26.0")
         XCTAssertEqual(second.resolve(canvas).outcome, .available(version: "3.3.1", notes: nil))
         XCTAssertEqual(StubCatalogProtocol.requests, 1)
     }
@@ -80,7 +89,9 @@ final class UniversalSourceTests: XCTestCase {
     func testSteamProviderReadsEveryLibraryAndPendingBuilds() throws {
         let steam = root.appending(path: "Steam", directoryHint: .isDirectory)
         let external = root.appending(path: "External Library", directoryHint: .isDirectory)
-        try write(steam.appending(path: "steamapps/libraryfolders.vdf"), """
+        try write(
+            steam.appending(path: "steamapps/libraryfolders.vdf"),
+            """
             "libraryfolders"
             {
             \t"0" { "path" "\(steam.path)" "apps" { "1000010" "1" } }
@@ -88,7 +99,9 @@ final class UniversalSourceTests: XCTestCase {
             \t"2" { "path" "/Volumes/Unplugged" }
             }
             """)
-        try write(steam.appending(path: "steamapps/appmanifest_1000010.acf"), """
+        try write(
+            steam.appending(path: "steamapps/appmanifest_1000010.acf"),
+            """
             "AppState"
             {
             \t"appid"\t\t"1000010"
@@ -100,7 +113,9 @@ final class UniversalSourceTests: XCTestCase {
             \t"InstalledDepots" { "1000012" { "manifest" "1" } }
             }
             """)
-        try write(external.appending(path: "steamapps/appmanifest_1000020.acf"), """
+        try write(
+            external.appending(path: "steamapps/appmanifest_1000020.acf"),
+            """
             "AppState" { "appid" "1000020" "name" "Bastion Siege 6" "StateFlags" "6" "installdir" "BastionSiege6" "buildid" "21000001" "TargetBuildID" "21000002" }
             """)
         try write(external.appending(path: "steamapps/appmanifest_1.acf"), "not a manifest")
@@ -109,7 +124,13 @@ final class UniversalSourceTests: XCTestCase {
 
         XCTAssertTrue(inventory.detected)
         XCTAssertEqual(inventory.libraries.map(\.path), [steam.path, external.path])
-        XCTAssertEqual(inventory.libraries[0].games, [SteamGame(appID: "1000010", name: "Card Rogue", buildID: "12000001", pendingBuildID: nil, installDirectory: steam.appending(path: "steamapps/common/Card Rogue").path)])
+        XCTAssertEqual(
+            inventory.libraries[0].games,
+            [
+                SteamGame(
+                    appID: "1000010", name: "Card Rogue", buildID: "12000001", pendingBuildID: nil,
+                    installDirectory: steam.appending(path: "steamapps/common/Card Rogue").path)
+            ])
         XCTAssertEqual(inventory.libraries[1].games.first?.pendingBuildID, "21000002")
         XCTAssertEqual(inventory.warnings.count, 1)
         XCTAssertFalse(SteamProvider(steamDirectory: root.appending(path: "missing")).discover().detected)
@@ -120,8 +141,11 @@ final class UniversalSourceTests: XCTestCase {
     func testMacPortsProviderReadsRegistryAndIndexWithoutRunningPort() throws {
         let prefix = root.appending(path: "opt-local", directoryHint: .isDirectory)
         try makeRegistry(at: prefix.appending(path: "var/macports/registry/registry.db"))
-        try write(prefix.appending(path: "etc/macports/sources.conf"), "# comment\nrsync://rsync.macports.org/macports/release/tarballs/ports.tar.gz [default]\n")
-        try write(prefix.appending(path: "var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/PortIndex"), """
+        try write(
+            prefix.appending(path: "etc/macports/sources.conf"), "# comment\nrsync://rsync.macports.org/macports/release/tarballs/ports.tar.gz [default]\n")
+        try write(
+            prefix.appending(path: "var/macports/sources/rsync.macports.org/macports/release/tarballs/ports/PortIndex"),
+            """
             R-A3 120
             depends_build {port:clang-22 port:R} description {Accurate {nested} metrics} name R-A3 version 1.0.0 revision 1 portdir R/R-A3
             arangodb 60
@@ -172,14 +196,16 @@ final class UniversalSourceTests: XCTestCase {
     // MARK: - Blackmagic
 
     func testBlackmagicDownloadsIgnoreBetasAndPickNewestMacRelease() throws {
-        let downloads = try BlackmagicDownloads(data: Data("""
-            {"downloads":[
-              {"name":"DaVinci Resolve 21.2 Public Beta","urls":{"Mac OS X":[{"product":"davinci-resolve","major":21,"minor":2,"releaseNum":0}]}},
-              {"name":"DaVinci Resolve 21.1.1 Update","urls":{"Mac OS X":[{"product":"davinci-resolve","major":21,"minor":1,"releaseNum":1}],"Windows":[{"product":"davinci-resolve","major":22,"minor":0,"releaseNum":0}]}},
-              {"name":"DaVinci Resolve 21.0.4 Update","urls":{"Mac OS X":[{"product":"davinci-resolve","major":21,"minor":0,"releaseNum":4}]}},
-              {"name":"Blackmagic RAW 6.0","urls":{"Mac OS X":[{"product":"braw-sdk","major":6,"minor":0,"releaseNum":0}]}}
-            ]}
-            """.utf8))
+        let downloads = try BlackmagicDownloads(
+            data: Data(
+                """
+                {"downloads":[
+                  {"name":"DaVinci Resolve 21.2 Public Beta","urls":{"Mac OS X":[{"product":"davinci-resolve","major":21,"minor":2,"releaseNum":0}]}},
+                  {"name":"DaVinci Resolve 21.1.1 Update","urls":{"Mac OS X":[{"product":"davinci-resolve","major":21,"minor":1,"releaseNum":1}],"Windows":[{"product":"davinci-resolve","major":22,"minor":0,"releaseNum":0}]}},
+                  {"name":"DaVinci Resolve 21.0.4 Update","urls":{"Mac OS X":[{"product":"davinci-resolve","major":21,"minor":0,"releaseNum":4}]}},
+                  {"name":"Blackmagic RAW 6.0","urls":{"Mac OS X":[{"product":"braw-sdk","major":6,"minor":0,"releaseNum":0}]}}
+                ]}
+                """.utf8))
         XCTAssertEqual(downloads.latestVersion(product: "davinci-resolve"), "21.1.1")
         XCTAssertEqual(downloads.latestVersion(product: "braw-sdk"), "6.0")
         XCTAssertNil(downloads.latestVersion(product: "davinci-resolve-studio"))
@@ -191,7 +217,9 @@ final class UniversalSourceTests: XCTestCase {
 
     func testCargoProviderReadsInstallRecordAndSkipsMissingOrNonRegistryCrates() throws {
         let home = root.appending(path: "cargo", directoryHint: .isDirectory)
-        try write(home.appending(path: ".crates2.json"), """
+        try write(
+            home.appending(path: ".crates2.json"),
+            """
             {"installs":{
               "plotkit 0.4.17 (registry+https://github.com/rust-lang/crates.io-index)":{"bins":["plot"]},
               "gone 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)":{"bins":["gone"]},
@@ -213,7 +241,8 @@ final class UniversalSourceTests: XCTestCase {
         XCTAssertEqual(CargoProvider.indexURL(for: "abc")?.absoluteString, "https://index.crates.io/3/a/abc")
         XCTAssertEqual(CargoProvider.indexURL(for: "PlotKit")?.absoluteString, "https://index.crates.io/pl/ot/plotkit")
         XCTAssertNil(CargoProvider.indexURL(for: "../etc"))
-        let index = Data("""
+        let index = Data(
+            """
             {"name":"plotkit","vers":"1.1.1","yanked":false}
             {"name":"plotkit","vers":"1.2.0","yanked":true}
             {"name":"plotkit","vers":"1.10.0-beta.1","yanked":false}
@@ -227,8 +256,11 @@ final class UniversalSourceTests: XCTestCase {
     func testSetappApplicationsAreAttributedToSetapp() throws {
         // Setapp installs into /Applications/Setapp, which a test can't write, so the classifier
         // is exercised through the bundle path it sees.
-        let resolver = NativeUpdateResolver(metadataClient: MetadataHTTPClient(database: try Database(url: root.appending(path: "sift.sqlite3")), configuration: .ephemeral, environment: [:]))
-        let app = NativeApplication(path: "/Applications/Setapp/CleanMyMac.app", bundleIdentifier: "com.macpaw.CleanMyMac-setapp", displayName: "CleanMyMac", shortVersion: "5.0", buildVersion: "1", classification: .user, discoveryRoot: "/Applications", updateAuthority: .setapp)
+        let resolver = NativeUpdateResolver(
+            metadataClient: MetadataHTTPClient(database: try Database(url: root.appending(path: "sift.sqlite3")), configuration: .ephemeral, environment: [:]))
+        let app = NativeApplication(
+            path: "/Applications/Setapp/CleanMyMac.app", bundleIdentifier: "com.macpaw.CleanMyMac-setapp", displayName: "CleanMyMac", shortVersion: "5.0",
+            buildVersion: "1", classification: .user, discoveryRoot: "/Applications", updateAuthority: .setapp)
         XCTAssertEqual(resolver.resolve(app).outcome, .unchecked("Setapp installs updates for its apps."))
     }
 
@@ -237,20 +269,41 @@ final class UniversalSourceTests: XCTestCase {
     func testManagedPackagesHonorRequestedSelfUpdatingAndApplicationOwnership() throws {
         let database = try Database(url: root.appending(path: "sift.sqlite3"))
         let date = Date(timeIntervalSince1970: 1_000)
-        let idle = NativeApplication(path: "/Applications/MacPorts/Python 3.14/IDLE.app", bundleIdentifier: "org.python.IDLE", displayName: "IDLE", shortVersion: "3.14.7", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+        let idle = NativeApplication(
+            path: "/Applications/MacPorts/Python 3.14/IDLE.app", bundleIdentifier: "org.python.IDLE", displayName: "IDLE", shortVersion: "3.14.7",
+            buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
         let inventories = [
-            ManagedPackageInventory(provider: .macPorts, scopes: [ManagedPackageScope(scope: "/opt/local", packages: [
-                ManagedPackage(name: "python314", installedVersion: "3.14.7_0", availableVersion: "3.14.8_0", requested: false, applicationPaths: [idle.path]),
-                ManagedPackage(name: "py313-Pillow", installedVersion: "12.3.0_0", availableVersion: "12.4.0_0"),
-            ])]),
-            ManagedPackageInventory(provider: .steamGames, scopes: [ManagedPackageScope(scope: "/Steam", packages: [
-                ManagedPackage(name: "Bastion Siege 6", installedVersion: "21000001", availableVersion: "21000002", selfUpdating: true),
-            ])]),
+            ManagedPackageInventory(
+                provider: .macPorts,
+                scopes: [
+                    ManagedPackageScope(
+                        scope: "/opt/local",
+                        packages: [
+                            ManagedPackage(
+                                name: "python314", installedVersion: "3.14.7_0", availableVersion: "3.14.8_0", requested: false, applicationPaths: [idle.path]),
+                            ManagedPackage(name: "py313-Pillow", installedVersion: "12.3.0_0", availableVersion: "12.4.0_0")
+                        ])
+                ]),
+            ManagedPackageInventory(
+                provider: .steamGames,
+                scopes: [
+                    ManagedPackageScope(
+                        scope: "/Steam",
+                        packages: [
+                            ManagedPackage(name: "Bastion Siege 6", installedVersion: "21000001", availableVersion: "21000002", selfUpdating: true)
+                        ])
+                ])
         ]
         let results = RefreshProvider.allCases.map { ProviderRefreshResult(provider: $0, status: .success, startedAt: date, finishedAt: date, dataAsOf: date) }
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: [idle], scannedRoots: ["/Applications"]), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: inventories, providerResults: results))
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: [idle], scannedRoots: ["/Applications"]),
+                homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: inventories,
+                providerResults: results))
 
-        XCTAssertEqual(try database.updates(now: date).map { "\($0.provider) \($0.name) \($0.selfUpdating)" }, ["steam-games Bastion Siege 6 true", "macports py313-Pillow false"])
+        XCTAssertEqual(
+            try database.updates(now: date).map { "\($0.provider) \($0.name) \($0.selfUpdating)" },
+            ["steam-games Bastion Siege 6 true", "macports py313-Pillow false"])
         XCTAssertEqual(try database.updates(includeAll: true, now: date).map(\.name), ["Bastion Siege 6", "py313-Pillow", "python314"])
         let dashboard = try database.dashboard(now: date)
         XCTAssertEqual(dashboard.data.availableUpdateCount, 1)

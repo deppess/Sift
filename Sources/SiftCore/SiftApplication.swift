@@ -3,12 +3,14 @@ import Foundation
 
 public enum SiftApplication {
     public static func existingDefaultDatabaseURL(fileManager: FileManager = .default) -> URL? {
-        guard let directory = try? fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: false
-        ).appending(path: "Sift", directoryHint: .isDirectory) else { return nil }
+        guard
+            let directory = try? fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: false
+            ).appending(path: "Sift", directoryHint: .isDirectory)
+        else { return nil }
         let url = directory.appending(path: "sift.sqlite3", directoryHint: .notDirectory)
         return fileManager.fileExists(atPath: url.path) ? url : nil
     }

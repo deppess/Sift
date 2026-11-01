@@ -2,7 +2,9 @@ import Foundation
 
 /// `sift log`: version changes grouped by the day they were observed.
 public enum LogRenderer {
-    public static func humanReadable(_ entries: [UpdateLogEntry], now: Date = .now, calendar: Calendar = .current, style: TerminalStyle = TerminalStyle(enabled: false)) -> String {
+    public static func humanReadable(
+        _ entries: [UpdateLogEntry], now: Date = .now, calendar: Calendar = .current, style: TerminalStyle = TerminalStyle(enabled: false)
+    ) -> String {
         guard !entries.isEmpty else { return "No version changes observed yet. Each 'sift refresh' records what changed since the last one." }
         var lines = [style.title("Update log  \(entries.count) \(entries.count == 1 ? "change" : "changes")")]
         let days = Dictionary(grouping: entries) { calendar.startOfDay(for: $0.observedAt) }
@@ -10,7 +12,10 @@ public enum LogRenderer {
             lines.append("")
             lines.append(style.heading(dayLabel(day, now: now, calendar: calendar)))
             let rows = days[day]!.map { entry in
-                ["  " + entry.name.terminalInline, "\(entry.fromVersion.terminalInline) -> \(entry.toVersion.terminalInline)", style.label(sourceLabel(entry.source))]
+                [
+                    "  " + entry.name.terminalInline, "\(entry.fromVersion.terminalInline) -> \(entry.toVersion.terminalInline)",
+                    style.label(sourceLabel(entry.source))
+                ]
             }
             lines.append(contentsOf: TableFormatter.rows(rows))
         }

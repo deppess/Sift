@@ -19,9 +19,14 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
     private let catalog: OnceLoader<HomebrewCaskCatalog>
     private let blackmagic: OnceLoader<BlackmagicDownloads>
 
-    public init(metadataClient: MetadataHTTPClient, storefront: String = Locale.current.region?.identifier.lowercased() ?? "us", systemVersion: String = NativeUpdateResolver.currentSystemVersion) {
+    public init(
+        metadataClient: MetadataHTTPClient, storefront: String = Locale.current.region?.identifier.lowercased() ?? "us",
+        systemVersion: String = NativeUpdateResolver.currentSystemVersion
+    ) {
         self.metadataClient = metadataClient
-        catalog = OnceLoader { try metadataClient.fetch(HomebrewCaskCatalog.url, resource: .homebrewCaskCatalog, derivedAs: "index-v2", HomebrewCaskCatalog.init(data:)) }
+        catalog = OnceLoader {
+            try metadataClient.fetch(HomebrewCaskCatalog.url, resource: .homebrewCaskCatalog, derivedAs: "index-v2", HomebrewCaskCatalog.init(data:))
+        }
         blackmagic = OnceLoader { try BlackmagicDownloads(data: metadataClient.fetch(BlackmagicDownloads.url, resource: .blackmagicDownloads).body) }
         self.storefront = storefront.allSatisfy(\.isLetter) && storefront.count == 2 ? storefront : "us"
         self.systemVersion = systemVersion
@@ -40,7 +45,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
             NativeUpdateCheck(path: application.path, authority: authority, installedVersionKey: key, outcome: outcome, note: note)
         }
         let direct = check(application)
-        guard case .unchecked = direct, ![.steam, .apple, .setapp].contains(application.updateAuthority) else { return result(application.updateAuthority, direct) }
+        guard case .unchecked = direct, ![.steam, .apple, .setapp].contains(application.updateAuthority) else {
+            return result(application.updateAuthority, direct)
+        }
 
         // 1. Homebrew's cask catalog, tied by the exact bundle identifier.
         let catalog: HomebrewCaskCatalog
@@ -50,7 +57,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
         }
         let fileName = (application.path as NSString).lastPathComponent
         if let entry = catalog.entry(bundleIdentifier: application.bundleIdentifier, bundleFileName: fileName) {
-            return result(.homebrewCatalog, compare(entry.upstreamVersion, with: application), note: "Latest version from the Homebrew cask \u{201C}\(entry.token)\u{201D}.")
+            return result(
+                .homebrewCatalog, compare(entry.upstreamVersion, with: application),
+                note: "Latest version from the Homebrew cask \u{201C}\(entry.token)\u{201D}.")
         }
 
         // 2. The app's own GitHub release check, found in its executable.
@@ -58,7 +67,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
         if let repository = BundleURLScanner.releaseRepository(in: urls, for: application) {
             switch latestGitHubRelease(repository) {
             case let .success(release?):
-                return result(.githubReleases, compare(release.version, with: application, notes: release.notes), note: "Latest release of github.com/\(repository.path), which the app checks for updates.")
+                return result(
+                    .githubReleases, compare(release.version, with: application, notes: release.notes),
+                    note: "Latest release of github.com/\(repository.path), which the app checks for updates.")
             case .success(nil): break
             case let .failure(error): return result(.githubReleases, .failed("GitHub releases for \(application.displayName): \(error.localizedDescription)"))
             }
@@ -66,7 +77,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
 
         // 3. A cask with the same app name whose vendor domain the app itself references.
         if let (entry, domain) = catalog.entry(bundleFileName: fileName, referencedHosts: Set(urls.compactMap { $0.host?.lowercased() })) {
-            return result(.homebrewCatalog, compare(entry.upstreamVersion, with: application), note: "Latest version from the Homebrew cask \u{201C}\(entry.token)\u{201D}, matched by app name and the vendor domain \(domain).")
+            return result(
+                .homebrewCatalog, compare(entry.upstreamVersion, with: application),
+                note: "Latest version from the Homebrew cask \u{201C}\(entry.token)\u{201D}, matched by app name and the vendor domain \(domain).")
         }
         if application.shortVersion == nil, application.buildVersion == nil {
             return result(application.updateAuthority, .unchecked("The bundle declares no version, so there is nothing to compare an update with."))
@@ -86,8 +99,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
         do {
             let body = try metadataClient.fetch(url, resource: .githubLatestRelease).body
             guard let release = try JSONSerialization.jsonObject(with: body) as? [String: Any],
-                  release["draft"] as? Bool != true, release["prerelease"] as? Bool != true,
-                  let tag = (release["tag_name"] as? String)?.nonEmpty else { return .success(nil) }
+                release["draft"] as? Bool != true, release["prerelease"] as? Bool != true,
+                let tag = (release["tag_name"] as? String)?.nonEmpty
+            else { return .success(nil) }
             let version = tag.drop { !$0.isNumber }
             guard !version.isEmpty else { return .success(nil) }
             let page = (release["html_url"] as? String).flatMap(URL.init(string:)).flatMap { isPublicHTTPSURL($0) ? $0.absoluteString : nil }
@@ -124,7 +138,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
     /// electron-builder's manifest names either a GitHub repository or a server publishing
     /// `latest-mac.yml`, exactly as the app's own updater reads it.
     private func checkElectron(_ application: NativeApplication) -> NativeUpdateOutcome {
-        guard let manifest = ElectronUpdateManifest(bundlePath: application.bundlePath) else { return .unchecked("The Electron update manifest could not be read.") }
+        guard let manifest = ElectronUpdateManifest(bundlePath: application.bundlePath) else {
+            return .unchecked("The Electron update manifest could not be read.")
+        }
         switch manifest.source {
         case let .github(repository):
             switch latestGitHubRelease(repository) {
@@ -136,7 +152,8 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
             let url = base.appending(path: "latest-mac.yml")
             guard isPublicHTTPSURL(url), let host = url.host?.lowercased() else { return .unchecked("The Electron update server is not a public HTTPS URL.") }
             do {
-                guard let version = ElectronUpdateManifest.version(inLatestYAML: try metadataClient.fetch(url, resource: .electronUpdateFeed(host: host)).body) else { return .unchecked("The Electron update feed lists no version.") }
+                guard let version = ElectronUpdateManifest.version(inLatestYAML: try metadataClient.fetch(url, resource: .electronUpdateFeed(host: host)).body)
+                else { return .unchecked("The Electron update feed lists no version.") }
                 return compare(version, with: application)
             } catch {
                 return .failed("Electron update feed for \(application.displayName): \(error.localizedDescription)")
@@ -172,7 +189,8 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
         case .orderedSame: return .upToDate
         // An app can replace its declared feed at run time (some declare one they stopped
         // updating); a feed with nothing as new as the installed version isn't the one it uses.
-        case .orderedAscending: return .unchecked("The Sparkle feed in the bundle lists nothing newer than \(best.displayVersion), so the app uses another feed.")
+        case .orderedAscending:
+            return .unchecked("The Sparkle feed in the bundle lists nothing newer than \(best.displayVersion), so the app uses another feed.")
         case .orderedDescending: break
         }
         let content = best.releaseNotesHTML.map(HTMLText.plainText(from:)).flatMap { $0.isEmpty ? nil : String($0.prefix(65_536)) }
@@ -184,7 +202,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
     // MARK: Blackmagic
 
     private func checkBlackmagic(_ application: NativeApplication) -> NativeUpdateOutcome {
-        guard let identifier = application.bundleIdentifier, let product = BlackmagicDownloads.product(forBundleIdentifier: identifier) else { return .unchecked("No Blackmagic product matches this application.") }
+        guard let identifier = application.bundleIdentifier, let product = BlackmagicDownloads.product(forBundleIdentifier: identifier) else {
+            return .unchecked("No Blackmagic product matches this application.")
+        }
         let downloads: BlackmagicDownloads
         switch blackmagic.load() {
         case let .success(loaded): downloads = loaded
@@ -199,7 +219,10 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
     private func checkAppStore(_ application: NativeApplication) -> NativeUpdateOutcome {
         guard let bundleIdentifier = application.bundleIdentifier else { return .unchecked("The bundle has no identifier to look up.") }
         var components = URLComponents(string: "https://itunes.apple.com/lookup")!
-        components.queryItems = [URLQueryItem(name: "bundleId", value: bundleIdentifier), URLQueryItem(name: "country", value: storefront), URLQueryItem(name: "entity", value: "macSoftware")]
+        components.queryItems = [
+            URLQueryItem(name: "bundleId", value: bundleIdentifier), URLQueryItem(name: "country", value: storefront),
+            URLQueryItem(name: "entity", value: "macSoftware")
+        ]
         let listing: AppStoreListing?
         do {
             listing = try AppStoreListing.parse(metadataClient.fetch(components.url!, resource: .appStoreLookup).body, bundleIdentifier: bundleIdentifier)
@@ -207,7 +230,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
             return .failed("App Store lookup for \(application.displayName): \(error.localizedDescription)")
         }
         guard let listing else { return .unchecked("Not listed in the \(storefront.uppercased()) App Store.") }
-        let notes = listing.releaseNotes == nil && listing.storeURL == nil ? nil : NativeReleaseNotes(content: listing.releaseNotes.map { String($0.prefix(65_536)) }, sourceURL: listing.storeURL)
+        let notes =
+            listing.releaseNotes == nil && listing.storeURL == nil
+            ? nil : NativeReleaseNotes(content: listing.releaseNotes.map { String($0.prefix(65_536)) }, sourceURL: listing.storeURL)
         let outcome = compare(listing.version, with: application, notes: notes)
         if case .available = outcome, let minimum = listing.minimumSystemVersion, SparkleVersion.compare(systemVersion, minimum) == .orderedAscending {
             return .unchecked("Version \(listing.version) requires macOS \(minimum).")
@@ -249,8 +274,11 @@ struct AppStoreListing: Equatable {
         }
         let matches = results.filter { $0["bundleId"] as? String == bundleIdentifier }
         guard let result = matches.first(where: { $0["kind"] as? String == "mac-software" }) ?? (matches.count == 1 ? matches.first : nil),
-              let version = (result["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !version.isEmpty else { return nil }
+            let version = (result["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !version.isEmpty
+        else { return nil }
         let storeURL = (result["trackViewUrl"] as? String).flatMap(URL.init(string:)).flatMap { $0.scheme == "https" ? $0.absoluteString : nil }
-        return AppStoreListing(version: version, releaseNotes: (result["releaseNotes"] as? String)?.nonEmpty, storeURL: storeURL, minimumSystemVersion: (result["minimumOsVersion"] as? String)?.nonEmpty)
+        return AppStoreListing(
+            version: version, releaseNotes: (result["releaseNotes"] as? String)?.nonEmpty, storeURL: storeURL,
+            minimumSystemVersion: (result["minimumOsVersion"] as? String)?.nonEmpty)
     }
 }

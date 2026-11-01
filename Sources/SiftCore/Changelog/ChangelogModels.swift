@@ -37,7 +37,10 @@ public struct Changelog: Codable, Equatable, Sendable {
     /// written by date instead of version (Claude's, Figma's release notes).
     public var installedAt: Date?
 
-    public init(selector: String, name: String, installedVersion: String?, availableVersion: String?, source: String, sourceURL: String?, entries: [ChangelogEntry], fetchedAt: Date, staleReason: String? = nil) {
+    public init(
+        selector: String, name: String, installedVersion: String?, availableVersion: String?, source: String, sourceURL: String?, entries: [ChangelogEntry],
+        fetchedAt: Date, staleReason: String? = nil
+    ) {
         self.selector = selector
         self.name = name
         self.installedVersion = installedVersion
@@ -62,11 +65,13 @@ public struct Changelog: Codable, Equatable, Sendable {
         if let index = ChangelogVersion.installedIndex(in: entries, installed: installed) { return Array(entries[..<index]) }
         // The installed version has no entry of its own (a rebuild, or a source that skips
         // versions): keep the entries that compare newer.
-        guard entries.contains(where: { ChangelogVersion.token(in: $0.version) != nil }), !ChangelogVersion.isCalendarDated(entries, installed: installed) else { return [] }
-        return Array(entries.prefix { entry in
-            guard let token = ChangelogVersion.token(in: entry.version) else { return false }
-            return SparkleVersion.compare(token, installed) == .orderedDescending
-        })
+        guard entries.contains(where: { ChangelogVersion.token(in: $0.version) != nil }), !ChangelogVersion.isCalendarDated(entries, installed: installed)
+        else { return [] }
+        return Array(
+            entries.prefix { entry in
+                guard let token = ChangelogVersion.token(in: entry.version) else { return false }
+                return SparkleVersion.compare(token, installed) == .orderedDescending
+            })
     }
 
     /// Entries by date rather than version: day-numbered, or calendar numbers for an app with
@@ -91,9 +96,13 @@ enum ChangelogVersion {
     /// "2.103.2"; "Version 8" is "8".
     static func token(in text: String) -> String? {
         // A short word may be attached: "go1.25.0", "bash-5.3-release", "v2.1".
-        if let match = text.firstMatch(of: #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#), text.range(of: "from", options: .caseInsensitive) != nil { return String(match.1) }
+        if let match = text.firstMatch(of: #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#), text.range(of: "from", options: .caseInsensitive) != nil {
+            return String(match.1)
+        }
         // The number after "release" or "version" wins over others ("POSIX 1003.1" in a heading).
-        if let match = text.firstMatch(of: #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#) { return String(match.1) }
+        if let match = text.firstMatch(of: #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#) {
+            return String(match.1)
+        }
         let pattern = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
         if let match = text.firstMatch(of: pattern) { return String(match.1) }
         if let match = text.firstMatch(of: #/(?i)\b(?:version|build)\s+(\d+)\b/#) { return String(match.1) }
@@ -168,10 +177,15 @@ enum ChangelogVersion {
 
     /// The index of the installed version's entry: an exact match, or else a loose one.
     static func installedIndex(in entries: [ChangelogEntry], installed: String) -> Int? {
-        if let index = entries.firstIndex(where: { matches($0.version, installed) }) ?? entries.firstIndex(where: { looselyMatches($0.version, installed) }) { return index }
+        if let index = entries.firstIndex(where: { matches($0.version, installed) }) ?? entries.firstIndex(where: { looselyMatches($0.version, installed) }) {
+            return index
+        }
         // A build number as the last part (Word's 16.114.26102720 is "16.114.3 (Build 26102720)").
         if let build = installed.split(separator: ".").last, build.count >= 6, build.allSatisfy(\.isNumber),
-           let index = entries.firstIndex(where: { ($0.title ?? "").contains(build) || $0.content.prefix(200).contains(build) }) { return index }
+            let index = entries.firstIndex(where: { ($0.title ?? "").contains(build) || $0.content.prefix(200).contains(build) })
+        {
+            return index
+        }
         // A patch level of a release line the project documents only as a whole (Bash 5.3.20 is
         // patch 20 of 5.3, and CHANGES has one entry for 5.3).
         // Likewise Raycast's 2.10.1.0 under its 2.10 entry: the longest release line listed with

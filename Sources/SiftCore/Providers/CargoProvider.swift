@@ -28,9 +28,10 @@ public struct CargoProvider: Sendable {
         let record = cargoHome.appending(path: ".crates2.json")
         guard FileManager.default.fileExists(atPath: record.path) else { return CargoInventory(cargoHome: nil, crates: [], warnings: []) }
         guard let values = try? record.resourceValues(forKeys: [.fileSizeKey]), (values.fileSize ?? .max) <= 16 * 1_048_576,
-              let data = try? Data(contentsOf: record),
-              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let installs = document["installs"] as? [String: [String: Any]] else {
+            let data = try? Data(contentsOf: record),
+            let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let installs = document["installs"] as? [String: [String: Any]]
+        else {
             return CargoInventory(cargoHome: cargoHome.path, crates: [], warnings: ["Cargo's install record at \(record.path) could not be read."])
         }
         var crates: [CargoCrate] = []
@@ -39,7 +40,9 @@ public struct CargoProvider: Sendable {
             let parts = key.split(separator: " ", maxSplits: 2).map(String.init)
             guard parts.count == 3, parts[2].contains("crates.io-index") || parts[2].contains("index.crates.io") else { continue }
             let binaries = install["bins"] as? [String] ?? []
-            guard binaries.contains(where: { FileManager.default.isExecutableFile(atPath: cargoHome.appending(path: "bin").appending(path: $0).path) }) else { continue }
+            guard binaries.contains(where: { FileManager.default.isExecutableFile(atPath: cargoHome.appending(path: "bin").appending(path: $0).path) }) else {
+                continue
+            }
             crates.append(CargoCrate(name: parts[0], version: parts[1]))
         }
         return CargoInventory(cargoHome: cargoHome.path, crates: crates.sorted { $0.name < $1.name }, warnings: [])
@@ -67,8 +70,9 @@ public struct CargoProvider: Sendable {
         var best: String?
         for line in indexData.split(separator: UInt8(ascii: "\n")) {
             guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  let version = entry["vers"] as? String, entry["yanked"] as? Bool != true,
-                  allowPrerelease || !isPrerelease(version) else { continue }
+                let version = entry["vers"] as? String, entry["yanked"] as? Bool != true,
+                allowPrerelease || !isPrerelease(version)
+            else { continue }
             let core = version.split(separator: "+").first.map(String.init) ?? version
             if best.map({ SemanticVersion.compare(core, $0) == .orderedDescending }) ?? true { best = core }
         }
@@ -105,7 +109,10 @@ enum SemanticVersion {
     private static func split(_ version: String) -> (core: [Substring], prerelease: [Substring]?) {
         let withoutBuild = version.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false).first ?? ""
         let pieces = withoutBuild.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-        return (pieces[0].split(separator: ".", omittingEmptySubsequences: false), pieces.count > 1 ? pieces[1].split(separator: ".", omittingEmptySubsequences: false) : nil)
+        return (
+            pieces[0].split(separator: ".", omittingEmptySubsequences: false),
+            pieces.count > 1 ? pieces[1].split(separator: ".", omittingEmptySubsequences: false) : nil
+        )
     }
 
     /// Digit strings by value, without overflow; leading zeros don't count.

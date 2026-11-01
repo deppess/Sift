@@ -57,7 +57,9 @@ func isRegularExecutable(_ url: URL) -> Bool {
 public struct CommandRunner: Sendable {
     public init() {}
 
-    public func run(executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024) throws -> CommandResult {
+    public func run(executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024)
+        throws -> CommandResult
+    {
         guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path) else { throw CommandRunnerError.notExecutable(executable) }
         guard timeout > 0, outputLimit > 0 else { throw CommandRunnerError.outputTooLarge(executable) }
         let stdout = Pipe()
@@ -175,10 +177,11 @@ public struct CommandRunner: Sendable {
         // the terminal. Standard input is /dev/null: nothing Sift runs may wait on a prompt.
         let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
         guard posix_spawnattr_setflags(&attributes, flags) == 0,
-              posix_spawnattr_setpgroup(&attributes, 0) == 0,
-              posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
-              posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) == 0,
-              posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO) == 0 else {
+            posix_spawnattr_setpgroup(&attributes, 0) == 0,
+            posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
+            posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) == 0,
+            posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO) == 0
+        else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
 

@@ -63,7 +63,10 @@ public struct HomebrewCaskCatalog: Codable, Sendable {
                 }
             }
             let vendorDomains = Set([cask["homepage"], cask["url"]].compactMap { ($0 as? String).flatMap(URL.init(string:))?.host.flatMap(Self.vendorDomain) })
-            casks.append(Cask(entry: Entry(token: token, version: version), appNames: appNames, installsPackage: installsPackage, vendorDomains: vendorDomains, quits: quits, mentions: mentions))
+            casks.append(
+                Cask(
+                    entry: Entry(token: token, version: version), appNames: appNames, installsPackage: installsPackage, vendorDomains: vendorDomains,
+                    quits: quits, mentions: mentions))
         }
         self.init(casks: casks)
     }
@@ -102,7 +105,7 @@ public struct HomebrewCaskCatalog: Codable, Sendable {
         let tiers: [[Int]] = [
             byQuitIdentifier[identifier] ?? [],
             (byAppName[fileName] ?? []).filter(mentioning.contains),
-            mentioning.filter { casks[$0].appNames.isEmpty && casks[$0].installsPackage }.sorted(),
+            mentioning.filter { casks[$0].appNames.isEmpty && casks[$0].installsPackage }.sorted()
         ]
         for tier in tiers where !tier.isEmpty {
             let unique = Array(Set(tier))
@@ -114,7 +117,11 @@ public struct HomebrewCaskCatalog: Codable, Sendable {
     }
 
     /// Hosts that serve many unrelated vendors, so sharing one says nothing about who made an app.
-    private static let sharedHosts: Set<String> = ["github.com", "githubusercontent.com", "github.io", "amazonaws.com", "cloudfront.net", "sourceforge.net", "google.com", "apple.com", "microsoft.com", "dropbox.com", "gitlab.com", "bitbucket.org", "sparkle-project.org", "cloudflare.com", "azureedge.net", "akamaized.net", "digitaloceanspaces.com", "backblazeb2.com", "r2.dev", "workers.dev", "netlify.app", "vercel.app", "itch.io"]
+    private static let sharedHosts: Set<String> = [
+        "github.com", "githubusercontent.com", "github.io", "amazonaws.com", "cloudfront.net", "sourceforge.net", "google.com", "apple.com", "microsoft.com",
+        "dropbox.com", "gitlab.com", "bitbucket.org", "sparkle-project.org", "cloudflare.com", "azureedge.net", "akamaized.net", "digitaloceanspaces.com",
+        "backblazeb2.com", "r2.dev", "workers.dev", "netlify.app", "vercel.app", "itch.io"
+    ]
 
     /// The weaker tier: exactly one stable cask installs an app with this file name, and the app
     /// itself references that cask's vendor domain (its homepage or download host). Two
@@ -131,7 +138,8 @@ public struct HomebrewCaskCatalog: Codable, Sendable {
     static func vendorDomain(_ host: String) -> String? {
         let labels = host.lowercased().split(separator: ".").map(String.init)
         guard labels.count >= 2 else { return nil }
-        let keep = labels.count >= 3 && labels[labels.count - 1].count == 2 && ["co", "com", "org", "net", "ac", "gov"].contains(labels[labels.count - 2]) ? 3 : 2
+        let keep =
+            labels.count >= 3 && labels[labels.count - 1].count == 2 && ["co", "com", "org", "net", "ac", "gov"].contains(labels[labels.count - 2]) ? 3 : 2
         let domain = labels.suffix(keep).joined(separator: ".")
         return sharedHosts.contains(domain) ? nil : domain
     }
@@ -145,7 +153,9 @@ public struct HomebrewCaskCatalog: Codable, Sendable {
         }
     }
 
-    private static let fileSuffixes: Set<String> = ["plist", "savedstate", "binarycookies", "help", "log", "sfl", "sfl2", "sfl3", "sfl4", "lssharedfilelist", "helper", "diagnostic"]
+    private static let fileSuffixes: Set<String> = [
+        "plist", "savedstate", "binarycookies", "help", "log", "sfl", "sfl2", "sfl3", "sfl4", "lssharedfilelist", "helper", "diagnostic"
+    ]
 
     /// The identifier each path component names: the component itself, or the component without a
     /// file suffix or wildcard, so "~/Library/Preferences/com.example.NetGuardAgent.plist" yields

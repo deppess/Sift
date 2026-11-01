@@ -41,7 +41,7 @@ struct HomebrewLivecheck: Equatable {
             "#{version.csv.second}": csv.count > 1 ? csv[1] : "",
             "#{version.major}": parts.first ?? "",
             "#{version.major_minor}": parts.prefix(2).joined(separator: "."),
-            "#{version.major_minor_patch}": parts.prefix(3).joined(separator: "."),
+            "#{version.major_minor_patch}": parts.prefix(3).joined(separator: ".")
         ]
         for (key, value) in substitutions { text = text.replacingOccurrences(of: key, with: value) }
         guard !text.contains("#{"), let url = URL(string: text), isPublicHTTPSURL(url) else { return nil }
@@ -88,7 +88,9 @@ enum UpdateFeedJSON {
                         if let number = object[key] as? Double { return Date(timeIntervalSince1970: number > 1e11 ? number / 1000 : number) }
                         return nil
                     }.first
-                    entries.append(ChangelogEntry(version: version, date: date, content: value.contains("<") ? HTMLMarkdown.convert(value) : ChangelogDocument.tidy(value)))
+                    entries.append(
+                        ChangelogEntry(version: version, date: date, content: value.contains("<") ? HTMLMarkdown.convert(value) : ChangelogDocument.tidy(value))
+                    )
                 }
                 break
             }

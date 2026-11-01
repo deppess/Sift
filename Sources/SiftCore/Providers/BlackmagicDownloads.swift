@@ -10,7 +10,7 @@ struct BlackmagicDownloads: Sendable {
         "com.blackmagic-design.davinciresolve": "davinci-resolve",
         "com.blackmagic-design.davinciresolvestudio": "davinci-resolve-studio",
         "com.blackmagic-design.blackmagicrawplayer": "braw-sdk",
-        "com.blackmagic-design.blackmagicrawspeedtest": "braw-sdk",
+        "com.blackmagic-design.blackmagicrawspeedtest": "braw-sdk"
     ]
 
     static func product(forBundleIdentifier identifier: String) -> String? {
@@ -27,7 +27,8 @@ struct BlackmagicDownloads: Sendable {
         for download in downloads {
             // Public betas are listed alongside releases.
             guard let name = download["name"] as? String, !name.localizedCaseInsensitiveContains("beta"),
-                  let urls = download["urls"] as? [String: Any], let mac = urls["Mac OS X"] as? [[String: Any]] else { continue }
+                let urls = download["urls"] as? [String: Any], let mac = urls["Mac OS X"] as? [[String: Any]]
+            else { continue }
             for release in mac {
                 guard let product = release["product"] as? String, let major = release["major"] as? Int, let minor = release["minor"] as? Int else { continue }
                 let version = (major, minor, release["releaseNum"] as? Int ?? 0)

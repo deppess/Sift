@@ -9,11 +9,22 @@ final class HomebrewTests: XCTestCase {
         let url = temporaryDatabaseURL()
         do {
             let database = try Database(url: url)
-            let notes = HomebrewReleaseNotes(name: "yazi", installedVersion: "25.5.31", availableVersion: "26.8.15", content: "## [v26.8.15]\n- Drag and drop", sourceURL: "https://example.test/changelog", coverage: "complete")
+            let notes = HomebrewReleaseNotes(
+                name: "yazi", installedVersion: "25.5.31", availableVersion: "26.8.15", content: "## [v26.8.15]\n- Drag and drop",
+                sourceURL: "https://example.test/changelog", coverage: "complete")
             let package = homebrewPackage(kind: .formula, name: "yazi")
             let key = HomebrewPackageKey(package)
-            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: notes.availableVersion, sourceURL: notes.sourceURL))], releaseNoteResults: [key: .resolved(notes)]))
-            XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: notes.installedVersion, availableVersion: notes.availableVersion), notes)
+            _ = try database.applyRefresh(
+                refreshInput(
+                    at: Date(timeIntervalSince1970: 1_000),
+                    homebrewInventory: HomebrewInventory(prefixes: [
+                        HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])
+                    ]), targetResults: [key: .resolved(HomebrewTarget(version: notes.availableVersion, sourceURL: notes.sourceURL))],
+                    releaseNoteResults: [key: .resolved(notes)]))
+            XCTAssertEqual(
+                try database.homebrewReleaseNotes(
+                    prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: notes.installedVersion,
+                    availableVersion: notes.availableVersion), notes)
         }
         removeDatabase(at: url)
     }
@@ -23,12 +34,20 @@ final class HomebrewTests: XCTestCase {
         do {
             let database = try Database(url: url)
             let package = homebrewPackage(kind: .formula, name: "example")
-            let first = HomebrewReleaseNotes(name: package.fullName, installedVersion: "1.0", availableVersion: "2.0", content: "from 1.0", sourceURL: "https://example.test/one", coverage: "repositoryCommits")
-            let second = HomebrewReleaseNotes(name: package.fullName, installedVersion: "1.5", availableVersion: "2.0", content: "from 1.5", sourceURL: "https://example.test/two", coverage: "repositoryCommits")
+            let first = HomebrewReleaseNotes(
+                name: package.fullName, installedVersion: "1.0", availableVersion: "2.0", content: "from 1.0", sourceURL: "https://example.test/one",
+                coverage: "repositoryCommits")
+            let second = HomebrewReleaseNotes(
+                name: package.fullName, installedVersion: "1.5", availableVersion: "2.0", content: "from 1.5", sourceURL: "https://example.test/two",
+                coverage: "repositoryCommits")
             try database.storeReleaseNotes(first, prefix: package.prefix, kind: package.kind)
             try database.storeReleaseNotes(second, prefix: package.prefix, kind: package.kind)
-            XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: "1.0", availableVersion: "2.0"), first)
-            XCTAssertEqual(try database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: "1.5", availableVersion: "2.0"), second)
+            XCTAssertEqual(
+                try database.homebrewReleaseNotes(
+                    prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: "1.0", availableVersion: "2.0"), first)
+            XCTAssertEqual(
+                try database.homebrewReleaseNotes(
+                    prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: "1.5", availableVersion: "2.0"), second)
         }
         removeDatabase(at: url)
     }
@@ -39,7 +58,9 @@ final class HomebrewTests: XCTestCase {
             let database = try Database(url: url)
             let cask = homebrewPackage(kind: .cask, name: "example", artifacts: ["/Applications/Example.app"])
             let first = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])])
-            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: first, targetResults: [HomebrewPackageKey(cask): .unavailable("not checked")]))
+            _ = try database.applyRefresh(
+                refreshInput(
+                    at: Date(timeIntervalSince1970: 1_000), homebrewInventory: first, targetResults: [HomebrewPackageKey(cask): .unavailable("not checked")]))
 
             let empty = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [], complete: true, warnings: [])])
             _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), homebrewInventory: empty))
@@ -55,9 +76,19 @@ final class HomebrewTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let formula = homebrewPackage(kind: .formula, name: "example")
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])]), targetResults: [HomebrewPackageKey(formula): .unavailable("not checked")]))
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])
+                ]), targetResults: [HomebrewPackageKey(formula): .unavailable("not checked")]))
 
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [], complete: false, warnings: ["offline"])])))
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 2_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: formula.prefix, packages: [], complete: false, warnings: ["offline"])
+                ])))
 
         XCTAssertEqual(try database.catalogItems().map(\.name), ["example"])
     }
@@ -66,15 +97,29 @@ final class HomebrewTests: XCTestCase {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
-        let native = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [native], scannedRoots: ["/Applications"], candidatePaths: [native.path])))
+        let native = NativeApplication(
+            path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                nativeInventory: NativeInventoryResult(applications: [native], scannedRoots: ["/Applications"], candidatePaths: [native.path])))
 
         let cask = homebrewPackage(kind: .cask, name: "example", artifacts: [native.path])
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]), targetResults: [HomebrewPackageKey(cask): .unavailable("not checked")]))
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 2_000),
+                homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]),
+                targetResults: [HomebrewPackageKey(cask): .unavailable("not checked")]))
         XCTAssertFalse(try database.catalogItems().contains { $0.kind == .nativeApp })
 
         let movedCask = homebrewPackage(kind: .cask, name: "example", artifacts: ["/Applications/Renamed.app"])
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 3_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: movedCask.prefix, packages: [movedCask], complete: true, warnings: [])]), targetResults: [HomebrewPackageKey(movedCask): .unavailable("not checked")]))
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 3_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: movedCask.prefix, packages: [movedCask], complete: true, warnings: [])
+                ]), targetResults: [HomebrewPackageKey(movedCask): .unavailable("not checked")]))
         XCTAssertTrue(try database.catalogItems().contains { $0.kind == .nativeApp })
     }
 
@@ -84,7 +129,11 @@ final class HomebrewTests: XCTestCase {
         let database = try Database(url: url)
         let cask = homebrewPackage(kind: .cask, name: "example", autoUpdates: true)
         let key = HomebrewPackageKey(cask)
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: "2.0", sourceURL: nil))]))
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])]),
+                targetResults: [key: .resolved(HomebrewTarget(version: "2.0", sourceURL: nil))]))
 
         XCTAssertEqual(try database.homebrewUpdates().first?.autoUpdates, true)
         XCTAssertEqual(try database.catalogItems().first?.autoUpdates, true)
@@ -97,10 +146,16 @@ final class HomebrewTests: XCTestCase {
         let formula = homebrewPackage(kind: .formula, name: "formula")
         let cask = homebrewPackage(kind: .cask, name: "cask", autoUpdates: true)
         let packages = [formula, cask]
-        let targets = Dictionary(uniqueKeysWithValues: packages.map { package in
-            (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
-        })
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: packages, complete: true, warnings: [])]), targetResults: targets))
+        let targets = Dictionary(
+            uniqueKeysWithValues: packages.map { package in
+                (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
+            })
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: formula.prefix, packages: packages, complete: true, warnings: [])
+                ]), targetResults: targets))
 
         // An auto-updating cask doesn't need the user's attention, so it must not inflate the
         // main count; DashboardRenderer already has working display code for informationalUpdateCount.
@@ -118,12 +173,20 @@ final class HomebrewTests: XCTestCase {
         // requirement) is never installed on request; PROJECT.md's scope explicitly "defaults
         // dashboard output to requested formulae," so its own pending update must not count as
         // something the user needs to act on.
-        let dependency = HomebrewPackage(prefix: "/opt/homebrew", kind: .formula, name: "dependency", fullName: "dependency", tap: "homebrew/core", ownership: .dependency, installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
+        let dependency = HomebrewPackage(
+            prefix: "/opt/homebrew", kind: .formula, name: "dependency", fullName: "dependency", tap: "homebrew/core", ownership: .dependency,
+            installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
         let packages = [requested, dependency]
-        let targets = Dictionary(uniqueKeysWithValues: packages.map { package in
-            (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
-        })
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: requested.prefix, packages: packages, complete: true, warnings: [])]), targetResults: targets))
+        let targets = Dictionary(
+            uniqueKeysWithValues: packages.map { package in
+                (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
+            })
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: requested.prefix, packages: packages, complete: true, warnings: [])
+                ]), targetResults: targets))
 
         let dashboard = try database.dashboard()
         XCTAssertEqual(dashboard.data.availableUpdateCount, 1)
@@ -135,12 +198,20 @@ final class HomebrewTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let requested = homebrewPackage(kind: .formula, name: "requested")
-        let dependency = HomebrewPackage(prefix: "/opt/homebrew", kind: .formula, name: "dependency", fullName: "dependency", tap: "homebrew/core", ownership: .dependency, installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
+        let dependency = HomebrewPackage(
+            prefix: "/opt/homebrew", kind: .formula, name: "dependency", fullName: "dependency", tap: "homebrew/core", ownership: .dependency,
+            installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
         let packages = [requested, dependency]
-        let targets = Dictionary(uniqueKeysWithValues: packages.map { package in
-            (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
-        })
-        _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: requested.prefix, packages: packages, complete: true, warnings: [])]), targetResults: targets))
+        let targets = Dictionary(
+            uniqueKeysWithValues: packages.map { package in
+                (HomebrewPackageKey(package), HomebrewTargetResolution.resolved(HomebrewTarget(version: "2.0", sourceURL: nil)))
+            })
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: requested.prefix, packages: packages, complete: true, warnings: [])
+                ]), targetResults: targets))
 
         XCTAssertEqual(try database.homebrewUpdates().map(\.name), ["requested"])
         XCTAssertEqual(try database.homebrewUpdates(includeAll: true).map(\.name).sorted(), ["dependency", "requested"])
@@ -158,7 +229,10 @@ final class HomebrewTests: XCTestCase {
         let results = RefreshProvider.allCases.map {
             ProviderRefreshResult(provider: $0, status: .success, startedAt: observedAt, finishedAt: observedAt, dataAsOf: observedAt)
         }
-        let input = RefreshPersistenceInput(startedAt: observedAt, finishedAt: observedAt, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])]), targetResults: [key: .resolved(HomebrewTarget(version: "2.0", sourceURL: nil))], releaseNoteResults: [:], providerResults: results)
+        let input = RefreshPersistenceInput(
+            startedAt: observedAt, finishedAt: observedAt, nativeInventory: NativeInventoryResult(applications: []),
+            homebrewInventory: HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: [])]
+            ), targetResults: [key: .resolved(HomebrewTarget(version: "2.0", sourceURL: nil))], releaseNoteResults: [:], providerResults: results)
         _ = try database.applyRefresh(input)
 
         let update = try XCTUnwrap(database.homebrewUpdates(now: observedAt.addingTimeInterval(120), staleAfter: 120).first)
@@ -171,19 +245,23 @@ final class HomebrewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let brokenDirectory = root.appending(path: "broken", directoryHint: .isDirectory)
-        try writeExecutable(at: workingDirectory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
-        try writeExecutable(at: brokenDirectory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            exit 1
-            """)
+        try writeExecutable(
+            at: workingDirectory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
+        try writeExecutable(
+            at: brokenDirectory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                exit 1
+                """)
 
         let provider = HomebrewProvider(environment: [:], standardDirectories: [workingDirectory.path, brokenDirectory.path])
         let inventory = provider.discover()
@@ -201,15 +279,17 @@ final class HomebrewTests: XCTestCase {
     func testHomebrewProviderHandlesFormulaWithoutStableURL() throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "sift-brew-nostable-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: directory) }
-        try writeExecutable(at: directory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}]}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"],"current_version":"1.1.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}]}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"],"current_version":"1.1.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = HomebrewProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -227,15 +307,17 @@ final class HomebrewTests: XCTestCase {
         // last in the "installed" array, but linked_keg names the actually-active version. Picking
         // the array's last entry instead of honoring linked_keg would report the wrong installed
         // version here.
-        try writeExecutable(at: directory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"node@20","full_name":"node@20","tap":"homebrew/core","linked_keg":"20.10.0","installed":[{"version":"20.10.0","installed_on_request":true,"time":200},{"version":"18.19.0","installed_on_request":false,"time":100}]}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"node@20","full_name":"node@20","tap":"homebrew/core","linked_keg":"20.10.0","installed":[{"version":"20.10.0","installed_on_request":true,"time":200},{"version":"18.19.0","installed_on_request":false,"time":100}]}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = HomebrewProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -248,15 +330,17 @@ final class HomebrewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         // No linked_keg at all (common for keg-only formulae that are never linked): the most
         // recently installed receipt is used rather than whichever sorts last in the array.
-        try writeExecutable(at: directory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"openssl@3","full_name":"openssl@3","tap":"homebrew/core","installed":[{"version":"3.2.0","installed_on_request":true,"time":500},{"version":"3.1.0","installed_on_request":false,"time":100}]}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"openssl@3","full_name":"openssl@3","tap":"homebrew/core","installed":[{"version":"3.2.0","installed_on_request":true,"time":500},{"version":"3.1.0","installed_on_request":false,"time":100}]}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = HomebrewProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -269,19 +353,23 @@ final class HomebrewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         // A cask mid-upgrade (or a formula with an older keg still on disk) lists every installed
         // version; the update is still real and must not be dropped.
-        try writeExecutable(at: directory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[],"casks":[{"token":"meshnet","full_token":"meshnet","installed":"1.104.1","artifacts":[]}]}' ;;
-                outdated) printf '{"formulae":[],"casks":[{"name":"meshnet","installed_versions":["1.102.2","1.104.1"],"current_version":"1.104.2"}]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[],"casks":[{"token":"meshnet","full_token":"meshnet","installed":"1.104.1","artifacts":[]}]}' ;;
+                    outdated) printf '{"formulae":[],"casks":[{"name":"meshnet","installed_versions":["1.102.2","1.104.1"],"current_version":"1.104.2"}]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let inventory = HomebrewProvider(environment: [:], standardDirectories: [directory.path]).discover()
         let prefix = inventory.prefixes.first
-        XCTAssertEqual(prefix?.outdatedCandidates, [HomebrewOutdatedCandidate(kind: .cask, name: "meshnet", installedVersions: ["1.102.2", "1.104.1"], availableVersion: "1.104.2")])
+        XCTAssertEqual(
+            prefix?.outdatedCandidates,
+            [HomebrewOutdatedCandidate(kind: .cask, name: "meshnet", installedVersions: ["1.102.2", "1.104.1"], availableVersion: "1.104.2")])
         XCTAssertEqual(prefix?.warnings, [])
     }
 
@@ -290,15 +378,17 @@ final class HomebrewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         // "widget" has no current_version alongside a well-formed "gadget" entry. The malformed
         // entry must not throw away gadget's real update.
-        try writeExecutable(at: directory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}]},{"name":"gadget","full_name":"gadget","tap":"homebrew/core","installed":[{"version":"2.0.0","installed_on_request":true}]}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"]},{"name":"gadget","installed_versions":["2.0.0"],"current_version":"2.1.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}]},{"name":"gadget","full_name":"gadget","tap":"homebrew/core","installed":[{"version":"2.0.0","installed_on_request":true}]}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"]},{"name":"gadget","installed_versions":["2.0.0"],"current_version":"2.1.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = HomebrewProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -316,15 +406,17 @@ final class HomebrewTests: XCTestCase {
         // "widget" has no "installed" receipts at all (an unexpected `info --installed` shape)
         // alongside a normal, well-formed "gadget" entry. The malformed entry must not discard
         // gadget from the whole prefix's inventory.
-        try writeExecutable(at: directory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[]},{"name":"gadget","full_name":"gadget","tap":"homebrew/core","installed":[{"version":"2.0.0","installed_on_request":true}]}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[]},{"name":"gadget","full_name":"gadget","tap":"homebrew/core","installed":[{"version":"2.0.0","installed_on_request":true}]}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = HomebrewProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -343,15 +435,17 @@ final class HomebrewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let brewURL = workingDirectory.appending(path: "brew")
-        try writeExecutable(at: brewURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"],"current_version":"1.1.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: brewURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"],"current_version":"1.1.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         let coordinator = RefreshCoordinator(
             database: database,
             nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
@@ -370,15 +464,17 @@ final class HomebrewTests: XCTestCase {
         // mismatch must not be read as "confirmed no update" — the previously cached 1.1.0 target
         // must survive and remain visible in `sift updates`, not be cleared to nil
         // or replaced by the mismatched candidate's 2.0.0.
-        try writeExecutable(at: brewURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["0.9.0"],"current_version":"2.0.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: brewURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["0.9.0"],"current_version":"2.0.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         let secondSummary = try coordinator.refresh(now: Date(timeIntervalSince1970: 200_000))
         XCTAssertEqual(secondSummary.status, .partial)
         let updates = try database.homebrewUpdates(now: Date(timeIntervalSince1970: 200_000))
@@ -394,15 +490,17 @@ final class HomebrewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let brewURL = workingDirectory.appending(path: "brew")
-        try writeExecutable(at: brewURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"],"current_version":"1.1.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: brewURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0.0"],"current_version":"1.1.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         let coordinator = RefreshCoordinator(
             database: database,
             nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
@@ -422,15 +520,17 @@ final class HomebrewTests: XCTestCase {
         // never actually resolved against 1.5.0, so it must not be shown as widget's current
         // update: that would pair today's installed_version with an available_version that was
         // computed against a completely different, superseded installed_version.
-        try writeExecutable(at: brewURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.5.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["0.9.0"],"current_version":"2.0.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: brewURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.5.0","installed_on_request":true}],"urls":{"stable":{"url":"https://example.test/widget"}}}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["0.9.0"],"current_version":"2.0.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         _ = try coordinator.refresh(now: Date(timeIntervalSince1970: 200_000))
         XCTAssertEqual(try database.homebrewUpdates(now: Date(timeIntervalSince1970: 200_000)).map(\.availableVersion), [])
         XCTAssertEqual(try database.dashboard(now: Date(timeIntervalSince1970: 200_000)).data.availableUpdateCount, 0)
@@ -441,18 +541,21 @@ final class HomebrewTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
 
-        let root = FileManager.default.temporaryDirectory.appending(path: "sift-refresh-brew-concurrent-notes-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "sift-refresh-brew-concurrent-notes-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
-        try writeExecutable(at: workingDirectory.appending(path: "brew"), contents: """
-            #!/bin/sh
-            case "$1" in
-                --prefix) echo "/fake/brewA" ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":true}],"urls":{"stable":{"url":"https://github.com/ownerA/repoA"}}},{"name":"gadget","full_name":"gadget","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":true}],"urls":{"stable":{"url":"https://github.com/ownerB/repoB"}}}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0"],"current_version":"2.0"},{"name":"gadget","installed_versions":["1.0"],"current_version":"3.0"}],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: workingDirectory.appending(path: "brew"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    --prefix) echo "/fake/brewA" ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":true}],"urls":{"stable":{"url":"https://github.com/ownerA/repoA"}}},{"name":"gadget","full_name":"gadget","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":true}],"urls":{"stable":{"url":"https://github.com/ownerB/repoB"}}}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[{"name":"widget","installed_versions":["1.0"],"current_version":"2.0"},{"name":"gadget","installed_versions":["1.0"],"current_version":"3.0"}],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let commitA = String(repeating: "a", count: 40)
         let commitB = String(repeating: "b", count: 40)
@@ -487,45 +590,55 @@ final class HomebrewTests: XCTestCase {
             nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
             homebrewProvider: HomebrewProvider(environment: [:], standardDirectories: [workingDirectory.path]),
             npmGlobalProvider: NPMGlobalProvider(environment: [:], standardDirectories: []),
-            uvToolProvider: UVToolProvider(environment: [:], standardDirectories: []), steamProvider: .absent, macPortsProvider: .absent, cargoProvider: .absent,
+            uvToolProvider: UVToolProvider(environment: [:], standardDirectories: []), steamProvider: .absent, macPortsProvider: .absent,
+            cargoProvider: .absent,
             releaseNotes: releaseNotes
         )
         let summary = try coordinator.refresh(now: Date(timeIntervalSince1970: 1_000))
         XCTAssertEqual(summary.status, .success)
         XCTAssertEqual(summary.releaseNotesFetchedCount, 2)
 
-        let widgetNotes = try database.homebrewReleaseNotes(prefix: "/fake/brewA", kind: .formula, fullName: "widget", installedVersion: "1.0", availableVersion: "2.0")
-        let gadgetNotes = try database.homebrewReleaseNotes(prefix: "/fake/brewA", kind: .formula, fullName: "gadget", installedVersion: "1.0", availableVersion: "3.0")
+        let widgetNotes = try database.homebrewReleaseNotes(
+            prefix: "/fake/brewA", kind: .formula, fullName: "widget", installedVersion: "1.0", availableVersion: "2.0")
+        let gadgetNotes = try database.homebrewReleaseNotes(
+            prefix: "/fake/brewA", kind: .formula, fullName: "gadget", installedVersion: "1.0", availableVersion: "3.0")
         XCTAssertEqual(widgetNotes?.content, "Notes for widget.")
         XCTAssertEqual(gadgetNotes?.content, "Notes for gadget.")
     }
 
     // MARK: - Automatic brew update
 
-    private func updateFixture(updateExit: Int32 = 0, environment: [String: String] = [:]) throws -> (root: URL, provider: (HomebrewUpdatePolicy, Date) -> (HomebrewInventory, [String], [String])) {
+    private func updateFixture(updateExit: Int32 = 0, environment: [String: String] = [:]) throws -> (
+        root: URL, provider: (HomebrewUpdatePolicy, Date) -> (HomebrewInventory, [String], [String])
+    ) {
         let root = FileManager.default.temporaryDirectory.appending(path: "sift-brew-update-\(UUID().uuidString)", directoryHint: .isDirectory)
         let prefix = root.appending(path: "prefix", directoryHint: .isDirectory)
         let log = root.appending(path: "calls.log")
         try FileManager.default.createDirectory(at: prefix.appending(path: ".git"), withIntermediateDirectories: true)
-        try writeExecutable(at: root.appending(path: "bin/brew"), contents: """
-            #!/bin/sh
-            echo "$1" >> '\(log.path)'
-            case "$1" in
-                update) exit \(updateExit) ;;
-                --prefix) echo '\(prefix.path)' ;;
-                info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}]}],"casks":[]}' ;;
-                outdated) printf '{"formulae":[],"casks":[]}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: root.appending(path: "bin/brew"),
+            contents: """
+                #!/bin/sh
+                echo "$1" >> '\(log.path)'
+                case "$1" in
+                    update) exit \(updateExit) ;;
+                    --prefix) echo '\(prefix.path)' ;;
+                    info) printf '{"formulae":[{"name":"widget","full_name":"widget","tap":"homebrew/core","installed":[{"version":"1.0.0","installed_on_request":true}]}],"casks":[]}' ;;
+                    outdated) printf '{"formulae":[],"casks":[]}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         let provider = HomebrewProvider(environment: environment.merging(["HOME": root.path]) { $1 }, standardDirectories: [root.appending(path: "bin").path])
-        return (root, { policy, now in
-            try? FileManager.default.removeItem(at: log)
-            let messages = Mutex<[String]>([])
-            let inventory = provider.discover(update: policy, now: now) { message in messages.withLock { $0.append(message) } }
-            let calls = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
-            return (inventory, calls, messages.withLock { $0 })
-        })
+        return (
+            root,
+            { policy, now in
+                try? FileManager.default.removeItem(at: log)
+                let messages = Mutex<[String]>([])
+                let inventory = provider.discover(update: policy, now: now) { message in messages.withLock { $0.append(message) } }
+                let calls = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+                return (inventory, calls, messages.withLock { $0 })
+            }
+        )
     }
 
     private func touchFetchHead(in root: URL, at date: Date) throws {
@@ -647,7 +760,9 @@ final class HomebrewTests: XCTestCase {
         let base = plain.snapshotFingerprint(executable: executable, prefix: prefix)
 
         XCTAssertEqual(plain.snapshotFingerprint(executable: executable, prefix: prefix), base)
-        XCTAssertNotEqual(HomebrewProvider(environment: ["HOME": root.path, "HOMEBREW_NO_INSTALL_FROM_API": "1"], standardDirectories: []).snapshotFingerprint(executable: executable, prefix: prefix), base)
+        XCTAssertNotEqual(
+            HomebrewProvider(environment: ["HOME": root.path, "HOMEBREW_NO_INSTALL_FROM_API": "1"], standardDirectories: []).snapshotFingerprint(
+                executable: executable, prefix: prefix), base)
         try Data().write(to: root.appending(path: "prefix/.git/FETCH_HEAD"))
         let fetched = plain.snapshotFingerprint(executable: executable, prefix: prefix)
         XCTAssertNotEqual(fetched, base, "brew update rewrites FETCH_HEAD")

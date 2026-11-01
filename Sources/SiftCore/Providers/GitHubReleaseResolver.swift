@@ -31,8 +31,9 @@ public struct GitHubReleaseResolver: Sendable {
 
     private func apiURL(repository: GitHubRepository, tag: String) -> URL? {
         guard let owner = encodeGitHubPathComponent(repository.owner),
-              let name = encodeGitHubPathComponent(repository.name),
-              let tag = encodeGitHubPathComponent(tag) else { return nil }
+            let name = encodeGitHubPathComponent(repository.name),
+            let tag = encodeGitHubPathComponent(tag)
+        else { return nil }
         return URL(string: "https://api.github.com/repos/\(owner)/\(name)/releases/tags/\(tag)")
     }
 }

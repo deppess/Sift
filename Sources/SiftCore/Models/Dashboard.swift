@@ -69,7 +69,10 @@ public struct DashboardData: Codable, Equatable, Sendable {
     public let failedProviderCount: Int
     public let providerResults: [ProviderRefreshResult]
 
-    public init(availableUpdateCount: Int, informationalUpdateCount: Int = 0, recentTransitionCount: Int, partialProviderCount: Int = 0, failedProviderCount: Int, providerResults: [ProviderRefreshResult] = []) {
+    public init(
+        availableUpdateCount: Int, informationalUpdateCount: Int = 0, recentTransitionCount: Int, partialProviderCount: Int = 0, failedProviderCount: Int,
+        providerResults: [ProviderRefreshResult] = []
+    ) {
         self.availableUpdateCount = availableUpdateCount
         self.informationalUpdateCount = informationalUpdateCount
         self.recentTransitionCount = recentTransitionCount

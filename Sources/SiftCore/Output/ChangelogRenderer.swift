@@ -4,7 +4,9 @@ import Foundation
 public enum ChangelogRenderer {
     /// By default: every version newer than the installed one, then the installed version's own
     /// entry; for current software, the latest three. `all` shows the whole history.
-    public static func humanReadable(_ changelog: Changelog, all: Bool = false, full: Bool = false, style: TerminalStyle = TerminalStyle(enabled: false)) -> String {
+    public static func humanReadable(_ changelog: Changelog, all: Bool = false, full: Bool = false, style: TerminalStyle = TerminalStyle(enabled: false))
+        -> String
+    {
         let newEntries = changelog.newEntries
         let installedEntry = changelog.installedEntry
         var lines: [String] = []
@@ -15,9 +17,12 @@ public enum ChangelogRenderer {
         } else {
             header = "\(style.title(changelog.name.terminalInline))  \(installed)"
         }
-        let newCount = newEntries.isEmpty ? "" : changelog.isDatedLog
-            ? "  ·  \(newEntries.count) \(newEntries.count == 1 ? "update" : "updates") since this copy was installed"
-            : "  ·  \(newEntries.count) new \(newEntries.count == 1 ? "version" : "versions")"
+        let newCount =
+            newEntries.isEmpty
+            ? ""
+            : changelog.isDatedLog
+                ? "  ·  \(newEntries.count) \(newEntries.count == 1 ? "update" : "updates") since this copy was installed"
+                : "  ·  \(newEntries.count) new \(newEntries.count == 1 ? "version" : "versions")"
         lines.append(header + style.label(newCount))
         lines.append(style.label("Changelog from \(changelog.source.terminalInline) · \(count(changelog.entries.count, changelog))"))
         if let stale = changelog.staleReason { lines.append(style.warning(stale.terminalInline)) }
@@ -34,7 +39,10 @@ public enum ChangelogRenderer {
             lines.append("")
             lines.append(entryHeading(entry, changelog: changelog, newEntries: newEntries, style: style))
             let body = render(entry.content, full: full, style: style)
-            lines.append(body.isEmpty ? style.label("  (no details given)") : body.split(separator: "\n", omittingEmptySubsequences: false).map { "  \($0)" }.joined(separator: "\n"))
+            lines.append(
+                body.isEmpty
+                    ? style.label("  (no details given)")
+                    : body.split(separator: "\n", omittingEmptySubsequences: false).map { "  \($0)" }.joined(separator: "\n"))
             if full, let url = entry.sourceURL, url != changelog.sourceURL { lines.append(style.label("  \(url.terminalInline)")) }
         }
         let hidden = changelog.entries.count - shown.count

@@ -39,7 +39,9 @@ public struct GitHubTagResolver: Sendable {
         for _ in 0..<5 {
             guard isSHA(object.sha) else { throw MetadataHTTPError.invalidResponse }
             if object.type == "commit" { return GitHubTagIdentity(tag: tag, commitSHA: object.sha) }
-            guard object.type == "tag", let tagURL = apiURL(repository: repository, path: ["git", "tags", object.sha]) else { throw MetadataHTTPError.invalidResponse }
+            guard object.type == "tag", let tagURL = apiURL(repository: repository, path: ["git", "tags", object.sha]) else {
+                throw MetadataHTTPError.invalidResponse
+            }
             object = try decode(GitTag.self, from: metadataClient.fetch(tagURL, resource: .githubAnnotatedTag).body).object
         }
         throw MetadataHTTPError.invalidResponse
@@ -53,8 +55,7 @@ public struct GitHubTagResolver: Sendable {
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        do { return try JSONDecoder().decode(type, from: data) }
-        catch { throw MetadataHTTPError.invalidResponse }
+        do { return try JSONDecoder().decode(type, from: data) } catch { throw MetadataHTTPError.invalidResponse }
     }
 
     private func isSHA(_ value: String) -> Bool {

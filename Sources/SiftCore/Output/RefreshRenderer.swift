@@ -13,7 +13,7 @@ public enum RefreshRenderer {
             "Homebrew packages: \(summary.homebrewDiscoveredCount)",
             "Targets resolved: \(summary.targetResolvedCount)",
             "Release notes fetched: \(summary.releaseNotesFetchedCount)",
-            "Warnings: \(summary.warningCount)",
+            "Warnings: \(summary.warningCount)"
         ]
         if !summary.providerResults.isEmpty {
             lines.append("")

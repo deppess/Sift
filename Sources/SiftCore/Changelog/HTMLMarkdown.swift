@@ -25,9 +25,13 @@ enum HTMLMarkdown {
             guard html[index] == "<", let close = html[index...].firstIndex(of: ">") else {
                 if skipping.isEmpty {
                     let character = html[index]
-                    if preformatted > 0 { output.append(character) }
-                    else if character.isWhitespace { if !(output.last?.isWhitespace ?? true) { output.append(" ") } }
-                    else { output.append(character) }
+                    if preformatted > 0 {
+                        output.append(character)
+                    } else if character.isWhitespace {
+                        if !(output.last?.isWhitespace ?? true) { output.append(" ") }
+                    } else {
+                        output.append(character)
+                    }
                 }
                 index = html.index(after: index)
                 continue
@@ -46,10 +50,13 @@ enum HTMLMarkdown {
             // Buttons stay: accordion changelogs put each version's header in one.
             case "script", "style", "head", "noscript", "svg", "template":
                 if !isClosing, !tag.hasSuffix("/") { skipping.append(name) }
-            case "nav", "footer", "aside" where skipChrome:
+            case "nav", "footer",
+                "aside" where skipChrome:
                 if !isClosing, !tag.hasSuffix("/") { skipping.append(name) }
             case "h1", "h2", "h3", "h4", "h5", "h6":
-                if isClosing { newline(2) } else {
+                if isClosing {
+                    newline(2)
+                } else {
                     newline(2)
                     output += String(repeating: "#", count: Int(String(name.last!))!) + " "
                 }

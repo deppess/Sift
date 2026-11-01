@@ -37,7 +37,10 @@ public struct NativeApplicationProvider: Sendable {
 
     private let homeDirectory: String
 
-    public init(roots: [NativeSearchRoot] = defaultRoots(), maximumDepth: Int = .max, includeSpotlight: Bool? = nil, runner: CommandRunner = CommandRunner(), homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path) {
+    public init(
+        roots: [NativeSearchRoot] = defaultRoots(), maximumDepth: Int = .max, includeSpotlight: Bool? = nil, runner: CommandRunner = CommandRunner(),
+        homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
+    ) {
         self.homeDirectory = homeDirectory
         self.roots = roots
         self.maximumDepth = maximumDepth
@@ -77,18 +80,20 @@ public struct NativeApplicationProvider: Sendable {
                 }
                 continue
             }
-            guard let enumerator = FileManager.default.enumerator(
-                at: normalizedRoot,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                // Not .skipsHiddenFiles: that also skips entries carrying the BSD hidden flag, which
-                // macOS sets on /Applications/Safari.app. Dot-files are skipped by name below.
-                options: [],
-                errorHandler: { _, error in
-                    warnings.append("Unable to enumerate \(normalizedRoot.path): \(error.localizedDescription)")
-                    complete = false
-                    return true
-                }
-            ) else {
+            guard
+                let enumerator = FileManager.default.enumerator(
+                    at: normalizedRoot,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    // Not .skipsHiddenFiles: that also skips entries carrying the BSD hidden flag, which
+                    // macOS sets on /Applications/Safari.app. Dot-files are skipped by name below.
+                    options: [],
+                    errorHandler: { _, error in
+                        warnings.append("Unable to enumerate \(normalizedRoot.path): \(error.localizedDescription)")
+                        complete = false
+                        return true
+                    }
+                )
+            else {
                 warnings.append("Unable to enumerate \(normalizedRoot.path).")
                 complete = false
                 continue
@@ -130,19 +135,27 @@ public struct NativeApplicationProvider: Sendable {
                     let isSymbolicLink = (try? rawCandidate.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
                     // Directory components are resolved, but a candidate that is itself a link keeps
                     // its own name, matching the directory walk.
-                    let candidate = isSymbolicLink ? rawCandidate.deletingLastPathComponent().resolvingSymlinksInPath().appending(path: rawCandidate.lastPathComponent) : rawCandidate.resolvingSymlinksInPath()
+                    let candidate =
+                        isSymbolicLink
+                        ? rawCandidate.deletingLastPathComponent().resolvingSymlinksInPath().appending(path: rawCandidate.lastPathComponent)
+                        : rawCandidate.resolvingSymlinksInPath()
                     guard candidate.pathExtension.lowercased() == "app" else { continue }
-                    guard isPlausibleNativeApplicationBundle(candidate), let bundle = resolvedBundle(candidate, isSymbolicLink: isSymbolicLink) else { continue }
+                    guard isPlausibleNativeApplicationBundle(candidate), let bundle = resolvedBundle(candidate, isSymbolicLink: isSymbolicLink) else {
+                        continue
+                    }
                     candidatePaths.insert(candidate.path)
                     // Same physical bundle as one the directory walk already found under a different
                     // spelling (see seenIdentities above) — the path is still recorded as "seen" for
                     // reconciliation, but it doesn't get a second, duplicate application entry.
                     guard seenIdentities.insert(fileIdentity(bundle) ?? FileIdentity(path: bundle.path)).inserted else { continue }
                     guard seenCandidates.insert(candidate.path).inserted else { continue }
-                    let matchedRoot = normalizedRoots
+                    let matchedRoot =
+                        normalizedRoots
                         .filter { isContained(candidate, in: $0.normalizedURL) }
                         .max { $0.normalizedURL.path.count < $1.normalizedURL.path.count }
-                    let classification = isSymbolicLink || matchedRoot == nil ? Self.classification(forPath: bundle.path, homeDirectory: homeDirectory) : matchedRoot!.root.classification
+                    let classification =
+                        isSymbolicLink || matchedRoot == nil
+                        ? Self.classification(forPath: bundle.path, homeDirectory: homeDirectory) : matchedRoot!.root.classification
                     candidates.append((candidate, bundle, matchedRoot?.normalizedURL ?? URL(filePath: "/", directoryHint: .isDirectory), classification))
                 }
                 // Spotlight's completeness can never be proven (privacy exclusions, disabled
@@ -158,7 +171,9 @@ public struct NativeApplicationProvider: Sendable {
         let results = UnsafeResults<Result<NativeApplication?, Error>>(count: found.count)
         DispatchQueue.concurrentPerform(iterations: found.count) { index in
             let candidate = found[index]
-            results[index] = Result { try application(at: candidate.url, bundle: candidate.bundle, root: candidate.root, classification: candidate.classification) }
+            results[index] = Result {
+                try application(at: candidate.url, bundle: candidate.bundle, root: candidate.root, classification: candidate.classification)
+            }
         }
         for (candidate, result) in zip(found, results.values) {
             switch result {
@@ -171,7 +186,9 @@ public struct NativeApplicationProvider: Sendable {
                 complete = false
             }
         }
-        return NativeInventoryResult(applications: applications.sorted { $0.path < $1.path }, warnings: warnings, complete: complete, scannedRoots: scannedRoots, candidatePaths: candidatePaths)
+        return NativeInventoryResult(
+            applications: applications.sorted { $0.path < $1.path }, warnings: warnings, complete: complete, scannedRoots: scannedRoots,
+            candidatePaths: candidatePaths)
     }
 
     /// One bundle read the way discovery reads it, for an app already in the catalog.
@@ -194,9 +211,11 @@ public struct NativeApplicationProvider: Sendable {
         guard let metadata = propertyList as? [String: Any] else { throw NativeInventoryError.invalidMetadata }
         let displayName = visibleName(metadata["CFBundleDisplayName"]) ?? visibleName(metadata["CFBundleName"]) ?? url.deletingPathExtension().lastPathComponent
         let bundleIdentifier = (metadata["CFBundleIdentifier"] as? String)?.nonEmpty
-        let resolvedClassification = bundleIdentifier == nil && isSteamShortcut(bundle, executable: metadata["CFBundleExecutable"] as? String) ? .launcher : classification
+        let resolvedClassification =
+            bundleIdentifier == nil && isSteamShortcut(bundle, executable: metadata["CFBundleExecutable"] as? String) ? .launcher : classification
         let declaredFeed = (metadata["SUFeedURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
-        let authority = updateAuthority(bundle: bundle, path: url.path, bundleIdentifier: bundleIdentifier, classification: resolvedClassification, declaresFeed: declaredFeed != nil)
+        let authority = updateAuthority(
+            bundle: bundle, path: url.path, bundleIdentifier: bundleIdentifier, classification: resolvedClassification, declaresFeed: declaredFeed != nil)
         // An app that sets its feed at run time leaves it in its preferences, which Sparkle reads
         // when Info.plist has none.
         let feedURL = declaredFeed ?? (authority == .sparkle ? bundleIdentifier.flatMap(savedSparkleFeed) : nil)
@@ -204,9 +223,15 @@ public struct NativeApplicationProvider: Sendable {
         if bundle.path != url.path { linkTargets.append(bundle.path) }
         if let executable = (metadata["CFBundleExecutable"] as? String)?.nonEmpty, !executable.contains("/") {
             let executableURL = bundle.appending(path: "Contents/MacOS").appending(path: executable)
-            if (try? executableURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { linkTargets.append(executableURL.resolvingSymlinksInPath().path) }
+            if (try? executableURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+                linkTargets.append(executableURL.resolvingSymlinksInPath().path)
+            }
         }
-        return NativeApplication(path: url.path, bundleIdentifier: bundleIdentifier, displayName: displayName, shortVersion: (metadata["CFBundleShortVersionString"] as? String)?.nonEmpty, buildVersion: (metadata["CFBundleVersion"] as? String)?.nonEmpty, classification: resolvedClassification, discoveryRoot: root.path, updateAuthority: authority, sparkleFeedURL: authority == .sparkle ? feedURL : nil, linkTargets: linkTargets)
+        return NativeApplication(
+            path: url.path, bundleIdentifier: bundleIdentifier, displayName: displayName,
+            shortVersion: (metadata["CFBundleShortVersionString"] as? String)?.nonEmpty, buildVersion: (metadata["CFBundleVersion"] as? String)?.nonEmpty,
+            classification: resolvedClassification, discoveryRoot: root.path, updateAuthority: authority, sparkleFeedURL: authority == .sparkle ? feedURL : nil,
+            linkTargets: linkTargets)
     }
 
     /// SUFeedURL from the app's own preferences, in either its regular or sandbox container
@@ -216,19 +241,23 @@ public struct NativeApplicationProvider: Sendable {
         let home = URL(filePath: homeDirectory, directoryHint: .isDirectory)
         let candidates = [
             home.appending(path: "Library/Preferences/\(bundleIdentifier).plist"),
-            home.appending(path: "Library/Containers/\(bundleIdentifier)/Data/Library/Preferences/\(bundleIdentifier).plist"),
+            home.appending(path: "Library/Containers/\(bundleIdentifier)/Data/Library/Preferences/\(bundleIdentifier).plist")
         ]
         for file in candidates {
-            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 4 * 1_048_576,
-                  let data = try? Data(contentsOf: file),
-                  let preferences = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let feed = (preferences["SUFeedURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else { continue }
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+                (values.fileSize ?? .max) <= 4 * 1_048_576,
+                let data = try? Data(contentsOf: file),
+                let preferences = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                let feed = (preferences["SUFeedURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            else { continue }
             return feed
         }
         return nil
     }
 
-    private func updateAuthority(bundle: URL, path: String, bundleIdentifier: String?, classification: ApplicationClassification, declaresFeed: Bool) -> NativeUpdateAuthority {
+    private func updateAuthority(bundle: URL, path: String, bundleIdentifier: String?, classification: ApplicationClassification, declaresFeed: Bool)
+        -> NativeUpdateAuthority
+    {
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: bundle.appending(path: "Contents/_MASReceipt/receipt").path) { return .appStore }
         if declaresFeed || fileManager.fileExists(atPath: bundle.appending(path: "Contents/Frameworks/Sparkle.framework").path) { return .sparkle }
@@ -244,7 +273,10 @@ public struct NativeApplicationProvider: Sendable {
     /// invisible characters such as U+200E; those fall through to the next name source.
     private func visibleName(_ value: Any?) -> String? {
         guard let name = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        let isVisible = name.unicodeScalars.contains { !$0.properties.isWhitespace && !$0.properties.isDefaultIgnorableCodePoint && $0.properties.generalCategory != .format && $0.properties.generalCategory != .control }
+        let isVisible = name.unicodeScalars.contains {
+            !$0.properties.isWhitespace && !$0.properties.isDefaultIgnorableCodePoint && $0.properties.generalCategory != .format
+                && $0.properties.generalCategory != .control
+        }
         return isVisible ? name : nil
     }
 
@@ -253,8 +285,10 @@ public struct NativeApplicationProvider: Sendable {
     private func isSteamShortcut(_ bundle: URL, executable: String?) -> Bool {
         guard let executable, !executable.contains("/") else { return false }
         let script = bundle.appending(path: "Contents/MacOS").appending(path: executable)
-        guard let values = try? script.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 4_096,
-              let contents = try? String(contentsOf: script, encoding: .utf8) else { return false }
+        guard let values = try? script.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+            (values.fileSize ?? .max) <= 4_096,
+            let contents = try? String(contentsOf: script, encoding: .utf8)
+        else { return false }
         return contents.contains("steam://run/")
     }
 
@@ -264,14 +298,18 @@ public struct NativeApplicationProvider: Sendable {
         guard isSymbolicLink else { return url }
         let destination = url.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
-        guard destination.pathExtension.lowercased() == "app", FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue,
-              isPlausibleNativeApplicationBundle(destination) else { return nil }
+        guard destination.pathExtension.lowercased() == "app", FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory),
+            isDirectory.boolValue,
+            isPlausibleNativeApplicationBundle(destination)
+        else { return nil }
         return destination
     }
 
     private func spotlightPaths() throws -> [String] {
         let executable = URL(filePath: "/usr/bin/mdfind")
-        let result = try runner.run(executable: executable, arguments: ["-0", "-onlyin", "/", "kMDItemContentType == \"com.apple.application-bundle\"c"], environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 32 * 1_024 * 1_024)
+        let result = try runner.run(
+            executable: executable, arguments: ["-0", "-onlyin", "/", "kMDItemContentType == \"com.apple.application-bundle\"c"],
+            environment: ["PATH": "/usr/bin:/bin", "LC_ALL": "C"], timeout: 30, outputLimit: 32 * 1_024 * 1_024)
         guard result.status == 0 else { throw NativeInventoryError.spotlightFailed }
         return result.stdout.split(separator: 0, omittingEmptySubsequences: true).map { String(decoding: $0, as: UTF8.self) }
     }
@@ -303,10 +341,12 @@ public struct NativeApplicationProvider: Sendable {
     public static func defaultRoots(fileManager: FileManager = .default) -> [NativeSearchRoot] {
         [
             NativeSearchRoot(url: URL(filePath: "/Applications", directoryHint: .isDirectory), classification: .user, required: true),
-            NativeSearchRoot(url: fileManager.homeDirectoryForCurrentUser.appending(path: "Applications", directoryHint: .isDirectory), classification: .user, required: false),
+            NativeSearchRoot(
+                url: fileManager.homeDirectoryForCurrentUser.appending(path: "Applications", directoryHint: .isDirectory), classification: .user,
+                required: false),
             NativeSearchRoot(url: URL(filePath: "/System/Applications", directoryHint: .isDirectory), classification: .system, required: true),
             NativeSearchRoot(url: URL(filePath: "/System/Library/CoreServices", directoryHint: .isDirectory), classification: .coreService, required: true),
-            NativeSearchRoot(url: URL(filePath: "/Library/CoreServices", directoryHint: .isDirectory), classification: .coreService, required: false),
+            NativeSearchRoot(url: URL(filePath: "/Library/CoreServices", directoryHint: .isDirectory), classification: .coreService, required: false)
         ]
     }
 }
@@ -321,6 +361,13 @@ private struct FileIdentity: Hashable {
     init(path: String) { (self.device, self.inode, self.path) = (0, 0, path) }
 }
 
-public enum NativeInventoryError: LocalizedError { case metadataTooLarge, invalidMetadata, spotlightFailed
-    public var errorDescription: String? { switch self { case .metadataTooLarge: "Bundle metadata exceeds the 1 MiB limit."; case .invalidMetadata: "Bundle metadata is not a property-list dictionary."; case .spotlightFailed: "mdfind returned a nonzero status." } }
+public enum NativeInventoryError: LocalizedError {
+    case metadataTooLarge, invalidMetadata, spotlightFailed
+    public var errorDescription: String? {
+        switch self {
+        case .metadataTooLarge: "Bundle metadata exceeds the 1 MiB limit.";
+        case .invalidMetadata: "Bundle metadata is not a property-list dictionary.";
+        case .spotlightFailed: "mdfind returned a nonzero status."
+        }
+    }
 }

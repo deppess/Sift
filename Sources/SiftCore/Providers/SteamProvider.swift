@@ -116,7 +116,9 @@ public struct SteamInventory: Sendable {
 public struct SteamProvider: Sendable {
     public let steamDirectory: URL
 
-    public init(steamDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Steam", directoryHint: .isDirectory)) {
+    public init(
+        steamDirectory: URL = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Application Support/Steam", directoryHint: .isDirectory)
+    ) {
         self.steamDirectory = steamDirectory
     }
 
@@ -145,15 +147,19 @@ public struct SteamProvider: Sendable {
             var games: [SteamGame] = []
             for manifest in entries where manifest.lastPathComponent.hasPrefix("appmanifest_") && manifest.pathExtension == "acf" {
                 guard let text = Self.readText(manifest), let state = ValveKeyValues.parse(text)?["AppState"],
-                      let appID = state["appid"]?.string, let name = state["name"]?.string?.nonEmpty,
-                      let buildID = state["buildid"]?.string?.nonEmpty, let installDirectory = state["installdir"]?.string?.nonEmpty else {
+                    let appID = state["appid"]?.string, let name = state["name"]?.string?.nonEmpty,
+                    let buildID = state["buildid"]?.string?.nonEmpty, let installDirectory = state["installdir"]?.string?.nonEmpty
+                else {
                     warnings.append("Skipped unreadable Steam manifest \(manifest.lastPathComponent).")
                     continue
                 }
                 let flags = Int(state["StateFlags"]?.string ?? "") ?? 0
                 let target = state["TargetBuildID"]?.string.flatMap { $0 == "0" ? nil : $0.nonEmpty }
                 let pending = target.flatMap { $0 != buildID ? $0 : nil } ?? (flags & Self.updateRequiredFlag != 0 ? "newer build" : nil)
-                games.append(SteamGame(appID: appID, name: name, buildID: buildID, pendingBuildID: pending, installDirectory: steamapps.appending(path: "common").appending(path: installDirectory).path))
+                games.append(
+                    SteamGame(
+                        appID: appID, name: name, buildID: buildID, pendingBuildID: pending,
+                        installDirectory: steamapps.appending(path: "common").appending(path: installDirectory).path))
             }
             libraries.append(SteamLibrary(path: path, games: games.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }))
         }
@@ -161,8 +167,10 @@ public struct SteamProvider: Sendable {
     }
 
     private static func readText(_ url: URL) -> String? {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 4 * 1_048_576,
-              let data = try? Data(contentsOf: url) else { return nil }
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+            (values.fileSize ?? .max) <= 4 * 1_048_576,
+            let data = try? Data(contentsOf: url)
+        else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
 }

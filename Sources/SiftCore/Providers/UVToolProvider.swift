@@ -19,7 +19,10 @@ public struct UVTool: Codable, Equatable, Sendable {
     public let entrypoints: [UVToolEntrypoint]
     public let latestVersion: String?
 
-    public init(name: String, installedVersion: String, versionSpecifier: String?, python: String, environmentPath: String, entrypoints: [UVToolEntrypoint], latestVersion: String? = nil) {
+    public init(
+        name: String, installedVersion: String, versionSpecifier: String?, python: String, environmentPath: String, entrypoints: [UVToolEntrypoint],
+        latestVersion: String? = nil
+    ) {
         self.name = name
         self.installedVersion = installedVersion
         self.versionSpecifier = versionSpecifier
@@ -81,7 +84,10 @@ public struct UVToolProvider: Sendable {
     private let environment: [String: String]
     private let standardDirectories: [String]
 
-    public init(runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment, standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
+    public init(
+        runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment,
+        standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+    ) {
         self.runner = runner
         // CommandRunner cannot select a working directory; prevent cwd and user config discovery.
         self.environment = environment.merging(["LC_ALL": "C", "NO_COLOR": "1", "UV_NO_CONFIG": "1", "UV_NO_PROGRESS": "1"]) { _, replacement in replacement }
@@ -107,10 +113,13 @@ public struct UVToolProvider: Sendable {
                     let outdatedResult = try run(executable, command: "tool list --outdated", arguments: listArguments + ["--outdated"])
                     let outdatedTools = try Self.parseToolList(outdatedResult.stdout, outdated: true)
                     guard Set(outdatedTools.map(\.name)).isSubset(of: Set(tools.map(\.name))) else { throw UVToolProviderError.invalidOutdated }
-                    installations.append(UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: outdatedTools))
+                    installations.append(
+                        UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: outdatedTools))
                 } catch {
                     warnings.append("uv tool list --outdated at \(executable.path): \(error.localizedDescription)")
-                    installations.append(UVToolInstallation(executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: [], outdatedComplete: false))
+                    installations.append(
+                        UVToolInstallation(
+                            executablePath: executable.path, toolDirectory: toolDirectory, tools: tools, outdatedTools: [], outdatedComplete: false))
                 }
             } catch {
                 // A failed installation must not discard tool directories that other installations reported successfully.
@@ -142,7 +151,9 @@ public struct UVToolProvider: Sendable {
 
     static func parseToolList(_ data: Data, outdated: Bool) throws -> [UVTool] {
         let output = String(decoding: data, as: UTF8.self)
-        guard !output.unicodeScalars.contains(where: { $0.value < 0x20 && $0 != "\n" || $0.value == 0x7F }) else { throw outdated ? UVToolProviderError.invalidOutdated : UVToolProviderError.invalidInventory }
+        guard !output.unicodeScalars.contains(where: { $0.value < 0x20 && $0 != "\n" || $0.value == 0x7F }) else {
+            throw outdated ? UVToolProviderError.invalidOutdated : UVToolProviderError.invalidInventory
+        }
         if output == "No tools installed\n" { return [] }
         if output.isEmpty { return [] }
         guard output.last == "\n" else { throw outdated ? UVToolProviderError.invalidOutdated : UVToolProviderError.invalidInventory }
@@ -159,8 +170,12 @@ public struct UVToolProvider: Sendable {
                 entrypoints.append(try parseEntrypoint(lines[index], outdated: outdated))
                 index += 1
             }
-            guard !entrypoints.isEmpty, Set(entrypoints.map(\.name)).count == entrypoints.count else { throw outdated ? UVToolProviderError.invalidOutdated : UVToolProviderError.invalidInventory }
-            tool = UVTool(name: tool.name, installedVersion: tool.installedVersion, versionSpecifier: tool.versionSpecifier, python: tool.python, environmentPath: tool.environmentPath, entrypoints: entrypoints, latestVersion: tool.latestVersion)
+            guard !entrypoints.isEmpty, Set(entrypoints.map(\.name)).count == entrypoints.count else {
+                throw outdated ? UVToolProviderError.invalidOutdated : UVToolProviderError.invalidInventory
+            }
+            tool = UVTool(
+                name: tool.name, installedVersion: tool.installedVersion, versionSpecifier: tool.versionSpecifier, python: tool.python,
+                environmentPath: tool.environmentPath, entrypoints: entrypoints, latestVersion: tool.latestVersion)
             tools.append(tool)
         }
         guard Set(tools.map(\.name)).count == tools.count else { throw outdated ? UVToolProviderError.invalidOutdated : UVToolProviderError.invalidInventory }
@@ -180,7 +195,9 @@ public struct UVToolProvider: Sendable {
         let latest = try takeField("latest: ", from: &remainder, error: error)
         guard (outdated ? latest != nil : latest == nil), remainder.hasPrefix(" ("), remainder.hasSuffix(")") else { throw error }
         let environmentPath = try normalizedPath(String(remainder.dropFirst(2).dropLast()), allowTilde: true, error: error)
-        return UVTool(name: name, installedVersion: installedVersion, versionSpecifier: required, python: python, environmentPath: environmentPath, entrypoints: [], latestVersion: latest)
+        return UVTool(
+            name: name, installedVersion: installedVersion, versionSpecifier: required, python: python, environmentPath: environmentPath, entrypoints: [],
+            latestVersion: latest)
     }
 
     private static func takeField(_ label: String?, from remainder: inout String, error: UVToolProviderError) throws -> String? {
@@ -208,11 +225,16 @@ public struct UVToolProvider: Sendable {
     }
 
     private static func isSafeName(_ value: String) -> Bool {
-        !value.isEmpty && value.unicodeScalars.allSatisfy { ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A) || $0 == "-" || $0 == "_" || $0 == "." }
+        !value.isEmpty
+            && value.unicodeScalars.allSatisfy {
+                ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A) || $0 == "-"
+                    || $0 == "_" || $0 == "."
+            }
     }
 
     private static func isSafeValue(_ value: String) -> Bool {
-        !value.isEmpty && !value.contains("[") && !value.contains("]") && !value.contains("(") && !value.contains(")") && !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+        !value.isEmpty && !value.contains("[") && !value.contains("]") && !value.contains("(") && !value.contains(")")
+            && !value.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
     }
 
     private static func isSafePython(_ value: String) -> Bool {
@@ -222,8 +244,11 @@ public struct UVToolProvider: Sendable {
 
     private static func normalizedPath(_ value: String, allowTilde: Bool, error: UVToolProviderError) throws -> String {
         let path: String
-        if allowTilde, value.hasPrefix("~/") { path = FileManager.default.homeDirectoryForCurrentUser.appending(path: String(value.dropFirst(2))).path }
-        else { path = value }
+        if allowTilde, value.hasPrefix("~/") {
+            path = FileManager.default.homeDirectoryForCurrentUser.appending(path: String(value.dropFirst(2))).path
+        } else {
+            path = value
+        }
         guard isSafeAbsolutePath(path) else { throw error }
         return URL(filePath: path).standardizedFileURL.path
     }

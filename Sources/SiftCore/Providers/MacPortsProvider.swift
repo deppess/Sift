@@ -52,7 +52,9 @@ public struct MacPortsProvider: Sendable {
         do {
             ports = try readRegistry(registry)
         } catch {
-            return MacPortsInventory(prefix: prefix.path, ports: [], index: [:], indexAvailable: false, warnings: ["MacPorts registry at \(registry.path): \(error.localizedDescription)"])
+            return MacPortsInventory(
+                prefix: prefix.path, ports: [], index: [:], indexAvailable: false,
+                warnings: ["MacPorts registry at \(registry.path): \(error.localizedDescription)"])
         }
         let names = Set(ports.map(\.name))
         var index: [String: MacPortsIndexEntry] = [:]
@@ -69,7 +71,9 @@ public struct MacPortsProvider: Sendable {
     /// MacPorts' online port database: a port's current version, for checking against when the
     /// local index hasn't been synced in a while. The API gives no revision.
     public static func apiURL(for name: String) -> URL? {
-        name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_.+"))).flatMap { URL(string: "https://ports.macports.org/api/v1/ports/\($0)/") }
+        name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_.+"))).flatMap {
+            URL(string: "https://ports.macports.org/api/v1/ports/\($0)/")
+        }
     }
 
     public static func apiEntry(_ data: Data) -> MacPortsIndexEntry? {
@@ -131,7 +135,10 @@ public struct MacPortsProvider: Sendable {
         }
         sqlite3_busy_timeout(handle, 1_000)
         var applications: [Int64: [String]] = [:]
-        try query(handle, "SELECT files.id, files.path FROM files JOIN ports ON ports.id = files.id WHERE ports.state = 'installed' AND files.path LIKE '%.app/Contents/Info.plist';") { statement in
+        try query(
+            handle,
+            "SELECT files.id, files.path FROM files JOIN ports ON ports.id = files.id WHERE ports.state = 'installed' AND files.path LIKE '%.app/Contents/Info.plist';"
+        ) { statement in
             let path = String(cString: sqlite3_column_text(statement, 1))
             let bundle = String(path.dropLast("/Contents/Info.plist".count))
             // Bundles inside a framework (Python.framework's Python.app) aren't applications.
@@ -142,7 +149,11 @@ public struct MacPortsProvider: Sendable {
         try query(handle, "SELECT id, name, epoch, version, revision, requested FROM ports WHERE state = 'installed';") { statement in
             guard let name = sqlite3_column_text(statement, 1), let version = sqlite3_column_text(statement, 3) else { return }
             let id = sqlite3_column_int64(statement, 0)
-            ports.append(MacPort(name: String(cString: name), epoch: Int(sqlite3_column_int(statement, 2)), version: String(cString: version), revision: Int(sqlite3_column_int(statement, 4)), requested: sqlite3_column_int(statement, 5) == 1, applicationPaths: (applications[id] ?? []).sorted()))
+            ports.append(
+                MacPort(
+                    name: String(cString: name), epoch: Int(sqlite3_column_int(statement, 2)), version: String(cString: version),
+                    revision: Int(sqlite3_column_int(statement, 4)), requested: sqlite3_column_int(statement, 5) == 1,
+                    applicationPaths: (applications[id] ?? []).sorted()))
         }
         return ports.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -150,7 +161,9 @@ public struct MacPortsProvider: Sendable {
     private func query(_ handle: OpaquePointer, _ sql: String, row: (OpaquePointer) throws -> Void) throws {
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }
-        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK, let statement else { throw MacPortsError.registry(String(cString: sqlite3_errmsg(handle))) }
+        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw MacPortsError.registry(String(cString: sqlite3_errmsg(handle)))
+        }
         while true {
             switch sqlite3_step(statement) {
             case SQLITE_ROW: try row(statement)
@@ -170,7 +183,9 @@ public struct MacPortsProvider: Sendable {
         var files: [URL] = []
         for line in text.split(separator: "\n") {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"), let field = trimmed.split(separator: " ").first, let url = URL(string: String(field)), let scheme = url.scheme else { continue }
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"), let field = trimmed.split(separator: " ").first, let url = URL(string: String(field)),
+                let scheme = url.scheme
+            else { continue }
             let directory: URL
             if scheme == "file" {
                 directory = URL(filePath: url.path, directoryHint: .isDirectory)
@@ -270,6 +285,8 @@ public struct MacPortsProvider: Sendable {
 public enum MacPortsError: LocalizedError {
     case registry(String)
     public var errorDescription: String? {
-        switch self { case let .registry(message): "The MacPorts registry could not be read: \(message)" }
+        switch self {
+        case let .registry(message): "The MacPorts registry could not be read: \(message)"
+        }
     }
 }

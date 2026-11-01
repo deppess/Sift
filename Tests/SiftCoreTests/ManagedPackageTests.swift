@@ -9,12 +9,25 @@ final class ManagedPackageTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let firstDate = Date(timeIntervalSince1970: 1_000)
-        let inventory = ManagedPackageInventory(provider: .npmGlobal, scopes: [
-            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")]),
-        ])
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [inventory], providerResults: refreshInput(at: firstDate).providerResults))
+        let inventory = ManagedPackageInventory(
+            provider: .npmGlobal,
+            scopes: [
+                ManagedPackageScope(
+                    scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")])
+            ])
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []),
+                homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [inventory],
+                providerResults: refreshInput(at: firstDate).providerResults))
 
-        XCTAssertEqual(try database.updates(now: firstDate), [UnifiedUpdate(provider: "npm-global", scope: "/opt/homebrew", name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0", freshness: .current, dataAsOf: firstDate)])
+        XCTAssertEqual(
+            try database.updates(now: firstDate),
+            [
+                UnifiedUpdate(
+                    provider: "npm-global", scope: "/opt/homebrew", name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0",
+                    freshness: .current, dataAsOf: firstDate)
+            ])
         XCTAssertEqual(try database.dashboard(now: firstDate).data.availableUpdateCount, 1)
 
         let failedDate = Date(timeIntervalSince1970: 2_000)
@@ -32,15 +45,23 @@ final class ManagedPackageTests: XCTestCase {
         let database = try Database(url: url)
         let date = Date(timeIntervalSince1970: 1_000)
         let inventories = RefreshProvider.managedPackageProviders.map { provider in
-            ManagedPackageInventory(provider: provider, scopes: [
-                ManagedPackageScope(scope: "/scope", packages: [ManagedPackage(name: "pkg-\(provider.rawValue)", installedVersion: "1.0", availableVersion: "2.0")]),
-            ])
+            ManagedPackageInventory(
+                provider: provider,
+                scopes: [
+                    ManagedPackageScope(
+                        scope: "/scope", packages: [ManagedPackage(name: "pkg-\(provider.rawValue)", installedVersion: "1.0", availableVersion: "2.0")])
+                ])
         }
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: inventories, providerResults: refreshInput(at: date).providerResults))
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []),
+                targetResults: [:], releaseNoteResults: [:], managedPackageInventories: inventories, providerResults: refreshInput(at: date).providerResults))
 
         let updates = try database.updates(includeAll: true, now: date)
         XCTAssertEqual(updates.count, RefreshProvider.managedPackageProviders.count)
-        XCTAssertEqual(updates.filter { $0.freshness != .current }.map(\.provider), [], "cargo, Steam, and MacPorts updates were reported stale right after a successful refresh")
+        XCTAssertEqual(
+            updates.filter { $0.freshness != .current }.map(\.provider), [],
+            "cargo, Steam, and MacPorts updates were reported stale right after a successful refresh")
     }
 
     func testManagedPackageInventoryAcceptedForPartialProviderResult() throws {
@@ -50,17 +71,30 @@ final class ManagedPackageTests: XCTestCase {
         let date = Date(timeIntervalSince1970: 1_000)
         // A provider that scanned one npm prefix successfully but failed on another must
         // still persist the successful prefix's data, so its status is `.partial`, not `.failure`.
-        let inventory = ManagedPackageInventory(provider: .npmGlobal, scopes: [
-            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")]),
-        ])
+        let inventory = ManagedPackageInventory(
+            provider: .npmGlobal,
+            scopes: [
+                ManagedPackageScope(
+                    scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")])
+            ])
         var statuses = Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, ProviderRefreshStatus.success) })
         statuses[.npmGlobal] = .partial
         let providerResults = RefreshProvider.allCases.map { provider in
-            ProviderRefreshResult(provider: provider, status: statuses[provider]!, startedAt: date, finishedAt: date, dataAsOf: statuses[provider] == .success ? date : nil)
+            ProviderRefreshResult(
+                provider: provider, status: statuses[provider]!, startedAt: date, finishedAt: date, dataAsOf: statuses[provider] == .success ? date : nil)
         }
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [inventory], providerResults: providerResults))
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []),
+                targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [inventory], providerResults: providerResults))
 
-        XCTAssertEqual(try database.updates(now: date), [UnifiedUpdate(provider: "npm-global", scope: "/opt/homebrew", name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0", freshness: .stale, dataAsOf: date)])
+        XCTAssertEqual(
+            try database.updates(now: date),
+            [
+                UnifiedUpdate(
+                    provider: "npm-global", scope: "/opt/homebrew", name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0", freshness: .stale,
+                    dataAsOf: date)
+            ])
     }
 
     func testManagedPackageAvailableVersionSurvivesATransientOutdatedCheckFailure() throws {
@@ -68,24 +102,41 @@ final class ManagedPackageTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let firstDate = Date(timeIntervalSince1970: 1_000)
-        let known = ManagedPackageInventory(provider: .npmGlobal, scopes: [
-            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")]),
-        ])
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [known], providerResults: refreshInput(at: firstDate).providerResults))
+        let known = ManagedPackageInventory(
+            provider: .npmGlobal,
+            scopes: [
+                ManagedPackageScope(
+                    scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")])
+            ])
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []),
+                homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [known],
+                providerResults: refreshInput(at: firstDate).providerResults))
         XCTAssertEqual(try database.updates(now: firstDate).map(\.availableVersion), ["5.8.0"])
 
         // The installed version is unchanged but this round's outdated check failed to report an
         // available version; the previously known value must not be overwritten with nil.
         let secondDate = Date(timeIntervalSince1970: 2_000)
-        let unknown = ManagedPackageInventory(provider: .npmGlobal, scopes: [
-            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: nil)], outdatedDataComplete: false),
-        ])
+        let unknown = ManagedPackageInventory(
+            provider: .npmGlobal,
+            scopes: [
+                ManagedPackageScope(
+                    scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: nil)],
+                    outdatedDataComplete: false)
+            ])
         var statuses = Dictionary(uniqueKeysWithValues: RefreshProvider.allCases.map { ($0, ProviderRefreshStatus.success) })
         statuses[.npmGlobal] = .partial
         let providerResults = RefreshProvider.allCases.map { provider in
-            ProviderRefreshResult(provider: provider, status: statuses[provider]!, startedAt: secondDate, finishedAt: secondDate, dataAsOf: statuses[provider] == .success ? secondDate : nil)
+            ProviderRefreshResult(
+                provider: provider, status: statuses[provider]!, startedAt: secondDate, finishedAt: secondDate,
+                dataAsOf: statuses[provider] == .success ? secondDate : nil)
         }
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: secondDate, finishedAt: secondDate, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [unknown], providerResults: providerResults))
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: secondDate, finishedAt: secondDate, nativeInventory: NativeInventoryResult(applications: []),
+                homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [unknown],
+                providerResults: providerResults))
 
         XCTAssertEqual(try database.updates(now: secondDate).map(\.availableVersion), ["5.8.0"])
     }
@@ -95,20 +146,33 @@ final class ManagedPackageTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let firstDate = Date(timeIntervalSince1970: 1_000)
-        let known = ManagedPackageInventory(provider: .npmGlobal, scopes: [
-            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")]),
-        ])
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [known], providerResults: refreshInput(at: firstDate).providerResults))
+        let known = ManagedPackageInventory(
+            provider: .npmGlobal,
+            scopes: [
+                ManagedPackageScope(
+                    scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.7.0", availableVersion: "5.8.0")])
+            ])
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: firstDate, finishedAt: firstDate, nativeInventory: NativeInventoryResult(applications: []),
+                homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [known],
+                providerResults: refreshInput(at: firstDate).providerResults))
         XCTAssertEqual(try database.updates(now: firstDate).map(\.availableVersion), ["5.8.0"])
 
         // The user upgraded to 5.9.0 outside Sift. This round's outdated check succeeded and
         // confirms nothing is pending (availableVersion nil), so the stale cached "5.8.0" must be
         // cleared rather than preserved, or `sift updates` would report a phantom downgrade.
         let secondDate = Date(timeIntervalSince1970: 2_000)
-        let resolved = ManagedPackageInventory(provider: .npmGlobal, scopes: [
-            ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.9.0", availableVersion: nil)]),
-        ])
-        _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: secondDate, finishedAt: secondDate, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [resolved], providerResults: refreshInput(at: secondDate).providerResults))
+        let resolved = ManagedPackageInventory(
+            provider: .npmGlobal,
+            scopes: [
+                ManagedPackageScope(scope: "/opt/homebrew", packages: [ManagedPackage(name: "typescript", installedVersion: "5.9.0", availableVersion: nil)])
+            ])
+        _ = try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: secondDate, finishedAt: secondDate, nativeInventory: NativeInventoryResult(applications: []),
+                homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: [resolved],
+                providerResults: refreshInput(at: secondDate).providerResults))
 
         XCTAssertEqual(try database.updates(now: secondDate), [])
     }
@@ -118,19 +182,23 @@ final class ManagedPackageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let brokenDirectory = root.appending(path: "broken", directoryHint: .isDirectory)
-        try writeExecutable(at: workingDirectory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{}' ;;
-                *) exit 1 ;;
-            esac
-            """)
-        try writeExecutable(at: brokenDirectory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            exit 1
-            """)
+        try writeExecutable(
+            at: workingDirectory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
+        try writeExecutable(
+            at: brokenDirectory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                exit 1
+                """)
 
         let provider = NPMGlobalProvider(environment: [:], standardDirectories: [workingDirectory.path, brokenDirectory.path])
         let inventory = provider.discover()
@@ -146,15 +214,17 @@ final class ManagedPackageTests: XCTestCase {
         // "widget" has no "version" field at all (e.g. a broken symlink or an "invalid"/
         // "extraneous" global install), alongside a normal, well-formed "gadget" entry. The
         // malformed entry must not discard gadget from the whole prefix's inventory.
-        try writeExecutable(at: directory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{},"gadget":{"version":"2.0.0"}}}' ;;
-                outdated) printf '{}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{},"gadget":{"version":"2.0.0"}}}' ;;
+                    outdated) printf '{}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = NPMGlobalProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -170,18 +240,20 @@ final class ManagedPackageTests: XCTestCase {
         // still exiting 0/1 and returning valid JSON for every package it did check — the failed
         // package is simply missing from the JSON, indistinguishable from "no update available."
         // A previously cached update for "widget" must not be silently cleared by this.
-        try writeExecutable(at: directory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"},"gadget":{"version":"2.0.0"}}}' ;;
-                outdated)
-                    echo "npm error network timeout while checking widget" 1>&2
-                    printf '{"gadget":{"current":"2.0.0","wanted":"2.1.0","latest":"2.1.0"}}'
-                    ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: directory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"},"gadget":{"version":"2.0.0"}}}' ;;
+                    outdated)
+                        echo "npm error network timeout while checking widget" 1>&2
+                        printf '{"gadget":{"current":"2.0.0","wanted":"2.1.0","latest":"2.1.0"}}'
+                        ;;
+                    *) exit 1 ;;
+                esac
+                """)
 
         let provider = NPMGlobalProvider(environment: [:], standardDirectories: [directory.path])
         let inventory = provider.discover()
@@ -200,19 +272,23 @@ final class ManagedPackageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let brokenDirectory = root.appending(path: "broken", directoryHint: .isDirectory)
-        try writeExecutable(at: workingDirectory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{}' ;;
-                *) exit 1 ;;
-            esac
-            """)
-        try writeExecutable(at: brokenDirectory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            exit 1
-            """)
+        try writeExecutable(
+            at: workingDirectory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
+        try writeExecutable(
+            at: brokenDirectory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                exit 1
+                """)
 
         // A partial npm result must not fail Database's provider-result validation, which is what
         // this reproduces: RefreshCoordinator previously set a non-nil dataAsOf for `.partial`
@@ -241,22 +317,25 @@ final class ManagedPackageTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: "sift-refresh-npm-uninstall-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
-        try writeExecutable(at: workingDirectory.appending(path: "npm"), contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{"widget":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: workingDirectory.appending(path: "npm"),
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{"widget":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         func coordinator(standardDirectories: [String]) -> RefreshCoordinator {
             RefreshCoordinator(
                 database: database,
                 nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
                 homebrewProvider: HomebrewProvider(environment: [:], standardDirectories: []),
                 npmGlobalProvider: NPMGlobalProvider(environment: [:], standardDirectories: standardDirectories),
-                uvToolProvider: UVToolProvider(environment: [:], standardDirectories: []), steamProvider: .absent, macPortsProvider: .absent, cargoProvider: .absent
+                uvToolProvider: UVToolProvider(environment: [:], standardDirectories: []), steamProvider: .absent, macPortsProvider: .absent,
+                cargoProvider: .absent
             )
         }
 
@@ -287,15 +366,17 @@ final class ManagedPackageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let npmURL = workingDirectory.appending(path: "npm")
-        try writeExecutable(at: npmURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{"widget":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: npmURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{"widget":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         let coordinator = RefreshCoordinator(
             database: database,
             nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
@@ -313,15 +394,17 @@ final class ManagedPackageTests: XCTestCase {
         // package, simulating another process changing it mid-refresh. That mismatch must not be
         // read as "confirmed not outdated" — the previously cached 1.1.0 must survive, not be
         // cleared to nil or replaced by the mismatched candidate's 2.0.0.
-        try writeExecutable(at: npmURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{"widget":{"current":"0.9.0","wanted":"2.0.0","latest":"2.0.0"}}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: npmURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{"widget":{"current":"0.9.0","wanted":"2.0.0","latest":"2.0.0"}}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         _ = try coordinator.refresh(now: Date(timeIntervalSince1970: 200_000))
         let updates = try database.updates(now: Date(timeIntervalSince1970: 200_000))
         XCTAssertEqual(updates.map(\.availableVersion), ["1.1.0"])
@@ -336,15 +419,17 @@ final class ManagedPackageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let npmURL = workingDirectory.appending(path: "npm")
-        try writeExecutable(at: npmURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"},"gadget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{"widget":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: npmURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"},"gadget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{"widget":{"current":"1.0.0","wanted":"1.1.0","latest":"1.1.0"}}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         let coordinator = RefreshCoordinator(
             database: database,
             nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
@@ -362,15 +447,17 @@ final class ManagedPackageTests: XCTestCase {
         // The mismatch is specific to widget and must not prevent gadget's legitimate update from
         // being recorded — this is what distinguishes per-package tracking from a single scope-wide
         // "outdated data is complete" flag, which would block both.
-        try writeExecutable(at: npmURL, contents: """
-            #!/bin/sh
-            case "$1" in
-                prefix) echo "/fake/prefixA" ;;
-                list) printf '{"dependencies":{"widget":{"version":"1.0.0"},"gadget":{"version":"1.0.0"}}}' ;;
-                outdated) printf '{"widget":{"current":"0.9.0","wanted":"2.0.0","latest":"2.0.0"},"gadget":{"current":"1.0.0","wanted":"1.2.0","latest":"1.2.0"}}' ;;
-                *) exit 1 ;;
-            esac
-            """)
+        try writeExecutable(
+            at: npmURL,
+            contents: """
+                #!/bin/sh
+                case "$1" in
+                    prefix) echo "/fake/prefixA" ;;
+                    list) printf '{"dependencies":{"widget":{"version":"1.0.0"},"gadget":{"version":"1.0.0"}}}' ;;
+                    outdated) printf '{"widget":{"current":"0.9.0","wanted":"2.0.0","latest":"2.0.0"},"gadget":{"current":"1.0.0","wanted":"1.2.0","latest":"1.2.0"}}' ;;
+                    *) exit 1 ;;
+                esac
+                """)
         _ = try coordinator.refresh(now: Date(timeIntervalSince1970: 200_000))
         let updates = try database.updates(now: Date(timeIntervalSince1970: 200_000))
         XCTAssertEqual(Dictionary(uniqueKeysWithValues: updates.map { ($0.name, $0.availableVersion) }), ["widget": "1.1.0", "gadget": "1.2.0"])
@@ -381,23 +468,27 @@ final class ManagedPackageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let brokenDirectory = root.appending(path: "broken", directoryHint: .isDirectory)
-        try writeExecutable(at: workingDirectory.appending(path: "uv"), contents: """
-            #!/bin/sh
-            if [ "$1 $2" = "tool dir" ]; then
-                echo "/fake/tools"
-            elif [ "$1 $2" = "tool list" ]; then
-                case "$*" in
-                    *--outdated*) printf '' ;;
-                    *) printf 'widget v1.0.0 [CPython 3.12.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
-                esac
-            else
+        try writeExecutable(
+            at: workingDirectory.appending(path: "uv"),
+            contents: """
+                #!/bin/sh
+                if [ "$1 $2" = "tool dir" ]; then
+                    echo "/fake/tools"
+                elif [ "$1 $2" = "tool list" ]; then
+                    case "$*" in
+                        *--outdated*) printf '' ;;
+                        *) printf 'widget v1.0.0 [CPython 3.12.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
+                    esac
+                else
+                    exit 1
+                fi
+                """)
+        try writeExecutable(
+            at: brokenDirectory.appending(path: "uv"),
+            contents: """
+                #!/bin/sh
                 exit 1
-            fi
-            """)
-        try writeExecutable(at: brokenDirectory.appending(path: "uv"), contents: """
-            #!/bin/sh
-            exit 1
-            """)
+                """)
 
         let provider = UVToolProvider(environment: [:], standardDirectories: [workingDirectory.path, brokenDirectory.path])
         let inventory = provider.discover()
@@ -417,25 +508,28 @@ final class ManagedPackageTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let workingDirectory = root.appending(path: "working", directoryHint: .isDirectory)
         let uvURL = workingDirectory.appending(path: "uv")
-        try writeExecutable(at: uvURL, contents: """
-            #!/bin/sh
-            if [ "$1 $2" = "tool dir" ]; then
-                echo "/fake/tools"
-            elif [ "$1 $2" = "tool list" ]; then
-                case "$*" in
-                    *--outdated*) printf 'widget v1.0.0 [CPython 3.12.0] [latest: 1.1.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
-                    *) printf 'widget v1.0.0 [CPython 3.12.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
-                esac
-            else
-                exit 1
-            fi
-            """)
+        try writeExecutable(
+            at: uvURL,
+            contents: """
+                #!/bin/sh
+                if [ "$1 $2" = "tool dir" ]; then
+                    echo "/fake/tools"
+                elif [ "$1 $2" = "tool list" ]; then
+                    case "$*" in
+                        *--outdated*) printf 'widget v1.0.0 [CPython 3.12.0] [latest: 1.1.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
+                        *) printf 'widget v1.0.0 [CPython 3.12.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
+                    esac
+                else
+                    exit 1
+                fi
+                """)
         let coordinator = RefreshCoordinator(
             database: database,
             nativeProvider: NativeApplicationProvider(roots: [], includeSpotlight: false),
             homebrewProvider: HomebrewProvider(environment: [:], standardDirectories: []),
             npmGlobalProvider: NPMGlobalProvider(environment: [:], standardDirectories: []),
-            uvToolProvider: UVToolProvider(environment: [:], standardDirectories: [workingDirectory.path]), steamProvider: .absent, macPortsProvider: .absent, cargoProvider: .absent
+            uvToolProvider: UVToolProvider(environment: [:], standardDirectories: [workingDirectory.path]), steamProvider: .absent, macPortsProvider: .absent,
+            cargoProvider: .absent
         )
 
         let firstSummary = try coordinator.refresh(now: Date(timeIntervalSince1970: 1_000))
@@ -445,26 +539,29 @@ final class ManagedPackageTests: XCTestCase {
         // Same "list" vs "outdated" consistency guard as the npm test above: `tool list --outdated`
         // now reports a different installed version (0.9.0) than plain `tool list` just reported
         // (1.0.0), which must not overwrite the cached 1.1.0 with the mismatched candidate's 2.0.0.
-        try writeExecutable(at: uvURL, contents: """
-            #!/bin/sh
-            if [ "$1 $2" = "tool dir" ]; then
-                echo "/fake/tools"
-            elif [ "$1 $2" = "tool list" ]; then
-                case "$*" in
-                    *--outdated*) printf 'widget v0.9.0 [CPython 3.12.0] [latest: 2.0.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
-                    *) printf 'widget v1.0.0 [CPython 3.12.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
-                esac
-            else
-                exit 1
-            fi
-            """)
+        try writeExecutable(
+            at: uvURL,
+            contents: """
+                #!/bin/sh
+                if [ "$1 $2" = "tool dir" ]; then
+                    echo "/fake/tools"
+                elif [ "$1 $2" = "tool list" ]; then
+                    case "$*" in
+                        *--outdated*) printf 'widget v0.9.0 [CPython 3.12.0] [latest: 2.0.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
+                        *) printf 'widget v1.0.0 [CPython 3.12.0] (/fake/tools/widget)\\n- widget (/fake/bin/widget)\\n' ;;
+                    esac
+                else
+                    exit 1
+                fi
+                """)
         _ = try coordinator.refresh(now: Date(timeIntervalSince1970: 200_000))
         let updates = try database.updates(now: Date(timeIntervalSince1970: 200_000))
         XCTAssertEqual(updates.map(\.availableVersion), ["1.1.0"])
     }
 
     func testUVToolProviderParsesDocumentedToolListOutput() throws {
-        let output = "ruff v0.12.0 [required: ruff>=0.11] [CPython 3.13.3] (/Users/example/.local/share/uv/tools/ruff)\n- ruff (/Users/example/.local/bin/ruff)\nblack v25.1.0 [CPython 3.12.9] (/Users/example/.local/share/uv/tools/black)\n- black (/Users/example/.local/bin/black)\n- blackd (/Users/example/.local/bin/blackd)\n"
+        let output =
+            "ruff v0.12.0 [required: ruff>=0.11] [CPython 3.13.3] (/Users/example/.local/share/uv/tools/ruff)\n- ruff (/Users/example/.local/bin/ruff)\nblack v25.1.0 [CPython 3.12.9] (/Users/example/.local/share/uv/tools/black)\n- black (/Users/example/.local/bin/black)\n- blackd (/Users/example/.local/bin/blackd)\n"
 
         let tools = try UVToolProvider.parseToolList(Data(output.utf8), outdated: false)
         XCTAssertEqual(tools.map(\.name), ["black", "ruff"])

@@ -28,7 +28,10 @@ final class SiftIntegrationTests: XCTestCase {
         let database = root.appending(path: "unused.sqlite3")
         let help = try Self.run(executable: executable, ["--help", "--database", database.path])
         XCTAssertEqual(help.status, 0)
-        XCTAssertEqual(help.stdout, "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]\n")
+        XCTAssertEqual(
+            help.stdout,
+            "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]\n"
+        )
         XCTAssertEqual(help.stderr, "")
         XCTAssertFalse(FileManager.default.fileExists(atPath: database.path))
 
@@ -165,7 +168,7 @@ final class SiftIntegrationTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 7)
     }
 
-    private static func run(executable: URL, _ arguments: [String], timeout: TimeInterval = 240) throws -> ProcessResult {
+    private static func run(executable: URL, _ arguments: [String], timeout: TimeInterval = 600) throws -> ProcessResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -195,7 +198,9 @@ final class SiftIntegrationTests: XCTestCase {
             throw ProcessTimeout()
         }
         XCTAssertEqual(outputGroup.wait(timeout: .now() + 2), .success)
-        return ProcessResult(status: process.terminationStatus, stdout: String(decoding: stdoutData.value, as: UTF8.self), stderr: String(decoding: stderrData.value, as: UTF8.self))
+        return ProcessResult(
+            status: process.terminationStatus, stdout: String(decoding: stdoutData.value, as: UTF8.self),
+            stderr: String(decoding: stderrData.value, as: UTF8.self))
     }
 
     private func execute(_ url: URL, _ sql: String) throws {

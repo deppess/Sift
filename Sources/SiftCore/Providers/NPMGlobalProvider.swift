@@ -73,9 +73,14 @@ public struct NPMGlobalProvider: Sendable {
     private let environment: [String: String]
     private let standardDirectories: [String]
 
-    public init(runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment, standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) {
+    public init(
+        runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment,
+        standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]
+    ) {
         self.runner = runner
-        self.environment = environment.merging(["LC_ALL": "C", "NO_COLOR": "1", "FORCE_COLOR": "0", "npm_config_color": "false"]) { _, replacement in replacement }
+        self.environment = environment.merging(["LC_ALL": "C", "NO_COLOR": "1", "FORCE_COLOR": "0", "npm_config_color": "false"]) { _, replacement in
+            replacement
+        }
         self.standardDirectories = standardDirectories
     }
 
@@ -107,7 +112,8 @@ public struct NPMGlobalProvider: Sendable {
                 }
 
                 do {
-                    let outdatedResult = try runner.run(executable: executable, arguments: ["outdated", "--global", "--depth=0", "--json"] + configurationArguments, environment: environment)
+                    let outdatedResult = try runner.run(
+                        executable: executable, arguments: ["outdated", "--global", "--depth=0", "--json"] + configurationArguments, environment: environment)
                     // npm uses status 1 to report that update candidates exist.
                     guard outdatedResult.status == 0 || outdatedResult.status == 1 else {
                         throw NPMGlobalProviderError.commandFailed(executable: executable, command: "outdated", status: outdatedResult.status)
@@ -122,7 +128,9 @@ public struct NPMGlobalProvider: Sendable {
                     // package is retained rather than silently cleared.
                     let stderrText = String(decoding: outdatedResult.stderr, as: UTF8.self)
                     if stderrText.range(of: "npm error", options: .caseInsensitive) != nil || stderrText.range(of: "npm ERR!") != nil {
-                        warnings.append("npm outdated snapshot at \(executable.path) reported an error for at least one package: \(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))")
+                        warnings.append(
+                            "npm outdated snapshot at \(executable.path) reported an error for at least one package: \(stderrText.trimmingCharacters(in: .whitespacesAndNewlines))"
+                        )
                         inventories.append(NPMGlobalPrefixInventory(prefix: prefix, packages: packages, updateCandidates: updates, outdatedComplete: false))
                     } else {
                         inventories.append(NPMGlobalPrefixInventory(prefix: prefix, packages: packages, updateCandidates: updates))
@@ -175,7 +183,9 @@ public struct NPMGlobalProvider: Sendable {
     private func parseOutdated(_ data: Data) throws -> [NPMGlobalUpdateCandidate] {
         let document = try JSONDecoder().decode([String: NPMOutdatedOutput].self, from: data)
         return try document.map { name, outdated in
-            guard !name.isEmpty, !outdated.current.isEmpty, !outdated.wanted.isEmpty, !outdated.latest.isEmpty else { throw NPMGlobalProviderError.invalidOutdated }
+            guard !name.isEmpty, !outdated.current.isEmpty, !outdated.wanted.isEmpty, !outdated.latest.isEmpty else {
+                throw NPMGlobalProviderError.invalidOutdated
+            }
             return NPMGlobalUpdateCandidate(name: name, installedVersion: outdated.current, wantedVersion: outdated.wanted, latestVersion: outdated.latest)
         }.sorted { $0.name < $1.name }
     }

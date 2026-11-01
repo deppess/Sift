@@ -12,14 +12,14 @@ public extension String {
                 index += 1
                 guard index < scalars.count else { continue }
                 switch scalars[index].value {
-                case 0x5B: // CSI: ESC [ ... final byte
+                case 0x5B:  // CSI: ESC [ ... final byte
                     index += 1
                     while index < scalars.count {
                         let value = scalars[index].value
                         index += 1
                         if (0x40...0x7E).contains(value) { break }
                     }
-                case 0x58, 0x5D, 0x50, 0x5E, 0x5F: // SOS, OSC, DCS, PM, APC: terminate at BEL or ST
+                case 0x58, 0x5D, 0x50, 0x5E, 0x5F:  // SOS, OSC, DCS, PM, APC: terminate at BEL or ST
                     index += 1
                     while index < scalars.count {
                         if scalars[index].value == 0x07 {
@@ -32,17 +32,17 @@ public extension String {
                         }
                         index += 1
                     }
-                default: // Other ESC functions have a one-character final byte.
+                default:  // Other ESC functions have a one-character final byte.
                     index += 1
                 }
-            } else if scalar.value == 0x9B { // 8-bit CSI
+            } else if scalar.value == 0x9B {  // 8-bit CSI
                 index += 1
                 while index < scalars.count {
                     let value = scalars[index].value
                     index += 1
                     if (0x40...0x7E).contains(value) { break }
                 }
-            } else if [0x90, 0x98, 0x9D, 0x9E, 0x9F].contains(scalar.value) { // 8-bit DCS, SOS, OSC, PM, APC
+            } else if [0x90, 0x98, 0x9D, 0x9E, 0x9F].contains(scalar.value) {  // 8-bit DCS, SOS, OSC, PM, APC
                 index += 1
                 while index < scalars.count {
                     if scalars[index].value == 0x07 || scalars[index].value == 0x9C {
@@ -55,7 +55,9 @@ public extension String {
                     }
                     index += 1
                 }
-            } else if scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7F && !(0x80...0x9F).contains(scalar.value) && !isInvisibleFormatControl(scalar)) {
+            } else if scalar == "\n" || scalar == "\t"
+                || (scalar.value >= 0x20 && scalar.value != 0x7F && !(0x80...0x9F).contains(scalar.value) && !isInvisibleFormatControl(scalar))
+            {
                 result.append(scalar)
                 index += 1
             } else {

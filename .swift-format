@@ -1,0 +1,16 @@
+{
+  "indentation": {
+    "spaces": 4
+  },
+  "lineLength": 160,
+  "maximumBlankLines": 1,
+  "multiElementCollectionTrailingCommas": false,
+  "rules": {
+    "AllPublicDeclarationsHaveDocumentation": false,
+    "BeginDocumentationCommentWithOneLineSummary": false,
+    "NeverForceUnwrap": true,
+    "NeverUseImplicitlyUnwrappedOptionals": true,
+    "ValidateDocumentationComments": false
+  },
+  "version": 1
+}

@@ -34,24 +34,27 @@ public enum CatalogRenderer {
         let installed = (item.installedVersion ?? "Unknown").terminalInline
         let available = (item.availableVersion ?? item.installedVersion ?? "Unknown").terminalInline
         let version = item.updateAvailable ? "\(installed) -> \(available)" : installed
-        let kind = switch item.kind {
-        case .homebrewFormula: "Homebrew formula"
-        case .homebrewCask: "Homebrew cask"
-        case .nativeApp: "Native app"
-        case .package: "\(LogRenderer.sourceLabel(item.updateSource ?? "")) package"
-        }
+        let kind =
+            switch item.kind {
+            case .homebrewFormula: "Homebrew formula"
+            case .homebrewCask: "Homebrew cask"
+            case .nativeApp: "Native app"
+            case .package: "\(LogRenderer.sourceLabel(item.updateSource ?? "")) package"
+            }
         let status = item.updateAvailable ? (item.autoUpdates ? "self-updating" : "update available") : "current"
         var lines = ["\(item.name.terminalInline)  \(version)", "\(kind) · \(status)"]
-        if let prefix = item.prefix { lines.append("Prefix: \(prefix.terminalInline)\(item.tap.map { " · \($0.terminalInline)" } ?? "")") }
-        else if let path = item.path { lines.append("Path: \(path.terminalInline)") }
+        if let prefix = item.prefix {
+            lines.append("Prefix: \(prefix.terminalInline)\(item.tap.map { " · \($0.terminalInline)" } ?? "")")
+        } else if let path = item.path {
+            lines.append("Path: \(path.terminalInline)")
+        }
         if item.kind == .nativeApp {
             lines.append("Updates: \(sourceLabel(item))\(item.updateDetail.map { " · \($0.terminalInline)" } ?? "")")
         }
         if let notes {
             let coverage = notes.coverage == "complete" ? "complete range" : notes.coverage == "repositoryCommits" ? "repository commits" : "target release"
             lines.append("Changelog: \(coverage) · sift changelog \(item.selector.terminalInline)")
-        }
-        else if let nativeNotes {
+        } else if let nativeNotes {
             if let content = nativeNotes.content {
                 let body = content.split(separator: "\n", omittingEmptySubsequences: false).map { String($0).terminalInline }
                 let shown = full ? body : Array(body.prefix(12))
@@ -60,8 +63,9 @@ public enum CatalogRenderer {
                 if shown.count < body.count { lines.append("… sift changelog \(item.selector.terminalInline)") }
             }
             if let source = nativeNotes.sourceURL { lines.append("Source: \(source.terminalInline)") }
+        } else {
+            lines.append("Changelog: sift changelog \(item.selector.terminalInline)")
         }
-        else { lines.append("Changelog: sift changelog \(item.selector.terminalInline)") }
         return lines.joined(separator: "\n")
     }
 
@@ -81,7 +85,10 @@ public enum CatalogRenderer {
             if body.count > 12 { lines.append(style.label("  …")) }
         }
         lines.append("")
-        lines.append(style.label("Full changelog: sift changelog \(item.selector.terminalInline)\(changelog.entries.count > shown.count ? " (\(changelog.entries.count) versions)" : "")"))
+        lines.append(
+            style.label(
+                "Full changelog: sift changelog \(item.selector.terminalInline)\(changelog.entries.count > shown.count ? " (\(changelog.entries.count) versions)" : "")"
+            ))
         return lines.joined(separator: "\n")
     }
 

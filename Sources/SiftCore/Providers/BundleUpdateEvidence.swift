@@ -15,8 +15,10 @@ enum BundleURLScanner {
         var seen = Set<String>()
         var urls: [URL] = []
         for file in files {
-            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= maximumExecutableSize,
-                  let data = try? Data(contentsOf: file, options: .mappedIfSafe) else { continue }
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+                (values.fileSize ?? .max) <= maximumExecutableSize,
+                let data = try? Data(contentsOf: file, options: .mappedIfSafe)
+            else { continue }
             for text in strings(in: data, prefix: Array("https://".utf8)) where seen.insert(text).inserted {
                 if let url = URL(string: text), url.host != nil { urls.append(url) }
                 if urls.count >= maximumURLs { return urls }
@@ -49,7 +51,11 @@ enum BundleURLScanner {
     /// or `github.com/O/R/releases`), when its owner or name also appears in the bundle identifier
     /// or app name. A plain repository or credits link is not a release check.
     static func releaseRepository(in urls: [URL], for application: NativeApplication) -> GitHubRepository? {
-        let identity = Set(((application.bundleIdentifier ?? "").split(separator: ".").map(String.init) + [application.displayName, (application.path as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")]).map(matchKey)).subtracting([""])
+        let identity = Set(
+            ((application.bundleIdentifier ?? "").split(separator: ".").map(String.init) + [
+                application.displayName, (application.path as NSString).lastPathComponent.replacingOccurrences(of: ".app", with: "")
+            ]).map(matchKey)
+        ).subtracting([""])
         var repositories = Set<String>()
         for url in urls {
             guard let host = url.host?.lowercased() else { continue }
@@ -90,8 +96,10 @@ struct ElectronUpdateManifest {
 
     init?(bundlePath: String) {
         let file = URL(filePath: bundlePath).appending(path: "Contents/Resources/app-update.yml")
-        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 65_536,
-              let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+            (values.fileSize ?? .max) <= 65_536,
+            let text = try? String(contentsOf: file, encoding: .utf8)
+        else { return nil }
         self.init(yaml: text)
     }
 

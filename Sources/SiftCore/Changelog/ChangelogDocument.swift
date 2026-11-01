@@ -17,7 +17,9 @@ enum ChangelogDocument {
             if let heading = atxHeading(trimmed) {
                 headings.append((index, heading.level, heading.text))
             } else if index + 1 < lines.count, !trimmed.isEmpty, let underline = lines[index + 1].trimmingCharacters(in: .whitespaces).first,
-                      underline == "=" || underline == "-", lines[index + 1].trimmingCharacters(in: .whitespaces).allSatisfy({ $0 == underline }), lines[index + 1].trimmingCharacters(in: .whitespaces).count >= 3 {
+                underline == "=" || underline == "-", lines[index + 1].trimmingCharacters(in: .whitespaces).allSatisfy({ $0 == underline }),
+                lines[index + 1].trimmingCharacters(in: .whitespaces).count >= 3
+            {
                 // A setext heading, which reStructuredText-style changelogs converted to Markdown use.
                 headings.append((index, underline == "=" ? 1 : 2, trimmed))
             }
@@ -60,12 +62,15 @@ enum ChangelogDocument {
             var bodyLines = bodyStart < end ? Array(lines[bodyStart..<end]) : []
             var entryDate = date(in: start.text) ?? shortDateLine(before: start.index, in: lines)?.date
             // The next entry's date written above its version isn't part of this entry.
-            if position + 1 < starts.count, let above = shortDateLine(before: starts[position + 1].index, in: lines), above.index >= bodyStart, above.index < end {
+            if position + 1 < starts.count, let above = shortDateLine(before: starts[position + 1].index, in: lines), above.index >= bodyStart,
+                above.index < end
+            {
                 bodyLines.removeSubrange((above.index - bodyStart)..<bodyLines.count)
             }
             // A date on its own first line ("14 September 2026") is the entry's date.
             if entryDate == nil, let first = bodyLines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
-               bodyLines[first].count < 48, let found = date(in: bodyLines[first]) {
+                bodyLines[first].count < 48, let found = date(in: bodyLines[first])
+            {
                 entryDate = found
                 bodyLines.remove(at: first)
             }
@@ -74,8 +79,13 @@ enum ChangelogDocument {
             if sentenceHeading { bodyLines = Array(bodyLines.drop { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) }
             let version = byDay ? entryDate.map(dayVersion) ?? start.text : ChangelogVersion.token(in: start.text) ?? start.text
             // "BetterTouchTool >= 6.943": everything since that version, marked so it can apply to later ones.
-            let cumulative = start.text.contains(">=") || start.text.contains("≥") || start.text.range(of: #"(?i)\b(and later|or later|and newer|or newer|onwards)\b"#, options: .regularExpression) != nil
-            entries.append(ChangelogEntry(version: version, title: cumulative ? ChangelogDocument.cumulativeTitle : sentenceHeading ? nil : cleanTitle(start.text, version: version), date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
+            let cumulative =
+                start.text.contains(">=") || start.text.contains("≥")
+                || start.text.range(of: #"(?i)\b(and later|or later|and newer|or newer|onwards)\b"#, options: .regularExpression) != nil
+            entries.append(
+                ChangelogEntry(
+                    version: version, title: cumulative ? ChangelogDocument.cumulativeTitle : sentenceHeading ? nil : cleanTitle(start.text, version: version),
+                    date: entryDate, content: tidy(dedented(bodyLines)), sourceURL: sourceURL))
         }
         // Point releases written as paragraphs inside an entry ("go1.27.1 (released 2026-09-01)
         // includes fixes to …"), split into entries of their own.
@@ -83,11 +93,18 @@ enum ChangelogDocument {
             let lines = entry.content.components(separatedBy: "\n")
             let starts = lines.indices.filter { lines[$0].firstMatch(of: #/^(?:[a-z]{1,12})?v?\d+(\.\d+)+\s+\(released\b/#) != nil }
             guard !starts.isEmpty else { return [entry] }
-            var split = [ChangelogEntry(version: entry.version, title: entry.title, date: entry.date, content: tidy(lines[..<starts[0]].joined(separator: "\n")), sourceURL: entry.sourceURL)]
+            var split = [
+                ChangelogEntry(
+                    version: entry.version, title: entry.title, date: entry.date, content: tidy(lines[..<starts[0]].joined(separator: "\n")),
+                    sourceURL: entry.sourceURL)
+            ]
             for (position, start) in starts.enumerated() {
                 let end = position + 1 < starts.count ? starts[position + 1] : lines.count
                 let text = lines[start..<end].joined(separator: "\n")
-                split.append(ChangelogEntry(version: ChangelogVersion.token(in: lines[start]) ?? entry.version, date: date(in: lines[start]), content: tidy(text), sourceURL: entry.sourceURL))
+                split.append(
+                    ChangelogEntry(
+                        version: ChangelogVersion.token(in: lines[start]) ?? entry.version, date: date(in: lines[start]), content: tidy(text),
+                        sourceURL: entry.sourceURL))
             }
             return split.sorted { left, right in
                 guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
@@ -99,7 +116,9 @@ enum ChangelogDocument {
         var merged: [ChangelogEntry] = []
         for entry in entries {
             if let last = merged.last, last.version == entry.version {
-                merged[merged.count - 1] = ChangelogEntry(version: last.version, title: last.title ?? entry.title, date: last.date ?? entry.date, content: [last.content, entry.content].filter { !$0.isEmpty }.joined(separator: "\n"), sourceURL: last.sourceURL ?? entry.sourceURL)
+                merged[merged.count - 1] = ChangelogEntry(
+                    version: last.version, title: last.title ?? entry.title, date: last.date ?? entry.date,
+                    content: [last.content, entry.content].filter { !$0.isEmpty }.joined(separator: "\n"), sourceURL: last.sourceURL ?? entry.sourceURL)
             } else {
                 merged.append(entry)
             }
@@ -124,34 +143,47 @@ enum ChangelogDocument {
             let next = index + 1 < lines.count ? lines[index + 1].trimmingCharacters(in: .whitespaces) : ""
             // "* Noteworthy changes in release 9.5", "* Changes in Wget 1.25.0"; not a bullet
             // that merely mentions a standard ("…conforming to POSIX 1003.1-2001:").
-            let isHeading = lower.hasPrefix("* ") && (lower.firstMatch(of: #/\b(release|version)\s+v?\d/#) != nil || lower.firstMatch(of: #/^\* (?:noteworthy |major |user-visible |)changes in\b/#) != nil)
+            let isHeading =
+                lower.hasPrefix("* ")
+                && (lower.firstMatch(of: #/\b(release|version)\s+v?\d/#) != nil
+                    || lower.firstMatch(of: #/^\* (?:noteworthy |major |user-visible |)changes in\b/#) != nil)
                 || lower.firstMatch(of: #/^(version|release|changes in|noteworthy changes|what's new in|what’s new in|new in)\b/#) != nil
                 || lower.hasPrefix("changes from ")
                 || lower.hasPrefix("this document details the changes between this version")
                 // Bash's NEWS: "This is a terse description of the new features added to bash-5.3 since …"
                 || lower.hasPrefix("this is a terse description of the new features added to")
                 // Not a wrapped sentence that happens to start with a number ("52.5s\".").
-                || (lower.firstMatch(of: #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#) != nil && !lower.hasSuffix(".") && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
+                || (lower.firstMatch(of: #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#) != nil && !lower.hasSuffix(".")
+                    && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
                 // A version alone on its line with a date next ("2.0" / "November 2026").
                 || (line.count <= 40 && lower.firstMatch(of: #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#) != nil
-                    && (date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil || shortDateLine(before: index, in: lines) != nil))
+                    && (date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil
+                        || shortDateLine(before: index, in: lines) != nil))
             // A heading stands on its own: a blank line, a list, or indented text follows it, or it
             // ends with a colon. "Version 3.7.5 was accidentally built without the" running on
             // into the next line is a sentence in the notes.
             let following = index + 1 < lines.count ? lines[index + 1] : ""
-            let standsAlone = next.isEmpty || line.trimmingCharacters(in: .whitespaces).hasSuffix(":") || following.first.map { $0 == " " || $0 == "\t" } == true
+            let standsAlone =
+                next.isEmpty || line.trimmingCharacters(in: .whitespaces).hasSuffix(":") || following.first.map { $0 == " " || $0 == "\t" } == true
                 || ["-", "*", "•", "+"].contains(where: { next.hasPrefix($0 + " ") }) || next.allSatisfy { "=-~^*".contains($0) }
             // Bash's "This document details the changes between this version, …" wraps onto a
             // second line but is always a heading.
             // Likewise an Org-style "* Changes in Emacs 30.2" with its text right below.
             let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: #/^\* (?:[\w-]+ )?changes in\b/#) != nil
-            if isHeading, standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version") || lower.hasPrefix("this is a terse description") { headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces)))) }
+            if isHeading,
+                standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version")
+                    || lower.hasPrefix("this is a terse description")
+            {
+                headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces))))
+            }
         }
         if headings.isEmpty {
             // "Tor Browser 16.0 - October 28 2026" or "2012-04-02: atool 0.39.0 released." at the
             // margin with indented text below, used consistently through the file.
             let indentedBelow = lines.indices.filter { index in
-                guard let first = lines[index].first, !first.isWhitespace, lines[index].count <= 140, ChangelogVersion.token(in: lines[index]) != nil, index + 1 < lines.count else { return false }
+                guard let first = lines[index].first, !first.isWhitespace, lines[index].count <= 140, ChangelogVersion.token(in: lines[index]) != nil,
+                    index + 1 < lines.count
+                else { return false }
                 return lines[index + 1].first.map { $0 == " " || $0 == "\t" } ?? false
             }
             if indentedBelow.count >= 3 { headings = indentedBelow.map { ($0, 1, lines[$0].trimmingCharacters(in: .whitespaces)) } }
@@ -181,7 +213,9 @@ enum ChangelogDocument {
     /// as code; GNU's "** Bug fixes" sub-headings become headings.
     private static func dedented(_ lines: [String]) -> String {
         // GNU's "** " sub-headings sit at the margin while their text is indented.
-        let indents = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("** ") }.map { $0.prefix { $0 == " " || $0 == "\t" }.count }
+        let indents = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("** ") }.map {
+            $0.prefix { $0 == " " || $0 == "\t" }.count
+        }
         let common = indents.min() ?? 0
         return lines.map { line -> String in
             let stripped = String(line.dropFirst(min(common, line.prefix { $0 == " " || $0 == "\t" }.count)))
@@ -239,7 +273,9 @@ enum ChangelogDocument {
             return !(lower.hasPrefix("full changelog:") && lower.contains("/compare/"))
         }
         var compacted: [String] = []
-        for line in lines where !(line.trimmingCharacters(in: .whitespaces).isEmpty && (compacted.last?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)) { compacted.append(line) }
+        for line in lines where !(line.trimmingCharacters(in: .whitespaces).isEmpty && (compacted.last?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)) {
+            compacted.append(line)
+        }
         lines = compacted
         while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
         return lines.joined(separator: "\n")
@@ -267,21 +303,29 @@ enum ChangelogDocument {
         // "July 21st, 2026" reads as "July 21, 2026".
         let text = original.replacing(#/(\d{1,2})(st|nd|rd|th)\b/#) { String($0.1) }
         if let match = text.firstMatch(of: #/(\d{4})[-/](\d{2})[-/](\d{2})/#),
-           let year = Int(match.1), let month = Int(match.2), let day = Int(match.3) {
+            let year = Int(match.1), let month = Int(match.2), let day = Int(match.3)
+        {
             return utcDate(year: year, month: month, day: day)
         }
         // "2025/ Feb / 03" (FL Studio).
         if let match = text.firstMatch(of: #/(\d{4})\s*/\s*([A-Za-z]{3})[a-z]*\s*/\s*(\d{1,2})/#), let year = Int(match.1), let day = Int(match.3),
-           let month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].firstIndex(of: match.2.lowercased()) {
+            let month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].firstIndex(of: match.2.lowercased())
+        {
             return utcDate(year: year, month: month + 1, day: day)
         }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         let patterns: [(Regex<Substring>, [String])] = [
-            (try! Regex(#"(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b"#), ["MMMM d, yyyy", "MMM d, yyyy", "MMMM d yyyy", "MMM d yyyy", "MMM. d, yyyy"]),
-            (try! Regex(#"(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,? \d{4}\b"#), ["d MMMM yyyy", "d MMM yyyy", "d MMMM, yyyy", "d MMM, yyyy"]),
-            (try! Regex(#"(?i)^\s*(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\s*$"#), ["MMMM yyyy"]),
+            (
+                try! Regex(#"(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b"#),
+                ["MMMM d, yyyy", "MMM d, yyyy", "MMMM d yyyy", "MMM d yyyy", "MMM. d, yyyy"]
+            ),
+            (
+                try! Regex(#"(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,? \d{4}\b"#),
+                ["d MMMM yyyy", "d MMM yyyy", "d MMMM, yyyy", "d MMM, yyyy"]
+            ),
+            (try! Regex(#"(?i)^\s*(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\s*$"#), ["MMMM yyyy"])
         ]
         for (pattern, formats) in patterns {
             guard let match = text.firstMatch(of: pattern) else { continue }
@@ -315,9 +359,19 @@ enum ChangelogDocument {
         guard plain.count <= 240 else { return false }
         let lower = plain.lowercased()
         // A browser check or a script-only page stands in for the content.
-        if ["update your browser", "unsupported browser", "enable javascript", "javascript is required", "requires javascript", "turn on javascript"].contains(where: plain.lowercased().contains) && plain.count < 1_200 { return true }
-        let pointers = ["visit", "see the", "see our", "see link", "refer to", "help cent", "click here", "available at", "available on", "can be found", "read more", "read the", "check out", "full changelog", "full release notes", "release notes are", "for details", "for more information", "learn more", "what's new page", "on our website", "on our blog"]
-        return pointers.contains { lower.contains($0) } && (lower.contains("LINK".lowercased()) || lower.contains("release notes") || lower.contains("changelog") || lower.contains("change log") || lower.contains("website") || lower.contains("help cent") || lower.contains("blog") || plain.count < 120)
+        if ["update your browser", "unsupported browser", "enable javascript", "javascript is required", "requires javascript", "turn on javascript"].contains(
+            where: plain.lowercased().contains) && plain.count < 1_200
+        {
+            return true
+        }
+        let pointers = [
+            "visit", "see the", "see our", "see link", "refer to", "help cent", "click here", "available at", "available on", "can be found", "read more",
+            "read the", "check out", "full changelog", "full release notes", "release notes are", "for details", "for more information", "learn more",
+            "what's new page", "on our website", "on our blog"
+        ]
+        return pointers.contains { lower.contains($0) }
+            && (lower.contains("LINK".lowercased()) || lower.contains("release notes") || lower.contains("changelog") || lower.contains("change log")
+                || lower.contains("website") || lower.contains("help cent") || lower.contains("blog") || plain.count < 120)
     }
 
     static func isMeaningful(_ entries: [ChangelogEntry]) -> Bool {

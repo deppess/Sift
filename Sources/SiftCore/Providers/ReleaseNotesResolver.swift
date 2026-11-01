@@ -24,7 +24,8 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
 
     public func resolveReleaseNotes(for package: HomebrewPackage, target: HomebrewTarget) -> HomebrewReleaseNotesResolution {
         guard let source = target.sourceURL ?? package.sourceURL,
-              let url = URL(string: source), GitHubSource.parse(url) != nil else {
+            let url = URL(string: source), GitHubSource.parse(url) != nil
+        else {
             return .unsupported("No exact GitHub release-note source is available.")
         }
         do {
@@ -41,12 +42,14 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
 
     private func resolveExact(package: HomebrewPackage, target: HomebrewTarget) throws -> HomebrewReleaseNotes? {
         guard let source = target.sourceURL ?? package.sourceURL,
-              let sourceURL = URL(string: source),
-              let github = GitHubSource.parse(sourceURL),
-              let identity = try tagResolver.resolve(repository: github.repository, sourceTag: github.tag, upstreamVersion: target.upstreamVersion) else { return nil }
+            let sourceURL = URL(string: source),
+            let github = GitHubSource.parse(sourceURL),
+            let identity = try tagResolver.resolve(repository: github.repository, sourceTag: github.tag, upstreamVersion: target.upstreamVersion)
+        else { return nil }
         let tag = identity.tag
         if let release = try releaseResolver.release(repository: github.repository, tag: tag),
-           isMeaningfulReleaseBody(release.body) {
+            isMeaningfulReleaseBody(release.body)
+        {
             return HomebrewReleaseNotes(
                 name: package.fullName,
                 installedVersion: package.installedVersion,
@@ -66,20 +69,30 @@ public struct ReleaseNotesResolver: HomebrewReleaseNotesResolving {
         if let document {
             let content = extractRange(document, target: target.upstreamVersion, installed: HomebrewVersion.upstreamVersion(from: package.installedVersion))
             if !content.isEmpty {
-                return HomebrewReleaseNotes(name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: content, sourceURL: url.absoluteString, coverage: containsHeading(document, version: HomebrewVersion.upstreamVersion(from: package.installedVersion)) ? "complete" : "targetOnly")
+                return HomebrewReleaseNotes(
+                    name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: content,
+                    sourceURL: url.absoluteString,
+                    coverage: containsHeading(document, version: HomebrewVersion.upstreamVersion(from: package.installedVersion)) ? "complete" : "targetOnly")
             }
         }
-        guard let installed = try tagResolver.resolve(repository: github.repository, sourceTag: nil, upstreamVersion: HomebrewVersion.upstreamVersion(from: package.installedVersion)),
-              let comparison = try compareResolver.compare(repository: github.repository, installedCommit: installed.commitSHA, targetCommit: identity.commitSHA),
-              !comparison.commits.isEmpty else { return nil }
-        return HomebrewReleaseNotes(name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: comparisonMarkdown(comparison), sourceURL: comparison.sourceURL, coverage: "repositoryCommits")
+        guard
+            let installed = try tagResolver.resolve(
+                repository: github.repository, sourceTag: nil, upstreamVersion: HomebrewVersion.upstreamVersion(from: package.installedVersion)),
+            let comparison = try compareResolver.compare(repository: github.repository, installedCommit: installed.commitSHA, targetCommit: identity.commitSHA),
+            !comparison.commits.isEmpty
+        else { return nil }
+        return HomebrewReleaseNotes(
+            name: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version, content: comparisonMarkdown(comparison),
+            sourceURL: comparison.sourceURL, coverage: "repositoryCommits")
     }
 
     private func extractRange(_ document: String, target: String, installed: String) -> String {
         let lines = document.components(separatedBy: .newlines)
         let targetIndices = lines.indices.filter { headingVersion(lines[$0]) == target || headingVersion(lines[$0]) == "v\(target)" }
         guard targetIndices.count == 1, let start = targetIndices.first else { return "" }
-        let end = lines.indices.dropFirst(start + 1).first { headingVersion(lines[$0]) == installed || headingVersion(lines[$0]) == "v\(installed)" } ?? lines.endIndex
+        let end =
+            lines.indices.dropFirst(start + 1).first { headingVersion(lines[$0]) == installed || headingVersion(lines[$0]) == "v\(installed)" }
+            ?? lines.endIndex
         return lines[start..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

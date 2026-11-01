@@ -31,14 +31,17 @@ final class NativeUpdateTests: XCTestCase {
             ("6.100", "6.300"),
             ("1.9", "1.10"),
             ("1.0beta", "1.0-beta"),
-            ("1.0+2", "1.0"),
+            ("1.0+2", "1.0")
         ]
         for (older, newer) in ascending {
             XCTAssertEqual(SparkleVersion.compare(older, newer), .orderedAscending, "\(older) < \(newer)")
             XCTAssertEqual(SparkleVersion.compare(newer, older), .orderedDescending, "\(newer) > \(older)")
         }
         // Answers read from Sparkle 2.8.1 itself.
-        let same: [(String, String)] = [("1.0", "1.0"), ("01", "1"), ("1.0", "1.0.0"), ("1.0", "1.0-beta"), ("1.0-rc.1", "1.0"), ("1.0.0a", "1.0a"), ("1.0.", "1.0.0"), ("99999999999999999999", "100000000000000000000")]
+        let same: [(String, String)] = [
+            ("1.0", "1.0"), ("01", "1"), ("1.0", "1.0.0"), ("1.0", "1.0-beta"), ("1.0-rc.1", "1.0"), ("1.0.0a", "1.0a"), ("1.0.", "1.0.0"),
+            ("99999999999999999999", "100000000000000000000")
+        ]
         for (a, b) in same { XCTAssertEqual(SparkleVersion.compare(a, b), .orderedSame, "\(a) = \(b)") }
         XCTAssertEqual(SparkleVersion.compare("1_0", "1.0"), .orderedDescending)
         XCTAssertEqual(SparkleVersion.compare("١", ""), .orderedDescending, "any script's decimal digits are numbers")
@@ -61,14 +64,15 @@ final class NativeUpdateTests: XCTestCase {
         let ascending: [(String, String)] = [
             ("1.0.0-alpha", "1.0.0-alpha.1"), ("1.0.0-alpha.1", "1.0.0-alpha.beta"), ("1.0.0-alpha.beta", "1.0.0-beta"),
             ("1.0.0-beta", "1.0.0-beta.2"), ("1.0.0-beta.2", "1.0.0-beta.11"), ("1.0.0-beta.11", "1.0.0-rc.1"), ("1.0.0-rc.1", "1.0.0"),
-            ("0.4.17", "1.1.2"), ("1.9.0", "1.10.0"), ("1.1.1", "1.1.2"),
+            ("0.4.17", "1.1.2"), ("1.9.0", "1.10.0"), ("1.1.1", "1.1.2")
         ]
         for (older, newer) in ascending {
             XCTAssertEqual(SemanticVersion.compare(older, newer), .orderedAscending, "\(older) < \(newer)")
             XCTAssertEqual(SemanticVersion.compare(newer, older), .orderedDescending, "\(newer) > \(older)")
         }
         XCTAssertEqual(SemanticVersion.compare("1.0.0+build.5", "1.0.0"), .orderedSame)
-        let index = Data([#"{"name":"x","vers":"1.0.0-beta.1","yanked":false}"#, #"{"name":"x","vers":"1.0.0+build-7","yanked":false}"#].joined(separator: "\n").utf8)
+        let index = Data(
+            [#"{"name":"x","vers":"1.0.0-beta.1","yanked":false}"#, #"{"name":"x","vers":"1.0.0+build-7","yanked":false}"#].joined(separator: "\n").utf8)
         XCTAssertEqual(CargoProvider.latestVersion(indexData: index, installed: "0.9.0"), "1.0.0", "a dash in build metadata isn't a prerelease")
         XCTAssertEqual(CargoProvider.latestVersion(indexData: index, installed: "1.0.0-alpha"), "1.0.0", "a prerelease install still sees the release")
     }
@@ -134,7 +138,11 @@ final class NativeUpdateTests: XCTestCase {
     }
 
     func testHTMLTextDropsScriptsAndDecodesEntities() {
-        XCTAssertEqual(HTMLText.plainText(from: "<html><head><title>x</title><style>p{}</style></head><body><p>A&nbsp;&#8220;b&#x201D; &lt;c&gt;</p><script>alert(1)</script><p>Next<br>line</p></body></html>"), "A “b” <c>\nNext\nline")
+        XCTAssertEqual(
+            HTMLText.plainText(
+                from:
+                    "<html><head><title>x</title><style>p{}</style></head><body><p>A&nbsp;&#8220;b&#x201D; &lt;c&gt;</p><script>alert(1)</script><p>Next<br>line</p></body></html>"
+            ), "A “b” <c>\nNext\nline")
     }
 
     // MARK: - App Store
@@ -148,22 +156,28 @@ final class NativeUpdateTests: XCTestCase {
             ]}
             """
         let listing = try XCTUnwrap(AppStoreListing.parse(Data(json.utf8), bundleIdentifier: "com.example.app"))
-        XCTAssertEqual(listing, AppStoreListing(version: "2.0", releaseNotes: "Mac notes", storeURL: "https://apps.apple.com/app/id1", minimumSystemVersion: "14.0"))
+        XCTAssertEqual(
+            listing, AppStoreListing(version: "2.0", releaseNotes: "Mac notes", storeURL: "https://apps.apple.com/app/id1", minimumSystemVersion: "14.0"))
         XCTAssertNil(try AppStoreListing.parse(Data(#"{"resultCount":0,"results":[]}"#.utf8), bundleIdentifier: "com.example.app"))
     }
 
     // MARK: - Resolver
 
     func testResolverReportsSparkleUpdateAgainstBundleBuildVersion() throws {
-        StubURLProtocol.responses["https://updates.example.com/appcast.xml"] = (200, """
+        StubURLProtocol.responses["https://updates.example.com/appcast.xml"] = (
+            200,
+            """
             <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>
             <item><enclosure url="https://updates.example.com/a.zip" sparkle:version="2026030101" sparkle:shortVersionString="6.300"/>
             <sparkle:releaseNotesLink>https://updates.example.com/notes.html</sparkle:releaseNotesLink></item>
             </channel></rss>
-            """)
+            """
+        )
         let resolver = try makeResolver()
         let outdated = application(short: "6.100", build: "2026010101", authority: .sparkle, feed: "https://updates.example.com/appcast.xml")
-        XCTAssertEqual(resolver.check(outdated), .available(version: "6.300", notes: NativeReleaseNotes(content: nil, sourceURL: "https://updates.example.com/notes.html")))
+        XCTAssertEqual(
+            resolver.check(outdated), .available(version: "6.300", notes: NativeReleaseNotes(content: nil, sourceURL: "https://updates.example.com/notes.html"))
+        )
         let current = application(short: "6.300", build: "2026030101", authority: .sparkle, feed: "https://updates.example.com/appcast.xml")
         XCTAssertEqual(resolver.check(current), .upToDate)
         // Ahead of the declared feed: the app replaced it at run time, so the feed proves nothing.
@@ -173,7 +187,10 @@ final class NativeUpdateTests: XCTestCase {
 
     func testResolverRefusesNonPublicFeedsAndExplainsMissingFeed() throws {
         let resolver = try makeResolver()
-        for feed in ["http://updates.example.com/appcast.xml", "https://localhost/appcast.xml", "https://192.168.1.1/appcast.xml", "https://printer.local/appcast.xml", "https://user:pw@example.com/a.xml", "file:///tmp/appcast.xml"] {
+        for feed in [
+            "http://updates.example.com/appcast.xml", "https://localhost/appcast.xml", "https://192.168.1.1/appcast.xml", "https://printer.local/appcast.xml",
+            "https://user:pw@example.com/a.xml", "file:///tmp/appcast.xml"
+        ] {
             guard case .unchecked = resolver.check(application(short: "1.0", build: "1", authority: .sparkle, feed: feed)) else { return XCTFail(feed) }
         }
         guard case let .unchecked(reason) = resolver.check(application(short: "1.0", build: "1", authority: .sparkle, feed: nil)) else { return XCTFail() }
@@ -188,9 +205,13 @@ final class NativeUpdateTests: XCTestCase {
     }
 
     func testResolverComparesAppStoreVersionWithShortVersion() throws {
-        StubURLProtocol.responses["https://itunes.apple.com/lookup?bundleId=com.example.app&country=us&entity=macSoftware"] = (200, #"{"resultCount":1,"results":[{"bundleId":"com.example.app","kind":"mac-software","version":"1.19.0","releaseNotes":"Fixes"}]}"#)
+        StubURLProtocol.responses["https://itunes.apple.com/lookup?bundleId=com.example.app&country=us&entity=macSoftware"] = (
+            200, #"{"resultCount":1,"results":[{"bundleId":"com.example.app","kind":"mac-software","version":"1.19.0","releaseNotes":"Fixes"}]}"#
+        )
         let resolver = try makeResolver()
-        XCTAssertEqual(resolver.check(application(short: "1.18.2", build: "42", authority: .appStore)), .available(version: "1.19.0", notes: NativeReleaseNotes(content: "Fixes", sourceURL: nil)))
+        XCTAssertEqual(
+            resolver.check(application(short: "1.18.2", build: "42", authority: .appStore)),
+            .available(version: "1.19.0", notes: NativeReleaseNotes(content: "Fixes", sourceURL: nil)))
         XCTAssertEqual(resolver.check(application(short: "1.19.0", build: "43", authority: .appStore)), .upToDate)
     }
 
@@ -198,12 +219,18 @@ final class NativeUpdateTests: XCTestCase {
 
     func testNativeUpdateIsShownOnlyWhileCheckedVersionIsInstalled() throws {
         let database = try Database(url: root.appending(path: "sift.sqlite3"))
-        let old = NativeApplication(path: "/Applications/Aviary.app", bundleIdentifier: "com.example.aviary", displayName: "Aviary", shortVersion: "1.47.0", buildVersion: "9", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle, sparkleFeedURL: "https://example.com/a.xml")
+        let old = NativeApplication(
+            path: "/Applications/Aviary.app", bundleIdentifier: "com.example.aviary", displayName: "Aviary", shortVersion: "1.47.0", buildVersion: "9",
+            classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle, sparkleFeedURL: "https://example.com/a.xml")
         let first = Date(timeIntervalSince1970: 1_000)
-        let check = NativeUpdateCheck(path: old.path, authority: .sparkle, installedVersionKey: Database.versionKey(short: "1.47.0", build: "9"), outcome: .available(version: "1.52.0", notes: NativeReleaseNotes(content: "New things", sourceURL: nil)))
+        let check = NativeUpdateCheck(
+            path: old.path, authority: .sparkle, installedVersionKey: Database.versionKey(short: "1.47.0", build: "9"),
+            outcome: .available(version: "1.52.0", notes: NativeReleaseNotes(content: "New things", sourceURL: nil)))
         _ = try database.applyRefresh(input(at: first, applications: [old], checks: [check]))
 
-        XCTAssertEqual(try database.updates(now: first).map { "\($0.provider) \($0.name) \($0.installedVersion) -> \($0.availableVersion)" }, ["sparkle Aviary 1.47.0 -> 1.52.0"])
+        XCTAssertEqual(
+            try database.updates(now: first).map { "\($0.provider) \($0.name) \($0.installedVersion) -> \($0.availableVersion)" },
+            ["sparkle Aviary 1.47.0 -> 1.52.0"])
         XCTAssertEqual(try database.dashboard(now: first).data.availableUpdateCount, 1)
         let item = try XCTUnwrap(database.nativeApplicationItems().first)
         XCTAssertEqual(item.availableVersion, "1.52.0")
@@ -212,13 +239,23 @@ final class NativeUpdateTests: XCTestCase {
 
         // A failed check keeps the previous answer.
         let second = Date(timeIntervalSince1970: 2_000)
-        _ = try database.applyRefresh(input(at: second, applications: [old], checks: [NativeUpdateCheck(path: old.path, authority: .sparkle, installedVersionKey: check.installedVersionKey, outcome: .failed("timed out"))], nativeUpdatesStatus: .failure))
+        _ = try database.applyRefresh(
+            input(
+                at: second, applications: [old],
+                checks: [NativeUpdateCheck(path: old.path, authority: .sparkle, installedVersionKey: check.installedVersionKey, outcome: .failed("timed out"))],
+                nativeUpdatesStatus: .failure))
         XCTAssertEqual(try database.updates(now: second).map(\.availableVersion), ["1.52.0"])
 
         // Once the app updates itself, the old answer no longer applies even without a new check.
         let third = Date(timeIntervalSince1970: 3_000)
-        let updated = NativeApplication(path: old.path, bundleIdentifier: old.bundleIdentifier, displayName: "Aviary", shortVersion: "1.52.0", buildVersion: "10", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle, sparkleFeedURL: old.sparkleFeedURL)
-        _ = try database.applyRefresh(input(at: third, applications: [updated], checks: [NativeUpdateCheck(path: old.path, authority: .sparkle, installedVersionKey: check.installedVersionKey, outcome: .failed("timed out"))], nativeUpdatesStatus: .failure))
+        let updated = NativeApplication(
+            path: old.path, bundleIdentifier: old.bundleIdentifier, displayName: "Aviary", shortVersion: "1.52.0", buildVersion: "10", classification: .user,
+            discoveryRoot: "/Applications", updateAuthority: .sparkle, sparkleFeedURL: old.sparkleFeedURL)
+        _ = try database.applyRefresh(
+            input(
+                at: third, applications: [updated],
+                checks: [NativeUpdateCheck(path: old.path, authority: .sparkle, installedVersionKey: check.installedVersionKey, outcome: .failed("timed out"))],
+                nativeUpdatesStatus: .failure))
         XCTAssertEqual(try database.updates(now: third), [])
         XCTAssertEqual(try database.dashboard(now: third).data.availableUpdateCount, 0)
         XCTAssertNil(try database.nativeApplicationItems().first?.availableVersion)
@@ -226,10 +263,18 @@ final class NativeUpdateTests: XCTestCase {
 
     func testRepeatedRefreshesKeepOneObservationAndCheckPerApplication() throws {
         let database = try Database(url: root.appending(path: "sift.sqlite3"))
-        var app = NativeApplication(path: "/Applications/Aviary.app", bundleIdentifier: "com.example.aviary", displayName: "Aviary", shortVersion: "1.0", buildVersion: "1", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
+        var app = NativeApplication(
+            path: "/Applications/Aviary.app", bundleIdentifier: "com.example.aviary", displayName: "Aviary", shortVersion: "1.0", buildVersion: "1",
+            classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
         for index in 1...25 {
-            if index == 10 { app = NativeApplication(path: app.path, bundleIdentifier: app.bundleIdentifier, displayName: "Aviary", shortVersion: "2.0", buildVersion: "2", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle) }
-            let check = NativeUpdateCheck(path: app.path, authority: .sparkle, installedVersionKey: Database.versionKey(short: app.shortVersion, build: app.buildVersion), outcome: .available(version: "3.0", notes: nil))
+            if index == 10 {
+                app = NativeApplication(
+                    path: app.path, bundleIdentifier: app.bundleIdentifier, displayName: "Aviary", shortVersion: "2.0", buildVersion: "2",
+                    classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
+            }
+            let check = NativeUpdateCheck(
+                path: app.path, authority: .sparkle, installedVersionKey: Database.versionKey(short: app.shortVersion, build: app.buildVersion),
+                outcome: .available(version: "3.0", notes: nil))
             _ = try database.applyRefresh(input(at: Date(timeIntervalSince1970: TimeInterval(index * 1_000)), applications: [app], checks: [check]))
         }
 
@@ -245,8 +290,11 @@ final class NativeUpdateTests: XCTestCase {
 
     func testUncheckedReasonIsRecordedForDisplay() throws {
         let database = try Database(url: root.appending(path: "sift.sqlite3"))
-        let app = NativeApplication(path: "/Applications/Switcher.app", bundleIdentifier: "com.example.switcher", displayName: "Switcher", shortVersion: "11.10.1", buildVersion: "11.10.1", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
-        let check = NativeUpdateCheck(path: app.path, authority: .sparkle, installedVersionKey: Database.versionKey(short: "11.10.1", build: "11.10.1"), outcome: .unchecked("No feed."))
+        let app = NativeApplication(
+            path: "/Applications/Switcher.app", bundleIdentifier: "com.example.switcher", displayName: "Switcher", shortVersion: "11.10.1",
+            buildVersion: "11.10.1", classification: .user, discoveryRoot: "/Applications", updateAuthority: .sparkle)
+        let check = NativeUpdateCheck(
+            path: app.path, authority: .sparkle, installedVersionKey: Database.versionKey(short: "11.10.1", build: "11.10.1"), outcome: .unchecked("No feed."))
         _ = try database.applyRefresh(input(at: Date(timeIntervalSince1970: 1_000), applications: [app], checks: [check]))
 
         let item = try XCTUnwrap(database.nativeApplicationItems().first)
@@ -263,7 +311,9 @@ final class NativeUpdateTests: XCTestCase {
 
     func testCatalogSelectorFallsBackToUniqueNamePrefix() {
         let items = ["Capture Pro", "Bastion Siege 6", "Python Launcher", "Python Launcher"].enumerated().map { index, name in
-            CatalogItem(selector: "app:\(index)", aliases: [name], kind: .nativeApp, name: name, fullName: nil, installedVersion: nil, availableVersion: nil, active: true, bundleIdentifier: nil, path: nil, prefix: nil, tap: nil, ownership: nil, autoUpdates: false, observedAt: .now)
+            CatalogItem(
+                selector: "app:\(index)", aliases: [name], kind: .nativeApp, name: name, fullName: nil, installedVersion: nil, availableVersion: nil,
+                active: true, bundleIdentifier: nil, path: nil, prefix: nil, tap: nil, ownership: nil, autoUpdates: false, observedAt: .now)
         }
         XCTAssertEqual(items.resolveCatalogItem("capture"), .item(items[0]))
         XCTAssertEqual(items.resolveCatalogItem("bastionsiege"), .item(items[1]))
@@ -278,19 +328,27 @@ final class NativeUpdateTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
         let database = try Database(url: root.appending(path: "metadata-\(UUID().uuidString).sqlite3"))
-        return NativeUpdateResolver(metadataClient: MetadataHTTPClient(database: database, configuration: configuration, environment: [:]), storefront: "us", systemVersion: "26.0.0")
+        return NativeUpdateResolver(
+            metadataClient: MetadataHTTPClient(database: database, configuration: configuration, environment: [:]), storefront: "us", systemVersion: "26.0.0")
     }
 
     private func application(short: String, build: String, authority: NativeUpdateAuthority, feed: String? = nil) -> NativeApplication {
-        NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: short, buildVersion: build, classification: .user, discoveryRoot: "/Applications", updateAuthority: authority, sparkleFeedURL: feed)
+        NativeApplication(
+            path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: short, buildVersion: build,
+            classification: .user, discoveryRoot: "/Applications", updateAuthority: authority, sparkleFeedURL: feed)
     }
 
-    private func input(at date: Date, applications: [NativeApplication], checks: [NativeUpdateCheck], nativeUpdatesStatus: ProviderRefreshStatus = .success) -> RefreshPersistenceInput {
+    private func input(at date: Date, applications: [NativeApplication], checks: [NativeUpdateCheck], nativeUpdatesStatus: ProviderRefreshStatus = .success)
+        -> RefreshPersistenceInput
+    {
         let results = RefreshProvider.allCases.map { provider in
             let status = provider == .nativeUpdates ? nativeUpdatesStatus : .success
             return ProviderRefreshResult(provider: provider, status: status, startedAt: date, finishedAt: date, dataAsOf: status == .success ? date : nil)
         }
-        return RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: applications, scannedRoots: ["/Applications"]), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], nativeUpdateChecks: checks, providerResults: results)
+        return RefreshPersistenceInput(
+            startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: applications, scannedRoots: ["/Applications"]),
+            homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], nativeUpdateChecks: checks,
+            providerResults: results)
     }
 }
 

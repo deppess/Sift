@@ -104,7 +104,9 @@ final class SiftCLITests: XCTestCase {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
-        let application = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+        let application = NativeApplication(
+            path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
         _ = try database.applyRefresh(refreshInput(nativeInventory: NativeInventoryResult(applications: [application])))
 
         let (status, output) = captureStdout { SiftCLI.run(arguments: ["apps", "--json", "--database", url.path]) }
@@ -120,8 +122,12 @@ final class SiftCLITests: XCTestCase {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
-        let example = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        let other = NativeApplication(path: "/Applications/Other.app", bundleIdentifier: "com.example.other", displayName: "Other", shortVersion: "2.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+        let example = NativeApplication(
+            path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
+        let other = NativeApplication(
+            path: "/Applications/Other.app", bundleIdentifier: "com.example.other", displayName: "Other", shortVersion: "2.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
         _ = try database.applyRefresh(refreshInput(nativeInventory: NativeInventoryResult(applications: [example, other])))
 
         let (status, output) = captureStdout { SiftCLI.run(arguments: ["apps", "Example", "--json", "--database", url.path]) }
@@ -135,9 +141,15 @@ final class SiftCLITests: XCTestCase {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
-        let package = HomebrewPackage(prefix: "/opt/homebrew", kind: .formula, name: "example", fullName: "example", tap: "homebrew/core", ownership: .explicitlyRequested, installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
-        let homebrewInventory = HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: "/opt/homebrew", packages: [package], complete: true, warnings: [])])
-        let targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [HomebrewPackageKey(package): .unavailable("Homebrew does not report this package as outdated.")]
+        let package = HomebrewPackage(
+            prefix: "/opt/homebrew", kind: .formula, name: "example", fullName: "example", tap: "homebrew/core", ownership: .explicitlyRequested,
+            installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
+        let homebrewInventory = HomebrewInventory(prefixes: [
+            HomebrewPrefixInventory(prefix: "/opt/homebrew", packages: [package], complete: true, warnings: [])
+        ])
+        let targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [
+            HomebrewPackageKey(package): .unavailable("Homebrew does not report this package as outdated.")
+        ]
         _ = try database.applyRefresh(refreshInput(homebrewInventory: homebrewInventory, targetResults: targetResults))
 
         let (status, output) = captureStdout { SiftCLI.run(arguments: ["show", "example", "--json", "--database", url.path]) }
@@ -153,9 +165,13 @@ final class SiftCLITests: XCTestCase {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
-        let first = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+        let first = NativeApplication(
+            path: "/Applications/Example.app", bundleIdentifier: "com.example.app", displayName: "Example", shortVersion: "1.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
         _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [first])))
-        let updated = NativeApplication(path: first.path, bundleIdentifier: first.bundleIdentifier, displayName: first.displayName, shortVersion: "2.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+        let updated = NativeApplication(
+            path: first.path, bundleIdentifier: first.bundleIdentifier, displayName: first.displayName, shortVersion: "2.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
         _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), nativeInventory: NativeInventoryResult(applications: [updated])))
 
         let (status, output) = captureStdout { SiftCLI.run(arguments: ["changes", "--json", "--database", url.path]) }
@@ -186,9 +202,16 @@ final class SiftCLITests: XCTestCase {
         return (status, String(decoding: data, as: UTF8.self))
     }
 
-    private func refreshInput(at date: Date = .now, nativeInventory: NativeInventoryResult = NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory = HomebrewInventory(prefixes: []), targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:]) -> RefreshPersistenceInput {
-        let providerResults = RefreshProvider.allCases.map { ProviderRefreshResult(provider: $0, status: .success, startedAt: date, finishedAt: date, dataAsOf: date) }
-        return RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: nativeInventory, homebrewInventory: homebrewInventory, targetResults: targetResults, releaseNoteResults: [:], providerResults: providerResults)
+    private func refreshInput(
+        at date: Date = .now, nativeInventory: NativeInventoryResult = NativeInventoryResult(applications: []),
+        homebrewInventory: HomebrewInventory = HomebrewInventory(prefixes: []), targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:]
+    ) -> RefreshPersistenceInput {
+        let providerResults = RefreshProvider.allCases.map {
+            ProviderRefreshResult(provider: $0, status: .success, startedAt: date, finishedAt: date, dataAsOf: date)
+        }
+        return RefreshPersistenceInput(
+            startedAt: date, finishedAt: date, nativeInventory: nativeInventory, homebrewInventory: homebrewInventory, targetResults: targetResults,
+            releaseNoteResults: [:], providerResults: providerResults)
     }
 
     private func temporaryDatabaseURL() -> URL {

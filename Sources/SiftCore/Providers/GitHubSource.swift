@@ -32,11 +32,12 @@ public struct GitHubSource: Equatable, Sendable {
 
     public static func parse(_ url: URL) -> GitHubSource? {
         guard url.scheme?.lowercased() == "https",
-               let host = url.host?.lowercased(),
-               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-               components.user == nil, components.password == nil, components.port == nil,
-               components.query == nil, components.fragment == nil,
-               host.unicodeScalars.allSatisfy({ $0.value < 0x80 }) else { return nil }
+            let host = url.host?.lowercased(),
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            components.user == nil, components.password == nil, components.port == nil,
+            components.query == nil, components.fragment == nil,
+            host.unicodeScalars.allSatisfy({ $0.value < 0x80 })
+        else { return nil }
         let encodedPath = components.percentEncodedPath
         guard encodedPath.hasPrefix("/"), !encodedPath.contains("//") else { return nil }
         let path = encodedPath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
@@ -72,16 +73,18 @@ public struct GitHubSource: Equatable, Sendable {
 
     private static func parseCodeloadPath(_ path: [String]) -> GitHubSource? {
         guard let repository = repository(from: path), path.count >= 5,
-              path[2] == "tar.gz", path[3] == "refs", path[4] == "tags" else { return nil }
+            path[2] == "tar.gz", path[3] == "refs", path[4] == "tags"
+        else { return nil }
         return tagged(repository, encodedTag: path.dropFirst(5).joined(separator: "/"), archive: false)
     }
 
     private static func repository(from path: [String]) -> GitHubRepository? {
         guard path.count >= 2,
-              isOwnerSegment(path[0]), isRepositorySegment(path[1]),
-              let owner = decode(path[0]),
-              let name = decode(path[1]),
-               isPathComponent(owner), isRepositoryName(name) else { return nil }
+            isOwnerSegment(path[0]), isRepositorySegment(path[1]),
+            let owner = decode(path[0]),
+            let name = decode(path[1]),
+            isPathComponent(owner), isRepositoryName(name)
+        else { return nil }
         let repository = name.hasSuffix(".git") ? String(name.dropLast(4)) : name
         guard isRepositoryName(repository) else { return nil }
         return GitHubRepository(owner: owner, name: repository)
@@ -100,11 +103,18 @@ public struct GitHubSource: Equatable, Sendable {
     }
 
     private static func isPathComponent(_ value: String) -> Bool {
-        !value.isEmpty && value != "." && value != ".." && value.unicodeScalars.allSatisfy { $0.value < 0x80 && ($0.value == 0x2D || $0.value == 0x2E || ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A) || ($0.value >= 0x61 && $0.value <= 0x7A)) }
+        !value.isEmpty && value != "." && value != ".."
+            && value.unicodeScalars.allSatisfy {
+                $0.value < 0x80
+                    && ($0.value == 0x2D || $0.value == 0x2E || ($0.value >= 0x30 && $0.value <= 0x39) || ($0.value >= 0x41 && $0.value <= 0x5A)
+                        || ($0.value >= 0x61 && $0.value <= 0x7A))
+            }
     }
 
     private static func isTag(_ value: String) -> Bool {
-        !value.hasPrefix("/") && !value.hasSuffix("/") && !value.contains("@{") && !value.hasSuffix(".") && value.unicodeScalars.allSatisfy { $0.value >= 0x21 && $0.value < 0x7F && !"~^:?*[\\\\".unicodeScalars.contains($0) } && !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("..") })
+        !value.hasPrefix("/") && !value.hasSuffix("/") && !value.contains("@{") && !value.hasSuffix(".")
+            && value.unicodeScalars.allSatisfy { $0.value >= 0x21 && $0.value < 0x7F && !"~^:?*[\\\\".unicodeScalars.contains($0) }
+            && !value.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("..") })
     }
 
     private static func isRepositorySegment(_ value: String) -> Bool {
@@ -116,12 +126,11 @@ public struct GitHubSource: Equatable, Sendable {
     }
 
     private static func isRepositoryName(_ value: String) -> Bool {
-        !value.isEmpty && value != "." && value != ".." && value.unicodeScalars.allSatisfy {
-            $0.value == 0x5F || $0.value == 0x2D || $0.value == 0x2E ||
-                (0x30...0x39).contains($0.value) ||
-                (0x41...0x5A).contains($0.value) ||
-                (0x61...0x7A).contains($0.value)
-        }
+        !value.isEmpty && value != "." && value != ".."
+            && value.unicodeScalars.allSatisfy {
+                $0.value == 0x5F || $0.value == 0x2D || $0.value == 0x2E || (0x30...0x39).contains($0.value) || (0x41...0x5A).contains($0.value)
+                    || (0x61...0x7A).contains($0.value)
+            }
     }
 
     private static func isAssetSegment(_ value: String) -> Bool {

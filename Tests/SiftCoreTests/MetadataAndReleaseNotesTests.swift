@@ -11,7 +11,9 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         let database = try Database(url: url)
         let timestamp = Date(timeIntervalSince1970: 1_000)
         let requestURL = "https://itunes.apple.com/lookup?bundleId=example"
-        try database.storeMetadataResponse(url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 200, body: Data("cached".utf8), etag: "etag", lastModified: nil, validatedAt: timestamp)
+        try database.storeMetadataResponse(
+            url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 200, body: Data("cached".utf8), etag: "etag", lastModified: nil,
+            validatedAt: timestamp)
         let client = MetadataHTTPClient(database: database, now: { timestamp.addingTimeInterval(60) })
 
         XCTAssertEqual(try String(decoding: client.fetch(URL(string: requestURL)!, resource: .appStoreLookup).body, as: UTF8.self), "cached")
@@ -22,7 +24,9 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         defer { removeDatabase(at: url) }
         let database = try Database(url: url)
         let requestURL = "https://itunes.apple.com/lookup?bundleId=empty"
-        try database.storeMetadataResponse(url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 200, body: Data(), etag: nil, lastModified: nil, validatedAt: Date(timeIntervalSince1970: 1_000))
+        try database.storeMetadataResponse(
+            url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 200, body: Data(), etag: nil, lastModified: nil,
+            validatedAt: Date(timeIntervalSince1970: 1_000))
 
         let cached = try database.cachedMetadataResponse(url: requestURL, resourceKind: "app-store-lookup-v1")
         XCTAssertEqual(cached?.body, Data())
@@ -34,7 +38,8 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         let database = try Database(url: url)
         let timestamp = Date(timeIntervalSince1970: 1_000)
         let requestURL = "https://itunes.apple.com/lookup?bundleId=missing"
-        try database.storeMetadataResponse(url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 404, body: nil, etag: nil, lastModified: nil, validatedAt: timestamp)
+        try database.storeMetadataResponse(
+            url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 404, body: nil, etag: nil, lastModified: nil, validatedAt: timestamp)
         let client = MetadataHTTPClient(database: database, now: { timestamp.addingTimeInterval(60) })
 
         XCTAssertThrowsError(try client.fetch(URL(string: requestURL)!, resource: .appStoreLookup)) { error in
@@ -49,7 +54,8 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         let validatedAt = Date(timeIntervalSince1970: 1_000)
         let revalidatedAt = validatedAt.addingTimeInterval(7 * 60 * 60)
         let requestURL = "https://itunes.apple.com/lookup?bundleId=missing"
-        try database.storeMetadataResponse(url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 404, body: nil, etag: "missing-etag", lastModified: nil, validatedAt: validatedAt)
+        try database.storeMetadataResponse(
+            url: requestURL, resourceKind: "app-store-lookup-v1", statusCode: 404, body: nil, etag: "missing-etag", lastModified: nil, validatedAt: validatedAt)
 
         MetadataURLProtocol.handler = { request in
             XCTAssertEqual(request.value(forHTTPHeaderField: "If-None-Match"), "missing-etag")
@@ -101,7 +107,9 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         XCTAssertEqual(derivations.withLock { $0 }, 1, "a 304 revalidation keeps it too")
 
         clock.withLock { $0 = $0.addingTimeInterval(7 * 60 * 60) }
-        server.withLock { $0.etag = "b"; $0.body = "[2]" }
+        server.withLock {
+            $0.etag = "b"; $0.body = "[2]"
+        }
         XCTAssertEqual(try fetch(), [2])
         XCTAssertEqual(derivations.withLock { $0 }, 2, "a changed response is derived again")
         XCTAssertEqual(server.withLock { $0.requests }, 3)
@@ -138,7 +146,8 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         defer { MetadataURLProtocol.handler = nil }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MetadataURLProtocol.self]
-        let client = MetadataHTTPClient(database: database, configuration: configuration, environment: ["GITHUB_TOKEN": " preferred-token ", "GH_TOKEN": "fallback-token"])
+        let client = MetadataHTTPClient(
+            database: database, configuration: configuration, environment: ["GITHUB_TOKEN": " preferred-token ", "GH_TOKEN": "fallback-token"])
 
         let response = try client.fetch(URL(string: "https://api.github.com/repos/owner/repository/git/ref/tags/v1")!, resource: .githubReference)
         XCTAssertEqual(response.body, Data("{}".utf8))
@@ -177,7 +186,9 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         var requests = 0
         MetadataURLProtocol.handler = { _ in
             requests += 1
-            return (429, nil, ["Retry-After": formatter.string(from: retryAt), "X-RateLimit-Reset": String(Int(now.addingTimeInterval(60).timeIntervalSince1970))])
+            return (
+                429, nil, ["Retry-After": formatter.string(from: retryAt), "X-RateLimit-Reset": String(Int(now.addingTimeInterval(60).timeIntervalSince1970))]
+            )
         }
         defer { MetadataURLProtocol.handler = nil }
         let configuration = URLSessionConfiguration.ephemeral
@@ -334,7 +345,9 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MetadataURLProtocol.self]
         let resolver = ReleaseNotesResolver(metadataClient: MetadataHTTPClient(database: database, configuration: configuration))
-        let package = HomebrewPackage(prefix: "/opt/homebrew", kind: .formula, name: "example", fullName: "example", tap: "homebrew/core", ownership: .explicitlyRequested, installedVersion: "1.2.2", sourceURL: nil, artifactPaths: [], autoUpdates: false)
+        let package = HomebrewPackage(
+            prefix: "/opt/homebrew", kind: .formula, name: "example", fullName: "example", tap: "homebrew/core", ownership: .explicitlyRequested,
+            installedVersion: "1.2.2", sourceURL: nil, artifactPaths: [], autoUpdates: false)
         let target = HomebrewTarget(version: "1.2.3", sourceURL: "https://github.com/owner/repository", upstreamVersion: "1.2.3")
 
         guard case let .resolved(notes) = resolver.resolveReleaseNotes(for: package, target: target) else {
@@ -397,7 +410,12 @@ final class MetadataAndReleaseNotesTests: XCTestCase {
             case "/repos/owner/repository/git/ref/tags/v1.0":
                 return (200, Data("{\"object\":{\"type\":\"commit\",\"sha\":\"\(installedCommit)\"}}".utf8), [:])
             case "/repos/owner/repository/compare/\(installedCommit)...\(targetCommit)":
-                return (200, Data("{\"commits\":[{\"sha\":\"\(targetCommit)\",\"commit\":{\"message\":\"Fix a bug\\n\\nDetails here.\"}},{\"sha\":\"\(installedCommit)\",\"commit\":{\"message\":\"Fix a bug\"}}]}".utf8), [:])
+                return (
+                    200,
+                    Data(
+                        "{\"commits\":[{\"sha\":\"\(targetCommit)\",\"commit\":{\"message\":\"Fix a bug\\n\\nDetails here.\"}},{\"sha\":\"\(installedCommit)\",\"commit\":{\"message\":\"Fix a bug\"}}]}"
+                            .utf8), [:]
+                )
             default:
                 return (404, nil, [:])
             }

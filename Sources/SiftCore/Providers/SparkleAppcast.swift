@@ -59,7 +59,8 @@ public enum SparkleVersion {
         if properties.numericType == .decimal { return .number }
         if properties.isWhitespace { return .whitespace }
         switch properties.generalCategory {
-        case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation, .initialPunctuation, .finalPunctuation, .otherPunctuation: return .punctuation
+        case .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation, .initialPunctuation, .finalPunctuation, .otherPunctuation:
+            return .punctuation
         default: return .string
         }
     }
@@ -87,8 +88,11 @@ public enum SparkleVersion {
                 parts.insert(source[index].kind == .period ? Part(kind: .period, text: ".") : Part(kind: .number, text: "0"), at: index)
             }
         }
-        if countLeft > countRight { pad(&right, from: left, range: countRight..<countLeft) }
-        else if countRight > countLeft { pad(&left, from: right, range: countLeft..<countRight) }
+        if countLeft > countRight {
+            pad(&right, from: left, range: countRight..<countLeft)
+        } else if countRight > countLeft {
+            pad(&left, from: right, range: countLeft..<countRight)
+        }
     }
 
     /// `longLongValue`: the leading decimal digits (any script's), saturating at the 64-bit limit.
@@ -129,7 +133,10 @@ public struct SparkleAppcastItem: Equatable, Sendable {
         return ["stable", "release", "default", "production", "public"].contains(channel)
     }
 
-    public init(version: String, shortVersion: String?, channel: String?, minimumSystemVersion: String?, maximumSystemVersion: String?, releaseNotesHTML: String?, releaseNotesURL: String?, publishedAt: String? = nil, fullReleaseNotesURL: String? = nil) {
+    public init(
+        version: String, shortVersion: String?, channel: String?, minimumSystemVersion: String?, maximumSystemVersion: String?, releaseNotesHTML: String?,
+        releaseNotesURL: String?, publishedAt: String? = nil, fullReleaseNotesURL: String? = nil
+    ) {
         self.fullReleaseNotesURL = fullReleaseNotesURL
         self.version = version
         self.shortVersion = shortVersion
@@ -166,7 +173,9 @@ public final class SparkleAppcastParser: NSObject, XMLParserDelegate {
         name.split(separator: ":").last.map(String.init) ?? name
     }
 
-    public func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
+    public func parser(
+        _ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]
+    ) {
         let name = Self.localName(elementName)
         stack.append(name)
         text = ""
@@ -234,7 +243,8 @@ public final class SparkleAppcastParser: NSObject, XMLParserDelegate {
     static func bundlesSparkle1(_ bundlePath: String) -> Bool {
         let framework = URL(filePath: bundlePath).appending(path: "Contents/Frameworks/Sparkle.framework/Versions/Current")
         let fileManager = FileManager.default
-        return fileManager.fileExists(atPath: framework.appending(path: "Resources/Autoupdate.app").path) && !fileManager.fileExists(atPath: framework.appending(path: "Updater.app").path)
+        return fileManager.fileExists(atPath: framework.appending(path: "Resources/Autoupdate.app").path)
+            && !fileManager.fileExists(atPath: framework.appending(path: "Updater.app").path)
     }
 }
 

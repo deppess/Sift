@@ -5,7 +5,9 @@ import XCTest
 
 final class OutputTests: XCTestCase {
     func testJSONIsDecodableAndContainsExplicitNulls() throws {
-        let dashboard = Dashboard(generatedAt: Date(timeIntervalSince1970: 1_000), lastAttemptAt: nil, dataAsOf: nil, freshness: .unknown, latestRefreshStatus: .never, data: DashboardData(availableUpdateCount: 0, recentTransitionCount: 0, failedProviderCount: 0))
+        let dashboard = Dashboard(
+            generatedAt: Date(timeIntervalSince1970: 1_000), lastAttemptAt: nil, dataAsOf: nil, freshness: .unknown, latestRefreshStatus: .never,
+            data: DashboardData(availableUpdateCount: 0, recentTransitionCount: 0, failedProviderCount: 0))
         let output = try DashboardRenderer.json(dashboard)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -15,15 +17,21 @@ final class OutputTests: XCTestCase {
     }
 
     func testUpdatesRendererSurfacesStaleSnapshot() {
-        let stale = UnifiedUpdate(provider: "homebrew", scope: "/opt/homebrew", name: "example", installedVersion: "1.0", availableVersion: "2.0", freshness: .stale, dataAsOf: Date(timeIntervalSince1970: 1_000))
+        let stale = UnifiedUpdate(
+            provider: "homebrew", scope: "/opt/homebrew", name: "example", installedVersion: "1.0", availableVersion: "2.0", freshness: .stale,
+            dataAsOf: Date(timeIntervalSince1970: 1_000))
         XCTAssertTrue(UpdatesRenderer.humanReadable([stale]).contains("Snapshot is stale"))
 
-        let current = UnifiedUpdate(provider: "homebrew", scope: "/opt/homebrew", name: "example", installedVersion: "1.0", availableVersion: "2.0", freshness: .current, dataAsOf: Date(timeIntervalSince1970: 1_000))
+        let current = UnifiedUpdate(
+            provider: "homebrew", scope: "/opt/homebrew", name: "example", installedVersion: "1.0", availableVersion: "2.0", freshness: .current,
+            dataAsOf: Date(timeIntervalSince1970: 1_000))
         XCTAssertFalse(UpdatesRenderer.humanReadable([current]).contains("Snapshot is stale"))
     }
 
     func testHumanReadableOutputStripsTerminalControlSequences() {
-        let notes = HomebrewReleaseNotes(name: "Example\u{1B}[2J", installedVersion: "1.0\r", availableVersion: "2.0", content: "- Safe\n\u{1B}[31mnot terminal formatting", sourceURL: "https://example.test/\u{1B}[8m", coverage: "targetOnly")
+        let notes = HomebrewReleaseNotes(
+            name: "Example\u{1B}[2J", installedVersion: "1.0\r", availableVersion: "2.0", content: "- Safe\n\u{1B}[31mnot terminal formatting",
+            sourceURL: "https://example.test/\u{1B}[8m", coverage: "targetOnly")
         let output = HomebrewRenderer.show(notes, full: true)
 
         XCTAssertFalse(output.unicodeScalars.contains { $0 == "\u{1B}" || $0 == "\r" })
@@ -32,7 +40,11 @@ final class OutputTests: XCTestCase {
     }
 
     func testReleaseNotesRendererPreservesMarkdownBlocks() {
-        let notes = HomebrewReleaseNotes(name: "example", installedVersion: "1.0", availableVersion: "2.0", content: "## Bug fixes\n- Fix an important issue\n\n## Install example\n```sh\ncurl example\n```\n\n## Download example\n| File | Platform |\n| --- | --- |", sourceURL: "https://example.test/release", coverage: "targetOnly")
+        let notes = HomebrewReleaseNotes(
+            name: "example", installedVersion: "1.0", availableVersion: "2.0",
+            content:
+                "## Bug fixes\n- Fix an important issue\n\n## Install example\n```sh\ncurl example\n```\n\n## Download example\n| File | Platform |\n| --- | --- |",
+            sourceURL: "https://example.test/release", coverage: "targetOnly")
 
         let output = HomebrewRenderer.show(notes, full: true)
         XCTAssertTrue(output.contains("Bug fixes"))
@@ -53,7 +65,7 @@ final class OutputTests: XCTestCase {
     func testTableFormatterAlignsColumnsToWidestCell() {
         let rows = TableFormatter.rows([
             ["a", "1.0 -> 2.0", "homebrew", "/opt/homebrew"],
-            ["clang-format", "23.1.0 -> 23.1.1", "homebrew", "/opt/homebrew"],
+            ["clang-format", "23.1.0 -> 23.1.1", "homebrew", "/opt/homebrew"]
         ])
         XCTAssertEqual(rows[1], "clang-format  23.1.0 -> 23.1.1  homebrew  /opt/homebrew")
         // Every row's "homebrew" column must start at the same offset — the whole point of not using
@@ -68,10 +80,13 @@ final class OutputTests: XCTestCase {
         let finishedAt = Date(timeIntervalSince1970: 1_001)
         // "npm-global" and "homebrew-release-notes" differ by well over one terminal tab stop; a raw
         // tab join would misalign every status column after the shortest provider name.
-        let summary = RefreshSummary(startedAt: startedAt, finishedAt: finishedAt, status: .success, discoveredCount: 0, addedCount: 0, changedCount: 0, unchangedCount: 0, inactiveCount: 0, providerResults: [
-            ProviderRefreshResult(provider: .npmGlobal, status: .success, startedAt: startedAt, finishedAt: finishedAt),
-            ProviderRefreshResult(provider: .homebrewReleaseNotes, status: .success, startedAt: startedAt, finishedAt: finishedAt),
-        ], warningCount: 0)
+        let summary = RefreshSummary(
+            startedAt: startedAt, finishedAt: finishedAt, status: .success, discoveredCount: 0, addedCount: 0, changedCount: 0, unchangedCount: 0,
+            inactiveCount: 0,
+            providerResults: [
+                ProviderRefreshResult(provider: .npmGlobal, status: .success, startedAt: startedAt, finishedAt: finishedAt),
+                ProviderRefreshResult(provider: .homebrewReleaseNotes, status: .success, startedAt: startedAt, finishedAt: finishedAt)
+            ], warningCount: 0)
         let lines = RefreshRenderer.humanReadable(summary).split(separator: "\n").map(String.init)
         let providerLines = lines.filter { $0.hasPrefix("npm-global") || $0.hasPrefix("homebrew-release-notes") }
         XCTAssertEqual(providerLines.count, 2)
@@ -101,7 +116,7 @@ final class OutputTests: XCTestCase {
         // everything before "homebrew" instead of its string-index offset.
         let rows = TableFormatter.rows([
             ["日本語アプリ", "1.0 -> 2.0", "homebrew"],
-            ["a", "1.0 -> 2.0", "homebrew"],
+            ["a", "1.0 -> 2.0", "homebrew"]
         ])
         let visualOffsets = rows.map { row -> Int in
             let range = row.range(of: "homebrew")!

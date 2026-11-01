@@ -13,7 +13,12 @@ public struct RefreshCoordinator: Sendable {
     private let releaseNotes: any HomebrewReleaseNotesResolving
     private let nativeUpdates: any NativeUpdateResolving
 
-    public init(database: Database, nativeProvider: NativeApplicationProvider = NativeApplicationProvider(), homebrewProvider: HomebrewProvider = HomebrewProvider(), npmGlobalProvider: NPMGlobalProvider = NPMGlobalProvider(), uvToolProvider: UVToolProvider = UVToolProvider(), steamProvider: SteamProvider = SteamProvider(), macPortsProvider: MacPortsProvider = MacPortsProvider(), cargoProvider: CargoProvider = CargoProvider(), releaseNotes: (any HomebrewReleaseNotesResolving)? = nil, nativeUpdates: (any NativeUpdateResolving)? = nil) {
+    public init(
+        database: Database, nativeProvider: NativeApplicationProvider = NativeApplicationProvider(), homebrewProvider: HomebrewProvider = HomebrewProvider(),
+        npmGlobalProvider: NPMGlobalProvider = NPMGlobalProvider(), uvToolProvider: UVToolProvider = UVToolProvider(),
+        steamProvider: SteamProvider = SteamProvider(), macPortsProvider: MacPortsProvider = MacPortsProvider(), cargoProvider: CargoProvider = CargoProvider(),
+        releaseNotes: (any HomebrewReleaseNotesResolving)? = nil, nativeUpdates: (any NativeUpdateResolving)? = nil
+    ) {
         self.database = database
         self.nativeProvider = nativeProvider
         self.homebrewProvider = homebrewProvider
@@ -28,7 +33,8 @@ public struct RefreshCoordinator: Sendable {
         self.nativeUpdates = nativeUpdates ?? NativeUpdateResolver(metadataClient: metadataClient)
     }
 
-    public func refresh(now: Date = .now, homebrewUpdate: HomebrewUpdatePolicy = .never, progress: (@Sendable (String) -> Void)? = nil) throws -> RefreshSummary {
+    public func refresh(now: Date = .now, homebrewUpdate: HomebrewUpdatePolicy = .never, progress: (@Sendable (String) -> Void)? = nil) throws -> RefreshSummary
+    {
         let clock = RefreshClock(start: now)
         // Providers share no state, so they run concurrently: a refresh takes as long as the slowest
         // provider rather than the sum of all of them. Each one is still internally sequential.
@@ -50,22 +56,25 @@ public struct RefreshCoordinator: Sendable {
         // Release notes and native update checks both start once the Homebrew inventory is known:
         // apps a package manager installed are reported by that package manager, not checked again.
         let notes = Concurrent { homebrewNotesPhase(clock: clock, inventory: homebrewInventory) }
-        let packageOwnedPaths = Set(homebrewInventory.inventory.packages.flatMap(\.artifactPaths) + (macPorts.value.inventory?.scopes ?? []).flatMap(\.packages).flatMap(\.applicationPaths))
+        let packageOwnedPaths = Set(
+            homebrewInventory.inventory.packages.flatMap(\.artifactPaths)
+                + (macPorts.value.inventory?.scopes ?? []).flatMap(\.packages).flatMap(\.applicationPaths))
         prepared.wait()
         let updates = nativeUpdatesPhase(clock: clock, applications: native.value.inventory.applications, excluding: packageOwnedPaths)
         let homebrewResult = notes.value
         let managed = [npm.value, uv.value, steam.value, macPorts.value, cargo.value]
-        return try database.applyRefresh(RefreshPersistenceInput(
-            startedAt: now,
-            finishedAt: clock.now(),
-            nativeInventory: native.value.inventory,
-            homebrewInventory: homebrewResult.inventory,
-            targetResults: homebrewResult.targets,
-            releaseNoteResults: homebrewResult.notes,
-            managedPackageInventories: managed.compactMap(\.inventory),
-            nativeUpdateChecks: updates.checks,
-            providerResults: [native.value.result] + homebrewResult.results + managed.map(\.result) + [updates.result]
-        ))
+        return try database.applyRefresh(
+            RefreshPersistenceInput(
+                startedAt: now,
+                finishedAt: clock.now(),
+                nativeInventory: native.value.inventory,
+                homebrewInventory: homebrewResult.inventory,
+                targetResults: homebrewResult.targets,
+                releaseNoteResults: homebrewResult.notes,
+                managedPackageInventories: managed.compactMap(\.inventory),
+                nativeUpdateChecks: updates.checks,
+                providerResults: [native.value.result] + homebrewResult.results + managed.map(\.result) + [updates.result]
+            ))
     }
 
     // MARK: - Native applications
@@ -74,13 +83,17 @@ public struct RefreshCoordinator: Sendable {
         let startedAt = clock.now()
         let native = nativeProvider.discover()
         let finishedAt = clock.now()
-        let result = ProviderRefreshResult(provider: .nativeApplications, status: native.complete ? .success : .partial, message: native.warnings.nonEmptyJoined, warningCount: native.warnings.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: native.complete ? finishedAt : nil)
+        let result = ProviderRefreshResult(
+            provider: .nativeApplications, status: native.complete ? .success : .partial, message: native.warnings.nonEmptyJoined,
+            warningCount: native.warnings.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: native.complete ? finishedAt : nil)
         return (native, result)
     }
 
     /// Asks each user application's updater (Sparkle feed, App Store listing, or Homebrew's cask
     /// catalog as a fallback) for its latest version. Steam games are reported by Steam.
-    private func nativeUpdatesPhase(clock: RefreshClock, applications: [NativeApplication], excluding caskOwnedPaths: Set<String>) -> (checks: [NativeUpdateCheck], result: ProviderRefreshResult) {
+    private func nativeUpdatesPhase(clock: RefreshClock, applications: [NativeApplication], excluding caskOwnedPaths: Set<String>) -> (
+        checks: [NativeUpdateCheck], result: ProviderRefreshResult
+    ) {
         let startedAt = clock.now()
         let resolver = nativeUpdates
         let candidates = applications.filter { application in
@@ -93,7 +106,9 @@ public struct RefreshCoordinator: Sendable {
             if case let .failed(message) = check.outcome { message } else { nil }
         }
         let status: ProviderRefreshStatus = failures.isEmpty ? .success : failures.count == checks.count ? .failure : .partial
-        let result = ProviderRefreshResult(provider: .nativeUpdates, status: status, message: failures.nonEmptyJoined, warningCount: failures.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: status == .success ? finishedAt : nil)
+        let result = ProviderRefreshResult(
+            provider: .nativeUpdates, status: status, message: failures.nonEmptyJoined, warningCount: failures.count, startedAt: startedAt,
+            finishedAt: finishedAt, dataAsOf: status == .success ? finishedAt : nil)
         return (checks, result)
     }
 
@@ -109,7 +124,10 @@ public struct RefreshCoordinator: Sendable {
             return parts.prefix(2).joined(separator: ".")
         }
         func isAnswered(_ check: NativeUpdateCheck) -> Bool {
-            switch check.outcome { case .available, .upToDate: true; default: false }
+            switch check.outcome {
+            case .available, .upToDate: true;
+            default: false
+            }
         }
         let answered = checks.filter(isAnswered).compactMap { check in byPath[check.path].map { (application: $0, check: check) } }
         let unanswered = checks.filter { check in
@@ -122,7 +140,8 @@ public struct RefreshCoordinator: Sendable {
         let needsReceipt = unanswered.compactMap { byPath[$0.path] }.filter { application in
             ["/Applications", homeApplicationsPath].contains((application.path as NSString).deletingLastPathComponent)
         }
-        let lookups = Set(needsReceipt.map(\.path) + answered.filter { pair in needsReceipt.contains { vendor($0) == vendor(pair.application) } }.map(\.application.path))
+        let lookups = Set(
+            needsReceipt.map(\.path) + answered.filter { pair in needsReceipt.contains { vendor($0) == vendor(pair.application) } }.map(\.application.path))
         lookups.map { path in Concurrent { receipts.package(for: path) } }.forEach { $0.wait() }
         var replacements: [String: NativeUpdateCheck] = [:]
         for check in unanswered {
@@ -131,13 +150,15 @@ public struct RefreshCoordinator: Sendable {
             guard !siblings.isEmpty else { continue }
             let folder = (application.path as NSString).deletingLastPathComponent
             let isProductFolder = !["/Applications", homeApplicationsPath].contains(folder)
-            let sibling = (isProductFolder ? siblings.first { ($0.application.path as NSString).deletingLastPathComponent == folder } : nil)
+            let sibling =
+                (isProductFolder ? siblings.first { ($0.application.path as NSString).deletingLastPathComponent == folder } : nil)
                 ?? receipts.package(for: application.path).flatMap { package in siblings.first { receipts.package(for: $0.application.path) == package } }
             guard let sibling else { continue }
             let name = sibling.application.displayName
             var reason = "Installed and updated with \(name)."
             if case let .available(version, _) = sibling.check.outcome { reason += " \(name) \(version) is available." }
-            replacements[check.path] = NativeUpdateCheck(path: check.path, authority: .bundled, installedVersionKey: check.installedVersionKey, outcome: .unchecked(reason))
+            replacements[check.path] = NativeUpdateCheck(
+                path: check.path, authority: .bundled, installedVersionKey: check.installedVersionKey, outcome: .unchecked(reason))
         }
         return checks.map { replacements[$0.path] ?? $0 }
     }
@@ -177,7 +198,7 @@ public struct RefreshCoordinator: Sendable {
 
         let results = [
             homebrewInventoryResult(inventory, retained: retained, startedAt: inventoryStartedAt, finishedAt: inventoryFinishedAt),
-            homebrewTargetsResult(inventory, targets: targets, retained: retained, startedAt: targetsStartedAt, finishedAt: targetsFinishedAt),
+            homebrewTargetsResult(inventory, targets: targets, retained: retained, startedAt: targetsStartedAt, finishedAt: targetsFinishedAt)
         ]
         return HomebrewInventoryPhase(inventory: inventory, packages: packages, retained: retained, targets: targets, results: results)
     }
@@ -193,13 +214,18 @@ public struct RefreshCoordinator: Sendable {
             return linked.filter { $0.linkTargets.contains { $0.hasPrefix(directory) } }.map(\.path)
         }
         let prefixes = phase.inventory.prefixes.map { prefix in
-            HomebrewPrefixInventory(prefix: prefix.prefix, packages: prefix.packages.map { package in
-                let paths = owned(by: package)
-                return paths.isEmpty ? package : package.addingArtifacts(paths)
-            }, complete: prefix.complete, outdatedCandidates: prefix.outdatedCandidates, outdatedComplete: prefix.outdatedComplete, warnings: prefix.warnings)
+            HomebrewPrefixInventory(
+                prefix: prefix.prefix,
+                packages: prefix.packages.map { package in
+                    let paths = owned(by: package)
+                    return paths.isEmpty ? package : package.addingArtifacts(paths)
+                }, complete: prefix.complete, outdatedCandidates: prefix.outdatedCandidates, outdatedComplete: prefix.outdatedComplete,
+                warnings: prefix.warnings)
         }
         let inventory = HomebrewInventory(availability: phase.inventory.availability, prefixes: prefixes)
-        return HomebrewInventoryPhase(inventory: inventory, packages: inventory.availability == .detected ? inventory.packages : [], retained: phase.retained, targets: phase.targets, results: phase.results)
+        return HomebrewInventoryPhase(
+            inventory: inventory, packages: inventory.availability == .detected ? inventory.packages : [], retained: phase.retained, targets: phase.targets,
+            results: phase.results)
     }
 
     private func homebrewNotesPhase(clock: RefreshClock, inventory phase: HomebrewInventoryPhase) -> HomebrewPhase {
@@ -258,13 +284,17 @@ public struct RefreshCoordinator: Sendable {
 
     private func bundleVersions(at path: String) -> (short: String?, build: String?) {
         let plistURL = URL(filePath: path).appending(path: "Contents/Info.plist")
-        guard let values = try? plistURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true, (values.fileSize ?? .max) <= 1_048_576,
-              let data = try? Data(contentsOf: plistURL),
-              let metadata = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else { return (nil, nil) }
+        guard let values = try? plistURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+            (values.fileSize ?? .max) <= 1_048_576,
+            let data = try? Data(contentsOf: plistURL),
+            let metadata = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return (nil, nil) }
         return ((metadata["CFBundleShortVersionString"] as? String)?.nonEmpty, (metadata["CFBundleVersion"] as? String)?.nonEmpty)
     }
 
-    private func resolveReleaseNotes(packages: [HomebrewPackage], targets: [HomebrewPackageKey: HomebrewTargetResolution]) -> [HomebrewPackageKey: HomebrewReleaseNotesResolution] {
+    private func resolveReleaseNotes(packages: [HomebrewPackage], targets: [HomebrewPackageKey: HomebrewTargetResolution]) -> [HomebrewPackageKey:
+        HomebrewReleaseNotesResolution]
+    {
         var notes: [HomebrewPackageKey: HomebrewReleaseNotesResolution] = [:]
         var pending: [(key: HomebrewPackageKey, package: HomebrewPackage, target: HomebrewTarget)] = []
         for package in packages {
@@ -276,7 +306,9 @@ public struct RefreshCoordinator: Sendable {
             }
             // If this cache lookup fails, treat it as "no cached notes found" rather than aborting
             // the whole refresh — worst case is one redundant fetch, not lost work.
-            let cached = try? database.homebrewReleaseNotes(prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: package.installedVersion, availableVersion: target.version)
+            let cached = try? database.homebrewReleaseNotes(
+                prefix: package.prefix, kind: package.kind, fullName: package.fullName, installedVersion: package.installedVersion,
+                availableVersion: target.version)
             if (cached ?? nil) == nil { pending.append((key, package, target)) }
         }
         // Each fetch is an independent round-trip dominated by network latency; MetadataHTTPClient's
@@ -303,31 +335,46 @@ public struct RefreshCoordinator: Sendable {
             dataAsOf = completePrefixes == inventory.prefixes.count ? finishedAt : nil
         }
         let warningCount = inventory.warnings.count + (inventory.availability == .absent ? 1 : 0)
-        return ProviderRefreshResult(provider: .homebrewInventory, status: status, message: message, warningCount: warningCount, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: dataAsOf)
+        return ProviderRefreshResult(
+            provider: .homebrewInventory, status: status, message: message, warningCount: warningCount, startedAt: startedAt, finishedAt: finishedAt,
+            dataAsOf: dataAsOf)
     }
 
-    private func homebrewTargetsResult(_ inventory: HomebrewInventory, targets: [HomebrewPackageKey: HomebrewTargetResolution], retained: Bool, startedAt: Date, finishedAt: Date) -> ProviderRefreshResult {
+    private func homebrewTargetsResult(
+        _ inventory: HomebrewInventory, targets: [HomebrewPackageKey: HomebrewTargetResolution], retained: Bool, startedAt: Date, finishedAt: Date
+    ) -> ProviderRefreshResult {
         if retained {
-            return ProviderRefreshResult(provider: .homebrewTargets, status: .partial, message: "Cached Homebrew target data was retained because Homebrew is not available.", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: nil)
+            return ProviderRefreshResult(
+                provider: .homebrewTargets, status: .partial, message: "Cached Homebrew target data was retained because Homebrew is not available.",
+                warningCount: 1, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: nil)
         }
         if inventory.prefixes.contains(where: { !$0.outdatedComplete }) {
-            return ProviderRefreshResult(provider: .homebrewTargets, status: .partial, message: "Homebrew did not return a complete outdated-package snapshot.", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: nil)
+            return ProviderRefreshResult(
+                provider: .homebrewTargets, status: .partial, message: "Homebrew did not return a complete outdated-package snapshot.", warningCount: 1,
+                startedAt: startedAt, finishedAt: finishedAt, dataAsOf: nil)
         }
         return resolutionResult(provider: .homebrewTargets, targets.values, startedAt: startedAt, finishedAt: finishedAt)
     }
 
-    private func homebrewNotesResult(_ notes: [HomebrewPackageKey: HomebrewReleaseNotesResolution], retained: Bool, startedAt: Date, finishedAt: Date) -> ProviderRefreshResult {
+    private func homebrewNotesResult(_ notes: [HomebrewPackageKey: HomebrewReleaseNotesResolution], retained: Bool, startedAt: Date, finishedAt: Date)
+        -> ProviderRefreshResult
+    {
         if retained {
-            return ProviderRefreshResult(provider: .homebrewReleaseNotes, status: .partial, message: "Cached Homebrew release notes were retained because Homebrew is not available.", warningCount: 1, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: nil)
+            return ProviderRefreshResult(
+                provider: .homebrewReleaseNotes, status: .partial, message: "Cached Homebrew release notes were retained because Homebrew is not available.",
+                warningCount: 1, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: nil)
         }
         return resolutionResult(provider: .homebrewReleaseNotes, notes.values, startedAt: startedAt, finishedAt: finishedAt)
     }
 
     /// Success when nothing failed transiently, failure when everything did, partial otherwise.
-    private func resolutionResult<T>(provider: RefreshProvider, _ values: T, startedAt: Date, finishedAt: Date) -> ProviderRefreshResult where T: Collection, T.Element: HomebrewResolutionSummarizable {
+    private func resolutionResult<T>(provider: RefreshProvider, _ values: T, startedAt: Date, finishedAt: Date) -> ProviderRefreshResult
+    where T: Collection, T.Element: HomebrewResolutionSummarizable {
         let failures = values.compactMap(\.resolutionBucket.transientFailureMessage)
         let status: ProviderRefreshStatus = failures.isEmpty ? .success : failures.count == values.count ? .failure : .partial
-        return ProviderRefreshResult(provider: provider, status: status, message: failures.nonEmptyJoined, warningCount: failures.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: failures.isEmpty ? finishedAt : nil)
+        return ProviderRefreshResult(
+            provider: provider, status: status, message: failures.nonEmptyJoined, warningCount: failures.count, startedAt: startedAt, finishedAt: finishedAt,
+            dataAsOf: failures.isEmpty ? finishedAt : nil)
     }
 
     // MARK: - npm and uv
@@ -338,29 +385,48 @@ public struct RefreshCoordinator: Sendable {
         let startedAt = clock.now()
         let discovered = npmGlobalProvider.discover()
         let scopes = discovered.prefixes.map { prefix in
-            ManagedPackageScope(scope: prefix.prefix, packages: managedPackages(prefix.packages.map { ($0.name, $0.installedVersion) }, candidates: prefix.updateCandidates.map { ($0.name, $0.installedVersion, $0.latestVersion) }), outdatedDataComplete: prefix.outdatedComplete)
+            ManagedPackageScope(
+                scope: prefix.prefix,
+                packages: managedPackages(
+                    prefix.packages.map { ($0.name, $0.installedVersion) },
+                    candidates: prefix.updateCandidates.map { ($0.name, $0.installedVersion, $0.latestVersion) }), outdatedDataComplete: prefix.outdatedComplete
+            )
         }
-        return managedPhase(provider: .npmGlobal, scopes: scopes, warnings: discovered.warnings, retainedMessage: "No npm executable was found; cached npm-global data was retained.", startedAt: startedAt, finishedAt: clock.now())
+        return managedPhase(
+            provider: .npmGlobal, scopes: scopes, warnings: discovered.warnings,
+            retainedMessage: "No npm executable was found; cached npm-global data was retained.", startedAt: startedAt, finishedAt: clock.now())
     }
 
     private func uvPhase(clock: RefreshClock) -> ManagedPhase {
         let startedAt = clock.now()
         let discovered = uvToolProvider.discover()
         let scopes = discovered.installations.map { installation in
-            ManagedPackageScope(scope: installation.toolDirectory, packages: managedPackages(installation.tools.map { ($0.name, $0.installedVersion) }, candidates: installation.outdatedTools.map { ($0.name, $0.installedVersion, $0.latestVersion) }), outdatedDataComplete: installation.outdatedComplete)
+            ManagedPackageScope(
+                scope: installation.toolDirectory,
+                packages: managedPackages(
+                    installation.tools.map { ($0.name, $0.installedVersion) },
+                    candidates: installation.outdatedTools.map { ($0.name, $0.installedVersion, $0.latestVersion) }),
+                outdatedDataComplete: installation.outdatedComplete)
         }
-        return managedPhase(provider: .uvTools, scopes: scopes, warnings: discovered.warnings, retainedMessage: "No uv executable was found; cached uv-tool data was retained.", startedAt: startedAt, finishedAt: clock.now())
+        return managedPhase(
+            provider: .uvTools, scopes: scopes, warnings: discovered.warnings, retainedMessage: "No uv executable was found; cached uv-tool data was retained.",
+            startedAt: startedAt, finishedAt: clock.now())
     }
 
     private func steamPhase(clock: RefreshClock) -> ManagedPhase {
         let startedAt = clock.now()
         let discovered = steamProvider.discover()
         let scopes = discovered.libraries.map { library in
-            ManagedPackageScope(scope: library.path, packages: library.games.map { game in
-                ManagedPackage(name: game.name, installedVersion: game.buildID, availableVersion: game.pendingBuildID, selfUpdating: true, identifier: game.appID)
-            })
+            ManagedPackageScope(
+                scope: library.path,
+                packages: library.games.map { game in
+                    ManagedPackage(
+                        name: game.name, installedVersion: game.buildID, availableVersion: game.pendingBuildID, selfUpdating: true, identifier: game.appID)
+                })
         }
-        return managedPhase(provider: .steamGames, scopes: discovered.detected ? scopes : [], warnings: discovered.warnings, retainedMessage: "Steam was not found; cached Steam data was retained.", startedAt: startedAt, finishedAt: clock.now())
+        return managedPhase(
+            provider: .steamGames, scopes: discovered.detected ? scopes : [], warnings: discovered.warnings,
+            retainedMessage: "Steam was not found; cached Steam data was retained.", startedAt: startedAt, finishedAt: clock.now())
     }
 
     private func macPortsPhase(clock: RefreshClock) -> ManagedPhase {
@@ -375,22 +441,47 @@ public struct RefreshCoordinator: Sendable {
         if discovered.prefix != nil, stale, !discovered.ports.isEmpty {
             let client = metadataClient
             let lookups = discovered.ports.map { port in
-                Concurrent { MacPortsProvider.apiURL(for: port.name).flatMap { try? client.fetch($0, resource: .macPortsPort).body }.flatMap(MacPortsProvider.apiEntry) }
+                Concurrent {
+                    MacPortsProvider.apiURL(for: port.name).flatMap { try? client.fetch($0, resource: .macPortsPort).body }.flatMap(MacPortsProvider.apiEntry)
+                }
             }
             for (port, lookup) in zip(discovered.ports, lookups) { if let entry = lookup.value { online[port.name] = entry } }
             let age = discovered.indexDate.map { " is \(Int(clock.now().timeIntervalSince($0) / 86_400)) days old" } ?? " is missing"
             // Every port answered: the data is complete, and the stale index is only worth a note.
-            if online.count == discovered.ports.count { notes.append("MacPorts' port index\(age); checked ports.macports.org instead. Run 'sudo port selfupdate' to sync it.") } else { warnings.append("MacPorts' port index\(age); checked ports.macports.org instead (\(online.count) of \(discovered.ports.count) ports). Run 'sudo port selfupdate' to sync it.") }
+            if online.count == discovered.ports.count {
+                notes.append("MacPorts' port index\(age); checked ports.macports.org instead. Run 'sudo port selfupdate' to sync it.")
+            } else {
+                warnings.append(
+                    "MacPorts' port index\(age); checked ports.macports.org instead (\(online.count) of \(discovered.ports.count) ports). Run 'sudo port selfupdate' to sync it."
+                )
+            }
         }
-        let scopes = discovered.prefix.map { prefix in
-            [ManagedPackageScope(scope: prefix, packages: discovered.ports.map { port in
-                // The online version, with the installed revision when it's the same version (the API has no revision).
-                let fresh = online[port.name].map { entry in entry.version == port.version && entry.epoch == port.epoch ? MacPortsIndexEntry(epoch: entry.epoch, version: entry.version, revision: max(port.revision, discovered.index[port.name].map { $0.version == entry.version ? $0.revision : 0 } ?? 0)) : entry }
-                let latest = (fresh ?? discovered.index[port.name]).flatMap { MacPortsProvider.isOutdated(port, index: $0) ? $0.displayVersion : nil }
-                return ManagedPackage(name: port.name, installedVersion: port.displayVersion, availableVersion: latest, requested: port.requested, applicationPaths: port.applicationPaths)
-            }, outdatedDataComplete: discovered.indexAvailable || !online.isEmpty)]
-        } ?? []
-        return managedPhase(provider: .macPorts, scopes: scopes, warnings: warnings, notes: notes, retainedMessage: "MacPorts was not found; cached MacPorts data was retained.", startedAt: startedAt, finishedAt: clock.now())
+        let scopes =
+            discovered.prefix.map { prefix in
+                [
+                    ManagedPackageScope(
+                        scope: prefix,
+                        packages: discovered.ports.map { port in
+                            // The online version, with the installed revision when it's the same version (the API has no revision).
+                            let fresh = online[port.name].map { entry in
+                                entry.version == port.version && entry.epoch == port.epoch
+                                    ? MacPortsIndexEntry(
+                                        epoch: entry.epoch, version: entry.version,
+                                        revision: max(port.revision, discovered.index[port.name].map { $0.version == entry.version ? $0.revision : 0 } ?? 0))
+                                    : entry
+                            }
+                            let latest = (fresh ?? discovered.index[port.name]).flatMap {
+                                MacPortsProvider.isOutdated(port, index: $0) ? $0.displayVersion : nil
+                            }
+                            return ManagedPackage(
+                                name: port.name, installedVersion: port.displayVersion, availableVersion: latest, requested: port.requested,
+                                applicationPaths: port.applicationPaths)
+                        }, outdatedDataComplete: discovered.indexAvailable || !online.isEmpty)
+                ]
+            } ?? []
+        return managedPhase(
+            provider: .macPorts, scopes: scopes, warnings: warnings, notes: notes,
+            retainedMessage: "MacPorts was not found; cached MacPorts data was retained.", startedAt: startedAt, finishedAt: clock.now())
     }
 
     /// Installed crates from cargo's own record; latest versions from crates.io's sparse index,
@@ -418,21 +509,27 @@ public struct RefreshCoordinator: Sendable {
             }
         }
         let scopes = discovered.cargoHome.map { [ManagedPackageScope(scope: $0, packages: packages)] } ?? []
-        return managedPhase(provider: .cargo, scopes: scopes, warnings: warnings, retainedMessage: "Cargo's install record was not found; cached cargo data was retained.", startedAt: startedAt, finishedAt: clock.now())
+        return managedPhase(
+            provider: .cargo, scopes: scopes, warnings: warnings, retainedMessage: "Cargo's install record was not found; cached cargo data was retained.",
+            startedAt: startedAt, finishedAt: clock.now())
     }
 
     /// Pairs each listed package with its outdated-check candidate. Listing and the outdated check
     /// are separate subprocess calls, so if a package's installed version differs between the two
     /// (e.g. another process updated it mid-refresh), only that package's available version is
     /// untrustworthy — it's marked inconsistent so it can't block updates for the rest of the scope.
-    private func managedPackages(_ packages: [(name: String, installedVersion: String)], candidates: [(name: String, installedVersion: String, latestVersion: String?)]) -> [ManagedPackage] {
+    private func managedPackages(
+        _ packages: [(name: String, installedVersion: String)], candidates: [(name: String, installedVersion: String, latestVersion: String?)]
+    ) -> [ManagedPackage] {
         let candidatesByName = Dictionary(candidates.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         return packages.map { package in
             guard let candidate = candidatesByName[package.name] else {
                 return ManagedPackage(name: package.name, installedVersion: package.installedVersion, availableVersion: nil, isVersionConsistent: true)
             }
             let isConsistent = candidate.installedVersion == package.installedVersion
-            return ManagedPackage(name: package.name, installedVersion: package.installedVersion, availableVersion: isConsistent ? candidate.latestVersion : nil, isVersionConsistent: isConsistent)
+            return ManagedPackage(
+                name: package.name, installedVersion: package.installedVersion, availableVersion: isConsistent ? candidate.latestVersion : nil,
+                isVersionConsistent: isConsistent)
         }
     }
 
@@ -440,11 +537,16 @@ public struct RefreshCoordinator: Sendable {
     /// "installed but found nothing"; previously cached data is then retained as `.partial` rather
     /// than discarded. A provider that fails outright contributes no inventory.
     /// `notes` are shown with the result without making it partial (the data is complete).
-    private func managedPhase(provider: RefreshProvider, scopes: [ManagedPackageScope], warnings: [String], notes: [String] = [], retainedMessage: String, startedAt: Date, finishedAt: Date) -> ManagedPhase {
+    private func managedPhase(
+        provider: RefreshProvider, scopes: [ManagedPackageScope], warnings: [String], notes: [String] = [], retainedMessage: String, startedAt: Date,
+        finishedAt: Date
+    ) -> ManagedPhase {
         let absent = scopes.isEmpty && warnings.isEmpty
         let retained = absent && ((try? database.hasActiveManagedPackages(provider: provider)) ?? false)
         let status: ProviderRefreshStatus = retained ? .partial : warnings.isEmpty ? .success : scopes.isEmpty ? .failure : .partial
-        let result = ProviderRefreshResult(provider: provider, status: status, message: retained ? retainedMessage : (warnings + notes).nonEmptyJoined, warningCount: retained ? 1 : warnings.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: status == .success ? finishedAt : nil)
+        let result = ProviderRefreshResult(
+            provider: provider, status: status, message: retained ? retainedMessage : (warnings + notes).nonEmptyJoined,
+            warningCount: retained ? 1 : warnings.count, startedAt: startedAt, finishedAt: finishedAt, dataAsOf: status == .success ? finishedAt : nil)
         return (status == .failure ? nil : ManagedPackageInventory(provider: provider, scopes: scopes), result)
     }
 }

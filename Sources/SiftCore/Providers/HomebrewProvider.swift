@@ -6,7 +6,9 @@ public enum HomebrewOwnership: String, Codable, Sendable { case explicitlyReques
 public struct HomebrewPackage: Sendable {
     /// The same package, additionally owning `paths`.
     func addingArtifacts(_ paths: [String]) -> HomebrewPackage {
-        HomebrewPackage(prefix: prefix, kind: kind, name: name, fullName: fullName, tap: tap, ownership: ownership, installedVersion: installedVersion, sourceURL: sourceURL, artifactPaths: artifactPaths + paths.filter { !artifactPaths.contains($0) }, autoUpdates: autoUpdates)
+        HomebrewPackage(
+            prefix: prefix, kind: kind, name: name, fullName: fullName, tap: tap, ownership: ownership, installedVersion: installedVersion,
+            sourceURL: sourceURL, artifactPaths: artifactPaths + paths.filter { !artifactPaths.contains($0) }, autoUpdates: autoUpdates)
     }
 
     public let prefix: String
@@ -29,7 +31,10 @@ public struct HomebrewPrefixInventory: Sendable {
     public let outdatedComplete: Bool
     public let warnings: [String]
 
-    public init(prefix: String, packages: [HomebrewPackage], complete: Bool, outdatedCandidates: [HomebrewOutdatedCandidate] = [], outdatedComplete: Bool = false, warnings: [String]) {
+    public init(
+        prefix: String, packages: [HomebrewPackage], complete: Bool, outdatedCandidates: [HomebrewOutdatedCandidate] = [], outdatedComplete: Bool = false,
+        warnings: [String]
+    ) {
         self.prefix = prefix
         self.packages = packages
         self.complete = complete
@@ -83,7 +88,10 @@ public struct HomebrewUpdate: Codable, Equatable, Sendable {
     public let freshness: Freshness
     public let dataAsOf: Date?
 
-    public init(kind: HomebrewPackageKind, name: String, fullName: String, prefix: String, installedVersion: String, availableVersion: String, sourceURL: String?, autoUpdates: Bool, ownership: HomebrewOwnership = .explicitlyRequested, freshness: Freshness = .unknown, dataAsOf: Date? = nil) {
+    public init(
+        kind: HomebrewPackageKind, name: String, fullName: String, prefix: String, installedVersion: String, availableVersion: String, sourceURL: String?,
+        autoUpdates: Bool, ownership: HomebrewOwnership = .explicitlyRequested, freshness: Freshness = .unknown, dataAsOf: Date? = nil
+    ) {
         self.kind = kind
         self.name = name
         self.fullName = fullName
@@ -112,9 +120,14 @@ public struct HomebrewProvider: Sendable {
     let environment: [String: String]
     private let standardDirectories: [String]
 
-    public init(runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment, standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]) {
+    public init(
+        runner: CommandRunner = CommandRunner(), environment: [String: String] = ProcessInfo.processInfo.environment,
+        standardDirectories: [String] = ["/opt/homebrew/bin", "/usr/local/bin"]
+    ) {
         self.runner = runner
-        self.environment = environment.merging(["HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ANALYTICS": "1", "HOMEBREW_NO_ENV_HINTS": "1", "LC_ALL": "C"]) { _, replacement in replacement }
+        self.environment = environment.merging(["HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ANALYTICS": "1", "HOMEBREW_NO_ENV_HINTS": "1", "LC_ALL": "C"]) {
+            _, replacement in replacement
+        }
         self.standardDirectories = standardDirectories
     }
 
@@ -142,7 +155,9 @@ public struct HomebrewProvider: Sendable {
     /// `progress` hears about each update before it starts, since it is the slow step. With
     /// `snapshots`, a prefix whose fingerprint is unchanged reuses its saved output instead of
     /// running `brew info` and `brew outdated`.
-    public func discover(update: HomebrewUpdatePolicy = .never, now: Date = .now, snapshots: (any HomebrewSnapshotStoring)? = nil, progress: (@Sendable (String) -> Void)? = nil) -> HomebrewInventory {
+    public func discover(
+        update: HomebrewUpdatePolicy = .never, now: Date = .now, snapshots: (any HomebrewSnapshotStoring)? = nil, progress: (@Sendable (String) -> Void)? = nil
+    ) -> HomebrewInventory {
         var prefixes: [HomebrewPrefixInventory] = []
         var seenPrefixes = Set<String>()
         for executable in executables() {
@@ -156,7 +171,8 @@ public struct HomebrewProvider: Sendable {
                 var updateWarnings: [String] = []
                 let (needsUpdate, lastUpdated) = shouldUpdate(prefix: prefix, policy: update, now: now)
                 if needsUpdate {
-                    progress?("Updating Homebrew metadata\(lastUpdated.map { " (last updated \(DashboardRenderer.relativeTimestamp($0, relativeTo: now)))" } ?? "")…")
+                    progress?(
+                        "Updating Homebrew metadata\(lastUpdated.map { " (last updated \(DashboardRenderer.relativeTimestamp($0, relativeTo: now)))" } ?? "")…")
                     do {
                         let result = try runner.run(executable: executable, arguments: ["update", "--quiet"], environment: environment, timeout: 120)
                         guard result.status == 0 else { throw ProviderError.commandFailed }
@@ -165,7 +181,9 @@ public struct HomebrewProvider: Sendable {
                     }
                 }
                 let fingerprint = snapshots.map { _ in snapshotFingerprint(executable: executable, prefix: prefix) }
-                let saved = fingerprint.flatMap { snapshots?.homebrewSnapshot(prefix: prefix, fingerprint: $0, notBefore: now.addingTimeInterval(-Self.snapshotMaximumAge)) }
+                let saved = fingerprint.flatMap {
+                    snapshots?.homebrewSnapshot(prefix: prefix, fingerprint: $0, notBefore: now.addingTimeInterval(-Self.snapshotMaximumAge))
+                }
                 let info: Data
                 let outdatedRun: Concurrent<Result<CommandResult, Error>>
                 if let saved {
@@ -175,7 +193,11 @@ public struct HomebrewProvider: Sendable {
                     // The two snapshots are independent reads, so they run side by side.
                     let runner = runner
                     let environment = environment
-                    outdatedRun = Concurrent { Result { try runner.run(executable: executable, arguments: ["outdated", "--json=v2", "--greedy-auto-updates"], environment: environment) } }
+                    outdatedRun = Concurrent {
+                        Result {
+                            try runner.run(executable: executable, arguments: ["outdated", "--json=v2", "--greedy-auto-updates"], environment: environment)
+                        }
+                    }
                     let result = try runner.run(executable: executable, arguments: ["info", "--json=v2", "--installed"], environment: environment)
                     guard result.status == 0 else { throw ProviderError.commandFailed }
                     info = result.stdout
@@ -188,15 +210,23 @@ public struct HomebrewProvider: Sendable {
                     if saved == nil, let fingerprint, let snapshots {
                         snapshots.storeHomebrewSnapshot(prefix: prefix, fingerprint: fingerprint, info: info, outdated: outdated.stdout, at: now)
                     }
-                    prefixes.append(HomebrewPrefixInventory(prefix: prefix, packages: packages, complete: true, outdatedCandidates: outdatedCandidates, outdatedComplete: true, warnings: updateWarnings + inventoryWarnings + outdatedWarnings))
+                    prefixes.append(
+                        HomebrewPrefixInventory(
+                            prefix: prefix, packages: packages, complete: true, outdatedCandidates: outdatedCandidates, outdatedComplete: true,
+                            warnings: updateWarnings + inventoryWarnings + outdatedWarnings))
                 } catch {
-                    prefixes.append(HomebrewPrefixInventory(prefix: prefix, packages: packages, complete: true, warnings: updateWarnings + inventoryWarnings + ["Homebrew outdated snapshot at \(executable.path): \(error.localizedDescription)"]))
+                    prefixes.append(
+                        HomebrewPrefixInventory(
+                            prefix: prefix, packages: packages, complete: true,
+                            warnings: updateWarnings + inventoryWarnings + ["Homebrew outdated snapshot at \(executable.path): \(error.localizedDescription)"]))
                 }
             } catch {
                 // A failed prefix must remain distinct from a complete empty inventory.
                 let prefix = discoveredPrefix ?? executable.deletingLastPathComponent().deletingLastPathComponent().path
                 if discoveredPrefix == nil, !seenPrefixes.insert(prefix).inserted { continue }
-                prefixes.append(HomebrewPrefixInventory(prefix: prefix, packages: [], complete: false, warnings: ["Homebrew at \(executable.path): \(error.localizedDescription)"]))
+                prefixes.append(
+                    HomebrewPrefixInventory(
+                        prefix: prefix, packages: [], complete: false, warnings: ["Homebrew at \(executable.path): \(error.localizedDescription)"]))
             }
         }
         if prefixes.isEmpty { return HomebrewInventory(availability: .absent, prefixes: []) }
@@ -213,7 +243,8 @@ public struct HomebrewProvider: Sendable {
     private func parseInventory(_ data: Data, prefix: String) throws -> (packages: [HomebrewPackage], warnings: [String]) {
         guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ProviderError.commandFailed }
         guard let formulaeDocument = document["formulae"] as? [[String: Any]],
-              let casksDocument = document["casks"] as? [[String: Any]] else {
+            let casksDocument = document["casks"] as? [[String: Any]]
+        else {
             throw ProviderError.invalidInventory
         }
         var warnings: [String] = []
@@ -230,14 +261,18 @@ public struct HomebrewProvider: Sendable {
             // recently installed receipt rather than whichever happens to sort last in the array,
             // since array order isn't a documented, stable proxy for "the active install."
             let linkedKeg = formula["linked_keg"] as? String
-            let receipt = (linkedKeg.flatMap { keg in usableReceipts.first(where: { ($0["version"] as? String) == keg }) })
+            let receipt =
+                (linkedKeg.flatMap { keg in usableReceipts.first(where: { ($0["version"] as? String) == keg }) })
                 ?? usableReceipts.max(by: { (($0["time"] as? Int) ?? 0) < (($1["time"] as? Int) ?? 0) })
             guard let receipt, let version = receipt["version"] as? String else {
                 warnings.append("Skipped Homebrew formula \(name): no usable installed version was reported.")
                 return nil
             }
             let source = ((formula["urls"] as? [String: Any])?["stable"] as? [String: Any])?["url"] as? String
-            return HomebrewPackage(prefix: prefix, kind: .formula, name: name, fullName: formula["full_name"] as? String ?? name, tap: formula["tap"] as? String, ownership: receipt["installed_on_request"] as? Bool == true ? .explicitlyRequested : .dependency, installedVersion: version, sourceURL: source, artifactPaths: [], autoUpdates: false)
+            return HomebrewPackage(
+                prefix: prefix, kind: .formula, name: name, fullName: formula["full_name"] as? String ?? name, tap: formula["tap"] as? String,
+                ownership: receipt["installed_on_request"] as? Bool == true ? .explicitlyRequested : .dependency, installedVersion: version, sourceURL: source,
+                artifactPaths: [], autoUpdates: false)
         }
         let casks = casksDocument.compactMap { cask -> HomebrewPackage? in
             let token = cask["token"] as? String
@@ -251,11 +286,15 @@ public struct HomebrewProvider: Sendable {
             let artifactPaths = artifacts.compactMap { artifact -> String? in
                 guard artifact["app"] != nil else { return nil }
                 guard let appNames = appArtifactNames(artifact), !appNames.isEmpty,
-                      let target = artifact["target"] as? String,
-                      let path = appTargetPath(target), path.hasSuffix(".app") else { return nil }
+                    let target = artifact["target"] as? String,
+                    let path = appTargetPath(target), path.hasSuffix(".app")
+                else { return nil }
                 return path
             }
-            return HomebrewPackage(prefix: prefix, kind: .cask, name: token, fullName: cask["full_token"] as? String ?? token, tap: cask["tap"] as? String, ownership: .installedCask, installedVersion: installed, sourceURL: cask["url"] as? String, artifactPaths: artifactPaths, autoUpdates: cask["auto_updates"] as? Bool == true)
+            return HomebrewPackage(
+                prefix: prefix, kind: .cask, name: token, fullName: cask["full_token"] as? String ?? token, tap: cask["tap"] as? String,
+                ownership: .installedCask, installedVersion: installed, sourceURL: cask["url"] as? String, artifactPaths: artifactPaths,
+                autoUpdates: cask["auto_updates"] as? Bool == true)
         }
         return (formulae + casks, warnings)
     }
@@ -271,9 +310,12 @@ public struct HomebrewProvider: Sendable {
             return entries.compactMap { entry in
                 let name = (entry["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 guard let name,
-                      let versions = (entry["installed_versions"] as? [String])?.filter({ !$0.isEmpty }), !versions.isEmpty,
-                      let availableVersion = entry["current_version"] as? String, !availableVersion.isEmpty else {
-                    warnings.append("Skipped an outdated \(kind == .formula ? "formula" : "cask") entry\(name.map { " for \($0)" } ?? ""): Homebrew reported an unexpected shape.")
+                    let versions = (entry["installed_versions"] as? [String])?.filter({ !$0.isEmpty }), !versions.isEmpty,
+                    let availableVersion = entry["current_version"] as? String, !availableVersion.isEmpty
+                else {
+                    warnings.append(
+                        "Skipped an outdated \(kind == .formula ? "formula" : "cask") entry\(name.map { " for \($0)" } ?? ""): Homebrew reported an unexpected shape."
+                    )
                     return nil
                 }
                 return HomebrewOutdatedCandidate(kind: kind, name: name, installedVersions: versions, availableVersion: availableVersion)
@@ -291,9 +333,13 @@ public struct HomebrewProvider: Sendable {
     private func appTargetPath(_ target: String) -> String? {
         guard !target.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else { return nil }
         let expanded: String
-        if target == "~" { expanded = FileManager.default.homeDirectoryForCurrentUser.path }
-        else if target.hasPrefix("~/") { expanded = FileManager.default.homeDirectoryForCurrentUser.appending(path: String(target.dropFirst(2))).path }
-        else { expanded = target }
+        if target == "~" {
+            expanded = FileManager.default.homeDirectoryForCurrentUser.path
+        } else if target.hasPrefix("~/") {
+            expanded = FileManager.default.homeDirectoryForCurrentUser.appending(path: String(target.dropFirst(2))).path
+        } else {
+            expanded = target
+        }
         guard expanded.hasPrefix("/") else { return nil }
         let components = expanded.split(separator: "/", omittingEmptySubsequences: true)
         guard !components.contains("..") else { return nil }

@@ -15,7 +15,8 @@ public struct HomebrewTarget: Sendable {
 public enum HomebrewVersion {
     public static func upstreamVersion(from installedVersion: String) -> String {
         guard let separator = installedVersion.lastIndex(of: "_"),
-              installedVersion[installedVersion.index(after: separator)...].allSatisfy(\.isNumber) else { return installedVersion }
+            installedVersion[installedVersion.index(after: separator)...].allSatisfy(\.isNumber)
+        else { return installedVersion }
         return String(installedVersion[..<separator])
     }
 

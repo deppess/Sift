@@ -8,8 +8,9 @@ enum ChangelogFeeds {
         html.matches(of: #/(?is)<link\b[^>]*>/#).compactMap { match -> URL? in
             let tag = String(match.0)
             guard tag.range(of: #"rel\s*=\s*["']?alternate"#, options: [.regularExpression, .caseInsensitive]) != nil,
-                  tag.range(of: #"(rss|atom)\+xml"#, options: [.regularExpression, .caseInsensitive]) != nil,
-                  let href = tag.firstMatch(of: #/(?i)href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/#) else { return nil }
+                tag.range(of: #"(rss|atom)\+xml"#, options: [.regularExpression, .caseInsensitive]) != nil,
+                let href = tag.firstMatch(of: #/(?i)href\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/#)
+            else { return nil }
             let value = HTMLText.decodeEntities(String(href.1 ?? href.2 ?? href.3 ?? ""))
             return URL(string: value, relativeTo: base)?.absoluteURL
         }
@@ -26,9 +27,13 @@ enum ChangelogFeeds {
             guard let title = item["title"]?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return nil }
             let html = item["content:encoded"] ?? item["content"] ?? item["description"] ?? item["summary"] ?? ""
             let content = html.contains("<") ? HTMLMarkdown.convert(html) : ChangelogDocument.tidy(html)
-            let date = (item["pubDate"] ?? item["updated"] ?? item["published"]).flatMap { ISO8601DateFormatter().date(from: $0) ?? ChangelogResolver.rfc822Date($0) }
+            let date = (item["pubDate"] ?? item["updated"] ?? item["published"]).flatMap {
+                ISO8601DateFormatter().date(from: $0) ?? ChangelogResolver.rfc822Date($0)
+            }
             let version = ChangelogVersion.token(in: title) ?? title
-            return ChangelogEntry(version: version, title: version == title || title.contains(version) && title.count < version.count + 24 ? nil : title, date: date, content: content, sourceURL: item["link"])
+            return ChangelogEntry(
+                version: version, title: version == title || title.contains(version) && title.count < version.count + 24 ? nil : title, date: date,
+                content: content, sourceURL: item["link"])
         }
     }
 
@@ -57,7 +62,8 @@ enum ChangelogFeeds {
         private var current: [String: String]?
         private var text = ""
 
-        func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:]) {
+        func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName: String?, attributes: [String: String] = [:])
+        {
             if elementName == "item" || elementName == "entry" { current = [:] }
             // Atom links are attributes: <link rel="alternate" href="…"/>.
             if elementName == "link", current != nil, let href = attributes["href"], attributes["rel"] ?? "alternate" == "alternate" { current?["link"] = href }
@@ -81,8 +87,12 @@ enum ChangelogFeeds {
 
     // MARK: Embedded JSON
 
-    private static let versionKeys = ["version", "versionNumber", "version_number", "versionString", "versionDisplay", "tag", "tagName", "tag_name", "name", "title"]
-    private static let contentKeys = ["body", "releaseNotes", "release_notes", "notes", "changes", "changelog", "content", "description", "text", "html", "markdown", "summary", "items"]
+    private static let versionKeys = [
+        "version", "versionNumber", "version_number", "versionString", "versionDisplay", "tag", "tagName", "tag_name", "name", "title"
+    ]
+    private static let contentKeys = [
+        "body", "releaseNotes", "release_notes", "notes", "changes", "changelog", "content", "description", "text", "html", "markdown", "summary", "items"
+    ]
     private static let dateKeys = ["date", "releaseDate", "release_date", "publishedAt", "published_at", "createdAt", "created_at", "released", "releasedAt"]
 
     /// Release records in the JSON a page embeds for its scripts (`__NEXT_DATA__`, `ld+json`, and
@@ -104,11 +114,17 @@ enum ChangelogFeeds {
             guard depth < 40 else { return }
             if let object = value as? [String: Any] {
                 if let label = versionKeys.lazy.compactMap({ object[$0] as? String }).first(where: { ChangelogVersion.token(in: $0) != nil }),
-                   let body = contentKeys.lazy.compactMap({ text(object[$0]) }).first(where: { $0.count > 10 && ChangelogVersion.token(in: $0) != label }) {
+                    let body = contentKeys.lazy.compactMap({ text(object[$0]) }).first(where: { $0.count > 10 && ChangelogVersion.token(in: $0) != label })
+                {
                     let version = ChangelogVersion.token(in: label) ?? label
                     if seen.insert(version).inserted {
-                        let date = dateKeys.lazy.compactMap { object[$0] as? String }.first.flatMap { ISO8601DateFormatter().date(from: $0) ?? ChangelogDocument.date(in: $0) }
-                        entries.append(ChangelogEntry(version: version, title: label == version ? nil : label, date: date, content: body.contains("<") ? HTMLMarkdown.convert(body) : ChangelogDocument.tidy(body)))
+                        let date = dateKeys.lazy.compactMap { object[$0] as? String }.first.flatMap {
+                            ISO8601DateFormatter().date(from: $0) ?? ChangelogDocument.date(in: $0)
+                        }
+                        entries.append(
+                            ChangelogEntry(
+                                version: version, title: label == version ? nil : label, date: date,
+                                content: body.contains("<") ? HTMLMarkdown.convert(body) : ChangelogDocument.tidy(body)))
                     }
                 }
                 for child in object.values { walk(child, depth: depth + 1) }
@@ -119,7 +135,8 @@ enum ChangelogFeeds {
         for match in html.matches(of: #/(?is)<script\b[^>]*type\s*=\s*["']?application/(?:ld\+)?json["']?[^>]*>(.*?)</script>/#) {
             let raw = String(match.1).trimmingCharacters(in: .whitespacesAndNewlines)
             guard let data = (raw.hasPrefix("{") || raw.hasPrefix("[") ? raw : HTMLText.decodeEntities(raw)).data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) else { continue }
+                let json = try? JSONSerialization.jsonObject(with: data)
+            else { continue }
             walk(json, depth: 0)
         }
         guard entries.count >= 2 else { return [] }
@@ -133,8 +150,16 @@ enum ChangelogFeeds {
     /// "please enable JavaScript" notice.
     static func looksScriptBuilt(_ html: String) -> Bool {
         let lower = html.lowercased()
-        if lower.contains("enable javascript") || lower.contains("requires javascript") || lower.contains("javascript is required") || lower.contains("javascript to run this app") { return true }
-        if lower.contains("id=\"__next\"") || lower.contains("id=\"root\"></div>") || lower.contains("id=\"app\"></div>") || lower.contains("data-reactroot") || lower.contains("ng-version") || lower.contains("__nuxt") { return true }
+        if lower.contains("enable javascript") || lower.contains("requires javascript") || lower.contains("javascript is required")
+            || lower.contains("javascript to run this app")
+        {
+            return true
+        }
+        if lower.contains("id=\"__next\"") || lower.contains("id=\"root\"></div>") || lower.contains("id=\"app\"></div>") || lower.contains("data-reactroot")
+            || lower.contains("ng-version") || lower.contains("__nuxt")
+        {
+            return true
+        }
         let visible = HTMLMarkdown.convert(html).filter { !$0.isWhitespace }.count
         return visible < 1_200 && lower.components(separatedBy: "<script").count > 3
     }

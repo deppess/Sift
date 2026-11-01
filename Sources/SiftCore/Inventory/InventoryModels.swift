@@ -69,7 +69,11 @@ public struct NativeApplication: Sendable, Equatable {
     /// The real bundle directory: the link's destination when `path` is a symlinked bundle.
     var bundlePath: String { linkTargets.first { $0.hasSuffix(".app") } ?? path }
 
-    public init(path: String, bundleIdentifier: String?, displayName: String, shortVersion: String?, buildVersion: String?, classification: ApplicationClassification = .unknown, discoveryRoot: String = "", updateAuthority: NativeUpdateAuthority = .unknown, sparkleFeedURL: String? = nil, linkTargets: [String] = []) {
+    public init(
+        path: String, bundleIdentifier: String?, displayName: String, shortVersion: String?, buildVersion: String?,
+        classification: ApplicationClassification = .unknown, discoveryRoot: String = "", updateAuthority: NativeUpdateAuthority = .unknown,
+        sparkleFeedURL: String? = nil, linkTargets: [String] = []
+    ) {
         self.linkTargets = linkTargets
         self.updateAuthority = updateAuthority
         self.sparkleFeedURL = sparkleFeedURL
@@ -90,7 +94,9 @@ public struct NativeInventoryResult: Sendable {
     public let scannedRoots: [String]
     public let candidatePaths: Set<String>
 
-    public init(applications: [NativeApplication], warnings: [String] = [], complete: Bool = true, scannedRoots: [String] = [], candidatePaths: Set<String> = []) {
+    public init(
+        applications: [NativeApplication], warnings: [String] = [], complete: Bool = true, scannedRoots: [String] = [], candidatePaths: Set<String> = []
+    ) {
         self.applications = applications
         self.warnings = warnings
         self.complete = complete
@@ -118,7 +124,11 @@ public struct RefreshSummary: Codable, Equatable, Sendable {
     public let providerResults: [ProviderRefreshResult]
     public let warningCount: Int
 
-    public init(startedAt: Date, finishedAt: Date, status: RefreshStatus, discoveredCount: Int, addedCount: Int, changedCount: Int, unchangedCount: Int, inactiveCount: Int, homebrewDiscoveredCount: Int = 0, targetResolvedCount: Int = 0, targetUnsupportedCount: Int = 0, targetFailureCount: Int = 0, releaseNotesFetchedCount: Int = 0, releaseNotesFailureCount: Int = 0, providerResults: [ProviderRefreshResult] = [], warningCount: Int) {
+    public init(
+        startedAt: Date, finishedAt: Date, status: RefreshStatus, discoveredCount: Int, addedCount: Int, changedCount: Int, unchangedCount: Int,
+        inactiveCount: Int, homebrewDiscoveredCount: Int = 0, targetResolvedCount: Int = 0, targetUnsupportedCount: Int = 0, targetFailureCount: Int = 0,
+        releaseNotesFetchedCount: Int = 0, releaseNotesFailureCount: Int = 0, providerResults: [ProviderRefreshResult] = [], warningCount: Int
+    ) {
         self.schemaVersion = 1
         self.startedAt = startedAt
         self.finishedAt = finishedAt
@@ -170,7 +180,11 @@ public struct CatalogItem: Codable, Equatable, Sendable {
     /// The provider's own identifier for a package whose name isn't one (a Steam app ID).
     public let identifier: String?
 
-    public init(selector: String, aliases: [String], kind: CatalogKind, name: String, fullName: String?, installedVersion: String?, availableVersion: String?, active: Bool, bundleIdentifier: String?, path: String?, prefix: String?, tap: String?, ownership: String?, autoUpdates: Bool, observedAt: Date, updateSource: String? = nil, updateDetail: String? = nil, identifier: String? = nil) {
+    public init(
+        selector: String, aliases: [String], kind: CatalogKind, name: String, fullName: String?, installedVersion: String?, availableVersion: String?,
+        active: Bool, bundleIdentifier: String?, path: String?, prefix: String?, tap: String?, ownership: String?, autoUpdates: Bool, observedAt: Date,
+        updateSource: String? = nil, updateDetail: String? = nil, identifier: String? = nil
+    ) {
         self.identifier = identifier
         self.selector = selector
         self.aliases = aliases
@@ -196,7 +210,10 @@ public struct CatalogItem: Codable, Equatable, Sendable {
     }
 
     public func disambiguatingSelector(with suffix: String) -> CatalogItem {
-        CatalogItem(selector: "\(selector)@\(suffix)", aliases: aliases, kind: kind, name: name, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion, active: active, bundleIdentifier: bundleIdentifier, path: path, prefix: prefix, tap: tap, ownership: ownership, autoUpdates: autoUpdates, observedAt: observedAt, updateSource: updateSource, updateDetail: updateDetail, identifier: identifier)
+        CatalogItem(
+            selector: "\(selector)@\(suffix)", aliases: aliases, kind: kind, name: name, fullName: fullName, installedVersion: installedVersion,
+            availableVersion: availableVersion, active: active, bundleIdentifier: bundleIdentifier, path: path, prefix: prefix, tap: tap, ownership: ownership,
+            autoUpdates: autoUpdates, observedAt: observedAt, updateSource: updateSource, updateDetail: updateDetail, identifier: identifier)
     }
 }
 
@@ -214,7 +231,9 @@ public extension Array where Element == CatalogItem {
         let exact = filter { $0.selector == selector || $0.aliases.contains(selector) }
         if exact.count == 1 { return .item(exact[0]) }
         if exact.count > 1 { return .ambiguous(exact) }
-        let folded = filter { $0.name.caseInsensitiveCompare(selector) == .orderedSame || $0.aliases.contains { $0.caseInsensitiveCompare(selector) == .orderedSame } }
+        let folded = filter {
+            $0.name.caseInsensitiveCompare(selector) == .orderedSame || $0.aliases.contains { $0.caseInsensitiveCompare(selector) == .orderedSame }
+        }
         if !folded.isEmpty { return folded.count == 1 ? .item(folded[0]) : .ambiguous(folded) }
         // Last, a name that starts with the selector as a whole word or ignoring spaces, so
         // "capture" finds "Capture Pro" and "bastion" finds "Bastion Siege 6".

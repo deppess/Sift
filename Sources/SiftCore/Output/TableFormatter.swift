@@ -31,18 +31,18 @@ private extension Character {
         for scalar in unicodeScalars {
             if scalar.properties.isEmoji, scalar.properties.isEmojiPresentation || unicodeScalars.count > 1 { return 2 }
             switch scalar.value {
-            case 0x1100...0x115F, // Hangul Jamo
-                 0x2E80...0x303E, // CJK Radicals, Kangxi Radicals, CJK Symbols and Punctuation
-                 0x3041...0x33FF, // Hiragana .. CJK Compatibility
-                 0x3400...0x4DBF, // CJK Unified Ideographs Extension A
-                 0x4E00...0x9FFF, // CJK Unified Ideographs
-                 0xA000...0xA4CF, // Yi Syllables and Radicals
-                 0xAC00...0xD7A3, // Hangul Syllables
-                 0xF900...0xFAFF, // CJK Compatibility Ideographs
-                 0xFE30...0xFE4F, // CJK Compatibility Forms
-                 0xFF00...0xFF60, // Fullwidth Forms
-                 0xFFE0...0xFFE6,
-                 0x20000...0x3FFFD: // CJK Unified Ideographs Extension B and beyond
+            case 0x1100...0x115F,  // Hangul Jamo
+                0x2E80...0x303E,  // CJK Radicals, Kangxi Radicals, CJK Symbols and Punctuation
+                0x3041...0x33FF,  // Hiragana .. CJK Compatibility
+                0x3400...0x4DBF,  // CJK Unified Ideographs Extension A
+                0x4E00...0x9FFF,  // CJK Unified Ideographs
+                0xA000...0xA4CF,  // Yi Syllables and Radicals
+                0xAC00...0xD7A3,  // Hangul Syllables
+                0xF900...0xFAFF,  // CJK Compatibility Ideographs
+                0xFE30...0xFE4F,  // CJK Compatibility Forms
+                0xFF00...0xFF60,  // Fullwidth Forms
+                0xFFE0...0xFFE6,
+                0x20000...0x3FFFD:  // CJK Unified Ideographs Extension B and beyond
                 return 2
             default:
                 continue

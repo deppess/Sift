@@ -30,7 +30,8 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 2000), configuration: configuration)
         view.navigationDelegate = self
         if url.host == "sift-render-selftest.invalid" {
-            view.loadHTMLString("<html><body><div id=a></div><script>document.getElementById('a').innerText='rendered by script';</script></body></html>", baseURL: nil)
+            view.loadHTMLString(
+                "<html><body><div id=a></div><script>document.getElementById('a').innerText='rendered by script';</script></body></html>", baseURL: nil)
         } else {
             view.load(URLRequest(url: url, timeoutInterval: timeout))
         }
@@ -61,12 +62,17 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         return result
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+    func webView(
+        _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
+    ) {
         let scheme = navigationAction.request.url?.scheme?.lowercased()
         decisionHandler(scheme == "https" || scheme == "about" || scheme == "data" ? .allow : .cancel)
     }
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
+    func webView(
+        _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
+    ) {
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .cancel)
     }
 
@@ -83,7 +89,11 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
 /// Renders a page through `sift __render` in a child process, for the changelog resolver.
 func renderPage(_ url: URL) -> String? {
     guard url.scheme?.lowercased() == "https", let executable = Bundle.main.executableURL else { return nil }
-    guard let result = try? CommandRunner().run(executable: executable, arguments: ["__render", url.absoluteString], environment: ProcessInfo.processInfo.environment, timeout: 30, outputLimit: 16 * 1_048_576),
-          result.status == 0 else { return nil }
+    guard
+        let result = try? CommandRunner().run(
+            executable: executable, arguments: ["__render", url.absoluteString], environment: ProcessInfo.processInfo.environment, timeout: 30,
+            outputLimit: 16 * 1_048_576),
+        result.status == 0
+    else { return nil }
     return String(data: result.stdout, encoding: .utf8)
 }

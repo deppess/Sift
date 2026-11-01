@@ -19,11 +19,17 @@ final class InstallerReceipts: @unchecked Sendable {
         if let cached = lock.withLock({ cache[path] }) { return cached }
         let validator = Self.validator(for: path)
         let package: String?
-        if let validator, let saved = try? database?.cachedMetadataResponse(url: "pkgutil:\(path)", resourceKind: Self.cacheKind), saved.etag == validator, let body = saved.body {
+        if let validator, let saved = try? database?.cachedMetadataResponse(url: "pkgutil:\(path)", resourceKind: Self.cacheKind), saved.etag == validator,
+            let body = saved.body
+        {
             package = String(decoding: body, as: UTF8.self).nonEmpty
         } else {
             package = lookUp(path)
-            if let validator { try? database?.storeMetadataResponse(url: "pkgutil:\(path)", resourceKind: Self.cacheKind, statusCode: 200, body: Data((package ?? "").utf8), etag: validator, lastModified: nil, validatedAt: .now) }
+            if let validator {
+                try? database?.storeMetadataResponse(
+                    url: "pkgutil:\(path)", resourceKind: Self.cacheKind, statusCode: 200, body: Data((package ?? "").utf8), etag: validator, lastModified: nil,
+                    validatedAt: .now)
+            }
         }
         lock.withLock { cache[path] = package }
         return package
@@ -40,8 +46,11 @@ final class InstallerReceipts: @unchecked Sendable {
 
     private func lookUp(_ path: String) -> String? {
         guard path.hasPrefix("/"),
-              let result = try? runner.run(executable: URL(filePath: "/usr/sbin/pkgutil"), arguments: ["--file-info", path], environment: ["PATH": "/usr/bin:/bin:/usr/sbin", "LC_ALL": "C"], timeout: 10, outputLimit: 1_048_576),
-              result.status == 0 else { return nil }
+            let result = try? runner.run(
+                executable: URL(filePath: "/usr/sbin/pkgutil"), arguments: ["--file-info", path],
+                environment: ["PATH": "/usr/bin:/bin:/usr/sbin", "LC_ALL": "C"], timeout: 10, outputLimit: 1_048_576),
+            result.status == 0
+        else { return nil }
         // Several receipts can claim a path; only an unambiguous one counts.
         let packages = String(decoding: result.stdout, as: UTF8.self).split(separator: "\n").compactMap { line -> String? in
             guard line.hasPrefix("pkgid: ") else { return nil }

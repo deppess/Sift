@@ -11,14 +11,17 @@ final class HistoryTests: XCTestCase {
     func testHomebrewVersionChangesAreLoggedAndDependenciesHiddenByDefault() throws {
         let database = try Database(url: url)
         func formula(_ name: String, _ version: String, ownership: HomebrewOwnership = .explicitlyRequested) -> HomebrewPackage {
-            HomebrewPackage(prefix: "/opt/homebrew", kind: .formula, name: name, fullName: name, tap: "homebrew/core", ownership: ownership, installedVersion: version, sourceURL: nil, artifactPaths: [], autoUpdates: false)
+            HomebrewPackage(
+                prefix: "/opt/homebrew", kind: .formula, name: name, fullName: name, tap: "homebrew/core", ownership: ownership, installedVersion: version,
+                sourceURL: nil, artifactPaths: [], autoUpdates: false)
         }
         func inventory(_ packages: [HomebrewPackage]) -> HomebrewInventory {
             HomebrewInventory(prefixes: [HomebrewPrefixInventory(prefix: "/opt/homebrew", packages: packages, complete: true, warnings: [])])
         }
         func refresh(at seconds: TimeInterval, _ packages: [HomebrewPackage]) throws {
             let targets = Dictionary(uniqueKeysWithValues: packages.map { (HomebrewPackageKey($0), HomebrewTargetResolution.unsupported("none")) })
-            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: seconds), homebrewInventory: inventory(packages), targetResults: targets))
+            _ = try database.applyRefresh(
+                refreshInput(at: Date(timeIntervalSince1970: seconds), homebrewInventory: inventory(packages), targetResults: targets))
         }
         try refresh(at: 1_000, [formula("gh", "2.101.0"), formula("readline", "8.2", ownership: .dependency)])
         try refresh(at: 2_000, [formula("gh", "2.101.0"), formula("readline", "8.2", ownership: .dependency)])
@@ -36,16 +39,29 @@ final class HistoryTests: XCTestCase {
         func refresh(at seconds: TimeInterval, npm: String, build: String) throws {
             let date = Date(timeIntervalSince1970: seconds)
             let inventories = [
-                ManagedPackageInventory(provider: .npmGlobal, scopes: [ManagedPackageScope(scope: "/opt/homebrew/lib", packages: [ManagedPackage(name: "typescript", installedVersion: npm)])]),
-                ManagedPackageInventory(provider: .steamGames, scopes: [ManagedPackageScope(scope: "/Steam", packages: [ManagedPackage(name: "Balatro", installedVersion: build, selfUpdating: true, identifier: "2379780")])]),
+                ManagedPackageInventory(
+                    provider: .npmGlobal,
+                    scopes: [ManagedPackageScope(scope: "/opt/homebrew/lib", packages: [ManagedPackage(name: "typescript", installedVersion: npm)])]),
+                ManagedPackageInventory(
+                    provider: .steamGames,
+                    scopes: [
+                        ManagedPackageScope(
+                            scope: "/Steam", packages: [ManagedPackage(name: "Balatro", installedVersion: build, selfUpdating: true, identifier: "2379780")])
+                    ])
             ]
-            _ = try database.applyRefresh(RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: inventories, providerResults: refreshInput(at: date).providerResults))
+            _ = try database.applyRefresh(
+                RefreshPersistenceInput(
+                    startedAt: date, finishedAt: date, nativeInventory: NativeInventoryResult(applications: []),
+                    homebrewInventory: HomebrewInventory(prefixes: []), targetResults: [:], releaseNoteResults: [:], managedPackageInventories: inventories,
+                    providerResults: refreshInput(at: date).providerResults))
         }
         try refresh(at: 1_000, npm: "5.8.2", build: "100")
         try refresh(at: 2_000, npm: "5.9.0", build: "100")
         try refresh(at: 3_000, npm: "5.9.0", build: "101")
 
-        XCTAssertEqual(try database.updateLog().map { "\($0.selector) \($0.fromVersion)->\($0.toVersion) \($0.source)" }, ["steam:Balatro 100->101 steam-games", "npm:typescript 5.8.2->5.9.0 npm-global"])
+        XCTAssertEqual(
+            try database.updateLog().map { "\($0.selector) \($0.fromVersion)->\($0.toVersion) \($0.source)" },
+            ["steam:Balatro 100->101 steam-games", "npm:typescript 5.8.2->5.9.0 npm-global"])
         let balatro = try XCTUnwrap(database.catalogItems().first { $0.name == "Balatro" })
         XCTAssertEqual(balatro.identifier, "2379780")
         XCTAssertEqual(balatro.kind, .package)
@@ -53,14 +69,23 @@ final class HistoryTests: XCTestCase {
     }
 
     func testA100CacheIsUpgradedInPlaceAndKeepsItsHistory() throws {
-        let app = NativeApplication(path: "/Applications/Example.app", bundleIdentifier: "com.example", displayName: "Example", shortVersion: "1.0", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
-        let updated = NativeApplication(path: app.path, bundleIdentifier: app.bundleIdentifier, displayName: app.displayName, shortVersion: "1.1", buildVersion: nil, classification: .user, discoveryRoot: "/Applications")
+        let app = NativeApplication(
+            path: "/Applications/Example.app", bundleIdentifier: "com.example", displayName: "Example", shortVersion: "1.0", buildVersion: nil,
+            classification: .user, discoveryRoot: "/Applications")
+        let updated = NativeApplication(
+            path: app.path, bundleIdentifier: app.bundleIdentifier, displayName: app.displayName, shortVersion: "1.1", buildVersion: nil, classification: .user,
+            discoveryRoot: "/Applications")
         do {
             let database = try Database(url: url)
-            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [app], scannedRoots: ["/Applications"])))
-            _ = try database.applyRefresh(refreshInput(at: Date(timeIntervalSince1970: 2_000), nativeInventory: NativeInventoryResult(applications: [updated], scannedRoots: ["/Applications"])))
+            _ = try database.applyRefresh(
+                refreshInput(
+                    at: Date(timeIntervalSince1970: 1_000), nativeInventory: NativeInventoryResult(applications: [app], scannedRoots: ["/Applications"])))
+            _ = try database.applyRefresh(
+                refreshInput(
+                    at: Date(timeIntervalSince1970: 2_000), nativeInventory: NativeInventoryResult(applications: [updated], scannedRoots: ["/Applications"])))
             // Back to exactly what 1.0.0 wrote.
-            try database.execute("""
+            try database.execute(
+                """
                 DROP TABLE package_transitions; DROP TABLE changelog_history; DROP TABLE changelog_state;
                 ALTER TABLE managed_packages DROP COLUMN identifier;
                 DELETE FROM schema_migrations WHERE version > 15;

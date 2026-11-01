@@ -28,14 +28,17 @@ struct MarkdownTerminalRenderer: MarkupVisitor {
         while index < blocks.count {
             // Headings that only restate what the entry is ("What's Changed", "Changelog").
             if let heading = blocks[index] as? Heading,
-               ["release notes", "what's changed", "what’s changed", "changelog", "changes", "what's new", "what’s new"].contains(heading.plainText.trimmingCharacters(in: .whitespaces).lowercased()) {
+                ["release notes", "what's changed", "what’s changed", "changelog", "changes", "what's new", "what’s new"].contains(
+                    heading.plainText.trimmingCharacters(in: .whitespaces).lowercased())
+            {
                 index += 1
                 continue
             }
             if let heading = blocks[index] as? Heading,
-               isOperationalHeading(heading.plainText),
-               let end = operationalSectionEnd(blocks, startingAfter: index, level: heading.level),
-               end > index + 1 {
+                isOperationalHeading(heading.plainText),
+                let end = operationalSectionEnd(blocks, startingAfter: index, level: heading.level),
+                end > index + 1
+            {
                 omitted += 1
                 index = end
                 continue
@@ -52,7 +55,8 @@ struct MarkdownTerminalRenderer: MarkupVisitor {
 
     private func isOperationalHeading(_ value: String) -> Bool {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized == "download" || normalized == "checksums" || normalized == "verification" || normalized.hasPrefix("install ") || normalized.hasPrefix("download ") || normalized.hasPrefix("verifying ")
+        return normalized == "download" || normalized == "checksums" || normalized == "verification" || normalized.hasPrefix("install ")
+            || normalized.hasPrefix("download ") || normalized.hasPrefix("verifying ")
     }
 
     private func operationalSectionEnd(_ blocks: [Markup], startingAfter headingIndex: Int, level: Int) -> Int? {

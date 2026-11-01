@@ -12,15 +12,24 @@ extension XCTestCase {
     }
 
     func homebrewPackage(kind: HomebrewPackageKind, name: String, artifacts: [String] = [], autoUpdates: Bool = false) -> HomebrewPackage {
-        HomebrewPackage(prefix: "/opt/homebrew", kind: kind, name: name, fullName: name, tap: kind == .formula ? "homebrew/core" : "homebrew/cask", ownership: kind == .formula ? .explicitlyRequested : .installedCask, installedVersion: "1.0", sourceURL: nil, artifactPaths: artifacts, autoUpdates: autoUpdates)
+        HomebrewPackage(
+            prefix: "/opt/homebrew", kind: kind, name: name, fullName: name, tap: kind == .formula ? "homebrew/core" : "homebrew/cask",
+            ownership: kind == .formula ? .explicitlyRequested : .installedCask, installedVersion: "1.0", sourceURL: nil, artifactPaths: artifacts,
+            autoUpdates: autoUpdates)
     }
 
-    func refreshInput(at date: Date, nativeInventory: NativeInventoryResult = NativeInventoryResult(applications: []), homebrewInventory: HomebrewInventory = HomebrewInventory(prefixes: []), targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:], releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution] = [:], providerStatuses: [RefreshProvider: ProviderRefreshStatus] = [:]) -> RefreshPersistenceInput {
+    func refreshInput(
+        at date: Date, nativeInventory: NativeInventoryResult = NativeInventoryResult(applications: []),
+        homebrewInventory: HomebrewInventory = HomebrewInventory(prefixes: []), targetResults: [HomebrewPackageKey: HomebrewTargetResolution] = [:],
+        releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution] = [:], providerStatuses: [RefreshProvider: ProviderRefreshStatus] = [:]
+    ) -> RefreshPersistenceInput {
         let providerResults = RefreshProvider.allCases.map { provider in
             let status = providerStatuses[provider] ?? .success
             return ProviderRefreshResult(provider: provider, status: status, startedAt: date, finishedAt: date, dataAsOf: status == .success ? date : nil)
         }
-        return RefreshPersistenceInput(startedAt: date, finishedAt: date, nativeInventory: nativeInventory, homebrewInventory: homebrewInventory, targetResults: targetResults, releaseNoteResults: releaseNoteResults, providerResults: providerResults)
+        return RefreshPersistenceInput(
+            startedAt: date, finishedAt: date, nativeInventory: nativeInventory, homebrewInventory: homebrewInventory, targetResults: targetResults,
+            releaseNoteResults: releaseNoteResults, providerResults: providerResults)
     }
 
     func makeApplication(at url: URL, metadata: [String: String]) throws {
@@ -54,7 +63,8 @@ final class MetadataURLProtocol: URLProtocol {
 
     override func startLoading() {
         guard let url = request.url,
-              let handler = Self.handler else {
+            let handler = Self.handler
+        else {
             client?.urlProtocol(self, didFailWithError: MetadataHTTPError.invalidResponse)
             return
         }

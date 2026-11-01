@@ -72,7 +72,8 @@ extension Database: HomebrewSnapshotStoring {
     public func homebrewSnapshot(prefix: String, fingerprint: String, notBefore: Date) -> (info: Data, outdated: Data)? {
         func load(_ kind: String) -> Data? {
             guard let cached = try? cachedMetadataResponse(url: "homebrew:\(prefix)", resourceKind: kind),
-                  cached.etag == fingerprint, cached.validatedAt >= notBefore, let body = cached.body else { return nil }
+                cached.etag == fingerprint, cached.validatedAt >= notBefore, let body = cached.body
+            else { return nil }
             return try? (body as NSData).decompressed(using: .lzfse) as Data
         }
         guard let info = load(Self.snapshotKinds.info), let outdated = load(Self.snapshotKinds.outdated) else { return nil }
@@ -82,7 +83,8 @@ extension Database: HomebrewSnapshotStoring {
     public func storeHomebrewSnapshot(prefix: String, fingerprint: String, info: Data, outdated: Data, at date: Date) {
         for (kind, data) in [(Self.snapshotKinds.info, info), (Self.snapshotKinds.outdated, outdated)] {
             guard let compressed = try? (data as NSData).compressed(using: .lzfse) as Data else { return }
-            try? storeMetadataResponse(url: "homebrew:\(prefix)", resourceKind: kind, statusCode: 200, body: compressed, etag: fingerprint, lastModified: nil, validatedAt: date)
+            try? storeMetadataResponse(
+                url: "homebrew:\(prefix)", resourceKind: kind, statusCode: 200, body: compressed, etag: fingerprint, lastModified: nil, validatedAt: date)
         }
     }
 }

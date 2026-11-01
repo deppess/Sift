@@ -32,7 +32,10 @@ public struct ProviderRefreshResult: Codable, Equatable, Sendable {
     public let finishedAt: Date
     public let dataAsOf: Date?
 
-    public init(provider: RefreshProvider, status: ProviderRefreshStatus, message: String? = nil, warningCount: Int = 0, startedAt: Date, finishedAt: Date, dataAsOf: Date? = nil) {
+    public init(
+        provider: RefreshProvider, status: ProviderRefreshStatus, message: String? = nil, warningCount: Int = 0, startedAt: Date, finishedAt: Date,
+        dataAsOf: Date? = nil
+    ) {
         self.provider = provider
         self.status = status
         self.message = message
@@ -167,7 +170,11 @@ public struct RefreshPersistenceInput: Sendable {
     public let nativeUpdateChecks: [NativeUpdateCheck]
     public let providerResults: [ProviderRefreshResult]
 
-    public init(startedAt: Date, finishedAt: Date, nativeInventory: NativeInventoryResult, homebrewInventory: HomebrewInventory, targetResults: [HomebrewPackageKey: HomebrewTargetResolution], releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution], managedPackageInventories: [ManagedPackageInventory] = [], nativeUpdateChecks: [NativeUpdateCheck] = [], providerResults: [ProviderRefreshResult]) {
+    public init(
+        startedAt: Date, finishedAt: Date, nativeInventory: NativeInventoryResult, homebrewInventory: HomebrewInventory,
+        targetResults: [HomebrewPackageKey: HomebrewTargetResolution], releaseNoteResults: [HomebrewPackageKey: HomebrewReleaseNotesResolution],
+        managedPackageInventories: [ManagedPackageInventory] = [], nativeUpdateChecks: [NativeUpdateCheck] = [], providerResults: [ProviderRefreshResult]
+    ) {
         self.nativeUpdateChecks = nativeUpdateChecks
         self.startedAt = startedAt
         self.finishedAt = finishedAt
@@ -199,7 +206,10 @@ public struct ManagedPackage: Equatable, Sendable {
     /// The provider's own identifier when the name isn't one (a Steam app ID).
     public let identifier: String?
 
-    public init(name: String, installedVersion: String, availableVersion: String? = nil, isVersionConsistent: Bool = true, requested: Bool = true, selfUpdating: Bool = false, applicationPaths: [String] = [], identifier: String? = nil) {
+    public init(
+        name: String, installedVersion: String, availableVersion: String? = nil, isVersionConsistent: Bool = true, requested: Bool = true,
+        selfUpdating: Bool = false, applicationPaths: [String] = [], identifier: String? = nil
+    ) {
         self.identifier = identifier
         self.requested = requested
         self.selfUpdating = selfUpdating
@@ -248,7 +258,10 @@ public struct UnifiedUpdate: Codable, Equatable, Sendable {
     /// separately from updates that need the user to act.
     public let selfUpdating: Bool
 
-    public init(provider: String, scope: String, name: String, installedVersion: String, availableVersion: String, freshness: Freshness, dataAsOf: Date?, selfUpdating: Bool = false) {
+    public init(
+        provider: String, scope: String, name: String, installedVersion: String, availableVersion: String, freshness: Freshness, dataAsOf: Date?,
+        selfUpdating: Bool = false
+    ) {
         self.selfUpdating = selfUpdating
         self.provider = provider
         self.scope = scope

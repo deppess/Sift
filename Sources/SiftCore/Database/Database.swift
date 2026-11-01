@@ -21,9 +21,10 @@ func validateDatabaseParentDirectory(_ url: URL) throws {
 func validateDatabaseFile(_ url: URL) throws {
     var status = stat()
     guard lstat(url.path, &status) == 0,
-          (status.st_mode & S_IFMT) == S_IFREG,
-          status.st_uid == getuid(),
-          status.st_nlink == 1 else {
+        (status.st_mode & S_IFMT) == S_IFREG,
+        status.st_uid == getuid(),
+        status.st_nlink == 1
+    else {
         throw DatabaseError.invalidDatabasePath(url)
     }
 }
@@ -36,10 +37,11 @@ private func createOrValidateDatabaseFile(_ url: URL) throws {
         guard descriptor >= 0 else { throw DatabaseError.invalidDatabasePath(url) }
         defer { close(descriptor) }
         guard fstat(descriptor, &status) == 0,
-              (status.st_mode & S_IFMT) == S_IFREG,
-              status.st_uid == getuid(),
-              status.st_nlink == 1,
-              fchmod(descriptor, 0o600) == 0 else {
+            (status.st_mode & S_IFMT) == S_IFREG,
+            status.st_uid == getuid(),
+            status.st_nlink == 1,
+            fchmod(descriptor, 0o600) == 0
+        else {
             throw DatabaseError.invalidDatabasePath(url)
         }
         return
@@ -267,9 +269,10 @@ public final class Database: @unchecked Sendable {
             changed = nativeCounts.changed
             unchanged = nativeCounts.unchanged
             inactive = nativeCounts.inactive
-            let resolvedTargets = Dictionary(uniqueKeysWithValues: input.targetResults.compactMap { key, resolution in
-                if case let .resolved(target) = resolution { (key.stringValue, target) } else { nil }
-            })
+            let resolvedTargets = Dictionary(
+                uniqueKeysWithValues: input.targetResults.compactMap { key, resolution in
+                    if case let .resolved(target) = resolution { (key.stringValue, target) } else { nil }
+                })
             try applyHomebrewPackagesLocked(input.homebrewInventory, targets: resolvedTargets, observedAt: input.finishedAt)
             for inventory in input.managedPackageInventories { try applyManagedPackageInventoryLocked(inventory, observedAt: input.finishedAt) }
             try applyNativeUpdateChecksLocked(input.nativeUpdateChecks, sessionID: sessionID, observedAt: input.finishedAt)
@@ -281,7 +284,9 @@ public final class Database: @unchecked Sendable {
             }
             for result in input.providerResults {
                 try insertProviderRun(sessionID: sessionID, result: result)
-                try updateProviderState(provider: result.provider.rawValue, attemptAt: result.finishedAt, successAt: result.status == .success ? result.dataAsOf ?? result.finishedAt : nil, status: refreshStatus(result.status))
+                try updateProviderState(
+                    provider: result.provider.rawValue, attemptAt: result.finishedAt,
+                    successAt: result.status == .success ? result.dataAsOf ?? result.finishedAt : nil, status: refreshStatus(result.status))
             }
             try pruneHistoryLocked(now: input.finishedAt)
             try execute("COMMIT;")
@@ -291,7 +296,13 @@ public final class Database: @unchecked Sendable {
         }
         let targetCounts = resolutionCounts(input.targetResults.values)
         let noteCounts = resolutionCounts(input.releaseNoteResults.values)
-        return RefreshSummary(startedAt: input.startedAt, finishedAt: input.finishedAt, status: status, discoveredCount: input.nativeInventory.applications.count, addedCount: added, changedCount: changed, unchangedCount: unchanged, inactiveCount: inactive, homebrewDiscoveredCount: input.homebrewInventory.packages.count, targetResolvedCount: targetCounts.resolved, targetUnsupportedCount: targetCounts.unsupported, targetFailureCount: targetCounts.failed, releaseNotesFetchedCount: noteCounts.resolved, releaseNotesFailureCount: noteCounts.failed, providerResults: input.providerResults, warningCount: input.providerResults.reduce(0) { $0 + $1.warningCount })
+        return RefreshSummary(
+            startedAt: input.startedAt, finishedAt: input.finishedAt, status: status, discoveredCount: input.nativeInventory.applications.count,
+            addedCount: added, changedCount: changed, unchangedCount: unchanged, inactiveCount: inactive,
+            homebrewDiscoveredCount: input.homebrewInventory.packages.count, targetResolvedCount: targetCounts.resolved,
+            targetUnsupportedCount: targetCounts.unsupported, targetFailureCount: targetCounts.failed, releaseNotesFetchedCount: noteCounts.resolved,
+            releaseNotesFailureCount: noteCounts.failed, providerResults: input.providerResults,
+            warningCount: input.providerResults.reduce(0) { $0 + $1.warningCount })
     }
 
     /// Every query reads only an installation's latest observation and update check (version
@@ -301,7 +312,8 @@ public final class Database: @unchecked Sendable {
     /// if needed.
     func pruneHistoryLocked(now: Date) throws {
         let day: TimeInterval = 24 * 60 * 60
-        try execute("""
+        try execute(
+            """
             DELETE FROM observations WHERE id NOT IN (SELECT MAX(id) FROM observations GROUP BY installation_id);
             DELETE FROM update_availability WHERE id NOT IN (SELECT MAX(id) FROM update_availability GROUP BY installation_id);
             DELETE FROM provider_runs WHERE refresh_session_id NOT IN (SELECT id FROM refresh_sessions ORDER BY id DESC LIMIT 20);
@@ -316,7 +328,12 @@ public final class Database: @unchecked Sendable {
     }
 
     func updateProviderState(provider: String, attemptAt: Date, successAt: Date?, status: RefreshStatus) throws {
-        try run("INSERT INTO provider_state (provider, last_attempt_at, last_success_at, latest_status, data_as_of) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider) DO UPDATE SET last_attempt_at = excluded.last_attempt_at, last_success_at = COALESCE(excluded.last_success_at, provider_state.last_success_at), latest_status = excluded.latest_status, data_as_of = COALESCE(excluded.data_as_of, provider_state.data_as_of);", bindings: [.text(provider), .double(attemptAt.timeIntervalSince1970), .optionalDouble(successAt?.timeIntervalSince1970), .text(status.rawValue), .optionalDouble(successAt?.timeIntervalSince1970)])
+        try run(
+            "INSERT INTO provider_state (provider, last_attempt_at, last_success_at, latest_status, data_as_of) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider) DO UPDATE SET last_attempt_at = excluded.last_attempt_at, last_success_at = COALESCE(excluded.last_success_at, provider_state.last_success_at), latest_status = excluded.latest_status, data_as_of = COALESCE(excluded.data_as_of, provider_state.data_as_of);",
+            bindings: [
+                .text(provider), .double(attemptAt.timeIntervalSince1970), .optionalDouble(successAt?.timeIntervalSince1970), .text(status.rawValue),
+                .optionalDouble(successAt?.timeIntervalSince1970)
+            ])
     }
 
     /// 1.0.0 replaced the pre-release migration history with a single baseline at
@@ -418,181 +435,182 @@ public final class Database: @unchecked Sendable {
         """
 
     private func createBaselineSchema() throws {
-        try execute("""
-                CREATE TABLE refresh_sessions (
-                    id INTEGER PRIMARY KEY,
-                    started_at REAL NOT NULL,
-                    finished_at REAL NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failure'))
-                );
-                CREATE TABLE provider_runs (
-                    id INTEGER PRIMARY KEY,
-                    refresh_session_id INTEGER NOT NULL REFERENCES refresh_sessions(id),
-                    provider TEXT NOT NULL,
-                    started_at REAL NOT NULL,
-                    finished_at REAL NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failure')),
-                    error_message TEXT,
-                    warning_count INTEGER NOT NULL DEFAULT 0,
-                    data_as_of REAL,
-                    UNIQUE(refresh_session_id, provider)
-                );
-                CREATE INDEX provider_runs_finished_at ON provider_runs(status, finished_at);
-                CREATE INDEX provider_runs_provider ON provider_runs(provider, id);
-                CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
-                CREATE TABLE software (id INTEGER PRIMARY KEY, display_name TEXT NOT NULL, bundle_identifier TEXT UNIQUE, created_at REAL NOT NULL);
-                CREATE TABLE installations (
-                    id INTEGER PRIMARY KEY,
-                    software_id INTEGER NOT NULL REFERENCES software(id),
-                    provider TEXT NOT NULL,
-                    native_id TEXT NOT NULL,
-                    path TEXT,
-                    management_context TEXT NOT NULL,
-                    created_at REAL NOT NULL,
-                    normalized_path TEXT,
-                    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-                    last_seen_at REAL,
-                    classification TEXT NOT NULL DEFAULT 'unknown' CHECK (classification IN ('user', 'system', 'coreService', 'auxiliary', 'launcher', 'unknown')),
-                    discovery_root TEXT NOT NULL DEFAULT '',
-                    display_name TEXT,
-                    update_authority TEXT NOT NULL DEFAULT 'unknown' CHECK (update_authority IN ('appStore', 'sparkle', 'steam', 'apple', 'blackmagic', 'setapp', 'electron', 'unknown')),
-                    UNIQUE(provider, native_id)
-                );
-                CREATE INDEX installations_active_provider ON installations(provider, active, normalized_path);
-                CREATE INDEX installations_root_active ON installations(provider, discovery_root, active);
-                CREATE TABLE observations (
-                    id INTEGER PRIMARY KEY,
-                    refresh_session_id INTEGER NOT NULL REFERENCES refresh_sessions(id),
-                    installation_id INTEGER NOT NULL REFERENCES installations(id),
-                    observed_at REAL NOT NULL,
-                    short_version TEXT,
-                    build_version TEXT,
-                    provider_version TEXT,
-                    UNIQUE(refresh_session_id, installation_id)
-                );
-                CREATE INDEX observations_latest ON observations(installation_id, observed_at DESC, id DESC);
-                CREATE TABLE version_transitions (
-                    id INTEGER PRIMARY KEY,
-                    installation_id INTEGER NOT NULL REFERENCES installations(id),
-                    from_version TEXT NOT NULL,
-                    to_version TEXT NOT NULL,
-                    first_observed_at REAL NOT NULL,
-                    observed_at REAL NOT NULL,
-                    UNIQUE(installation_id, from_version, to_version, observed_at)
-                );
-                CREATE INDEX transitions_observed_at ON version_transitions(observed_at, installation_id);
-                CREATE TABLE update_availability (
-                    id INTEGER PRIMARY KEY,
-                    refresh_session_id INTEGER NOT NULL REFERENCES refresh_sessions(id),
-                    installation_id INTEGER NOT NULL REFERENCES installations(id),
-                    authority TEXT NOT NULL,
-                    available_version TEXT,
-                    is_available INTEGER NOT NULL CHECK (is_available IN (0, 1)),
-                    observed_at REAL NOT NULL,
-                    installed_version_key TEXT NOT NULL,
-                    detail TEXT,
-                    UNIQUE(refresh_session_id, installation_id, authority)
-                );
-                CREATE INDEX availability_latest ON update_availability(installation_id, authority, observed_at DESC, id DESC);
-                CREATE TABLE release_notes (
-                    id INTEGER PRIMARY KEY,
-                    software_id INTEGER NOT NULL REFERENCES software(id),
-                    target_version TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'inferred', 'unknown')),
-                    source_url TEXT,
-                    content TEXT,
-                    fetched_at REAL NOT NULL,
-                    UNIQUE(software_id, target_version, source)
-                );
-                CREATE TABLE provider_state (
-                    provider TEXT PRIMARY KEY NOT NULL,
-                    last_attempt_at REAL,
-                    last_success_at REAL,
-                    latest_status TEXT NOT NULL CHECK (latest_status IN ('never', 'success', 'partial', 'failure')),
-                    data_as_of REAL
-                );
-                CREATE TABLE homebrew_packages (
-                    id INTEGER PRIMARY KEY,
-                    prefix TEXT NOT NULL,
-                    kind TEXT NOT NULL CHECK (kind IN ('formula', 'cask')),
-                    name TEXT NOT NULL,
-                    full_name TEXT NOT NULL,
-                    tap TEXT,
-                    ownership TEXT NOT NULL CHECK (ownership IN ('explicitlyRequested', 'installedCask', 'dependency')),
-                    installed_version TEXT NOT NULL,
-                    available_version TEXT,
-                    source_url TEXT,
-                    observed_at REAL NOT NULL,
-                    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-                    last_seen_at REAL,
-                    auto_updates INTEGER NOT NULL DEFAULT 0 CHECK (auto_updates IN (0, 1)),
-                    target_status TEXT NOT NULL DEFAULT 'unknown' CHECK (target_status IN ('unknown', 'resolved', 'unsupported', 'unavailable', 'transientFailure')),
-                    target_source_url TEXT,
-                    target_for_installed_version TEXT,
-                    target_last_attempt_at REAL,
-                    target_last_success_at REAL,
-                    target_error TEXT,
-                    UNIQUE(prefix, kind, full_name)
-                );
-                CREATE INDEX homebrew_active_visible_updates ON homebrew_packages(active, ownership, available_version, installed_version);
-                CREATE INDEX homebrew_actionable_targets ON homebrew_packages(active, ownership, auto_updates, target_status, installed_version, available_version, target_for_installed_version);
-                CREATE TABLE homebrew_release_notes (
-                    id INTEGER PRIMARY KEY,
-                    prefix TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    full_name TEXT NOT NULL,
-                    installed_version TEXT NOT NULL,
-                    available_version TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    source_url TEXT NOT NULL,
-                    coverage TEXT NOT NULL,
-                    fetched_at REAL NOT NULL,
-                    UNIQUE(prefix, kind, full_name, installed_version, available_version)
-                );
-                CREATE TABLE cask_artifacts (
-                    id INTEGER PRIMARY KEY,
-                    homebrew_package_id INTEGER NOT NULL REFERENCES homebrew_packages(id),
-                    normalized_path TEXT NOT NULL,
-                    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-                    last_seen_at REAL NOT NULL,
-                    UNIQUE(homebrew_package_id, normalized_path)
-                );
-                CREATE INDEX cask_artifact_paths ON cask_artifacts(normalized_path, active);
-                CREATE TABLE metadata_http_cache (
-                    request_url TEXT NOT NULL,
-                    resource_kind TEXT NOT NULL,
-                    status_code INTEGER NOT NULL,
-                    body BLOB,
-                    etag TEXT,
-                    last_modified TEXT,
-                    validated_at REAL NOT NULL,
-                    link_header TEXT,
-                    PRIMARY KEY (request_url, resource_kind)
-                );
-                CREATE TABLE managed_packages (
-                    id INTEGER PRIMARY KEY,
-                    provider TEXT NOT NULL,
-                    scope TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    installed_version TEXT NOT NULL,
-                    available_version TEXT,
-                    active INTEGER NOT NULL CHECK (active IN (0, 1)),
-                    observed_at REAL NOT NULL,
-                    last_seen_at REAL NOT NULL,
-                    requested INTEGER NOT NULL DEFAULT 1 CHECK (requested IN (0, 1)),
-                    self_updating INTEGER NOT NULL DEFAULT 0 CHECK (self_updating IN (0, 1)),
-                    UNIQUE(provider, scope, name)
-                );
-                CREATE INDEX managed_package_updates ON managed_packages(active, available_version, installed_version);
-                CREATE TABLE managed_artifacts (
-                    managed_package_id INTEGER NOT NULL REFERENCES managed_packages(id) ON DELETE CASCADE,
-                    normalized_path TEXT NOT NULL,
-                    PRIMARY KEY (managed_package_id, normalized_path)
-                );
-                CREATE INDEX managed_artifacts_path ON managed_artifacts(normalized_path);
-                INSERT INTO schema_migrations (version) VALUES (\(Self.baselineSchemaVersion));
-                """)
+        try execute(
+            """
+            CREATE TABLE refresh_sessions (
+                id INTEGER PRIMARY KEY,
+                started_at REAL NOT NULL,
+                finished_at REAL NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failure'))
+            );
+            CREATE TABLE provider_runs (
+                id INTEGER PRIMARY KEY,
+                refresh_session_id INTEGER NOT NULL REFERENCES refresh_sessions(id),
+                provider TEXT NOT NULL,
+                started_at REAL NOT NULL,
+                finished_at REAL NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failure')),
+                error_message TEXT,
+                warning_count INTEGER NOT NULL DEFAULT 0,
+                data_as_of REAL,
+                UNIQUE(refresh_session_id, provider)
+            );
+            CREATE INDEX provider_runs_finished_at ON provider_runs(status, finished_at);
+            CREATE INDEX provider_runs_provider ON provider_runs(provider, id);
+            CREATE TABLE settings (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
+            CREATE TABLE software (id INTEGER PRIMARY KEY, display_name TEXT NOT NULL, bundle_identifier TEXT UNIQUE, created_at REAL NOT NULL);
+            CREATE TABLE installations (
+                id INTEGER PRIMARY KEY,
+                software_id INTEGER NOT NULL REFERENCES software(id),
+                provider TEXT NOT NULL,
+                native_id TEXT NOT NULL,
+                path TEXT,
+                management_context TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                normalized_path TEXT,
+                active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                last_seen_at REAL,
+                classification TEXT NOT NULL DEFAULT 'unknown' CHECK (classification IN ('user', 'system', 'coreService', 'auxiliary', 'launcher', 'unknown')),
+                discovery_root TEXT NOT NULL DEFAULT '',
+                display_name TEXT,
+                update_authority TEXT NOT NULL DEFAULT 'unknown' CHECK (update_authority IN ('appStore', 'sparkle', 'steam', 'apple', 'blackmagic', 'setapp', 'electron', 'unknown')),
+                UNIQUE(provider, native_id)
+            );
+            CREATE INDEX installations_active_provider ON installations(provider, active, normalized_path);
+            CREATE INDEX installations_root_active ON installations(provider, discovery_root, active);
+            CREATE TABLE observations (
+                id INTEGER PRIMARY KEY,
+                refresh_session_id INTEGER NOT NULL REFERENCES refresh_sessions(id),
+                installation_id INTEGER NOT NULL REFERENCES installations(id),
+                observed_at REAL NOT NULL,
+                short_version TEXT,
+                build_version TEXT,
+                provider_version TEXT,
+                UNIQUE(refresh_session_id, installation_id)
+            );
+            CREATE INDEX observations_latest ON observations(installation_id, observed_at DESC, id DESC);
+            CREATE TABLE version_transitions (
+                id INTEGER PRIMARY KEY,
+                installation_id INTEGER NOT NULL REFERENCES installations(id),
+                from_version TEXT NOT NULL,
+                to_version TEXT NOT NULL,
+                first_observed_at REAL NOT NULL,
+                observed_at REAL NOT NULL,
+                UNIQUE(installation_id, from_version, to_version, observed_at)
+            );
+            CREATE INDEX transitions_observed_at ON version_transitions(observed_at, installation_id);
+            CREATE TABLE update_availability (
+                id INTEGER PRIMARY KEY,
+                refresh_session_id INTEGER NOT NULL REFERENCES refresh_sessions(id),
+                installation_id INTEGER NOT NULL REFERENCES installations(id),
+                authority TEXT NOT NULL,
+                available_version TEXT,
+                is_available INTEGER NOT NULL CHECK (is_available IN (0, 1)),
+                observed_at REAL NOT NULL,
+                installed_version_key TEXT NOT NULL,
+                detail TEXT,
+                UNIQUE(refresh_session_id, installation_id, authority)
+            );
+            CREATE INDEX availability_latest ON update_availability(installation_id, authority, observed_at DESC, id DESC);
+            CREATE TABLE release_notes (
+                id INTEGER PRIMARY KEY,
+                software_id INTEGER NOT NULL REFERENCES software(id),
+                target_version TEXT NOT NULL,
+                source TEXT NOT NULL,
+                confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'inferred', 'unknown')),
+                source_url TEXT,
+                content TEXT,
+                fetched_at REAL NOT NULL,
+                UNIQUE(software_id, target_version, source)
+            );
+            CREATE TABLE provider_state (
+                provider TEXT PRIMARY KEY NOT NULL,
+                last_attempt_at REAL,
+                last_success_at REAL,
+                latest_status TEXT NOT NULL CHECK (latest_status IN ('never', 'success', 'partial', 'failure')),
+                data_as_of REAL
+            );
+            CREATE TABLE homebrew_packages (
+                id INTEGER PRIMARY KEY,
+                prefix TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('formula', 'cask')),
+                name TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                tap TEXT,
+                ownership TEXT NOT NULL CHECK (ownership IN ('explicitlyRequested', 'installedCask', 'dependency')),
+                installed_version TEXT NOT NULL,
+                available_version TEXT,
+                source_url TEXT,
+                observed_at REAL NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                last_seen_at REAL,
+                auto_updates INTEGER NOT NULL DEFAULT 0 CHECK (auto_updates IN (0, 1)),
+                target_status TEXT NOT NULL DEFAULT 'unknown' CHECK (target_status IN ('unknown', 'resolved', 'unsupported', 'unavailable', 'transientFailure')),
+                target_source_url TEXT,
+                target_for_installed_version TEXT,
+                target_last_attempt_at REAL,
+                target_last_success_at REAL,
+                target_error TEXT,
+                UNIQUE(prefix, kind, full_name)
+            );
+            CREATE INDEX homebrew_active_visible_updates ON homebrew_packages(active, ownership, available_version, installed_version);
+            CREATE INDEX homebrew_actionable_targets ON homebrew_packages(active, ownership, auto_updates, target_status, installed_version, available_version, target_for_installed_version);
+            CREATE TABLE homebrew_release_notes (
+                id INTEGER PRIMARY KEY,
+                prefix TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                installed_version TEXT NOT NULL,
+                available_version TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                coverage TEXT NOT NULL,
+                fetched_at REAL NOT NULL,
+                UNIQUE(prefix, kind, full_name, installed_version, available_version)
+            );
+            CREATE TABLE cask_artifacts (
+                id INTEGER PRIMARY KEY,
+                homebrew_package_id INTEGER NOT NULL REFERENCES homebrew_packages(id),
+                normalized_path TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+                last_seen_at REAL NOT NULL,
+                UNIQUE(homebrew_package_id, normalized_path)
+            );
+            CREATE INDEX cask_artifact_paths ON cask_artifacts(normalized_path, active);
+            CREATE TABLE metadata_http_cache (
+                request_url TEXT NOT NULL,
+                resource_kind TEXT NOT NULL,
+                status_code INTEGER NOT NULL,
+                body BLOB,
+                etag TEXT,
+                last_modified TEXT,
+                validated_at REAL NOT NULL,
+                link_header TEXT,
+                PRIMARY KEY (request_url, resource_kind)
+            );
+            CREATE TABLE managed_packages (
+                id INTEGER PRIMARY KEY,
+                provider TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                name TEXT NOT NULL,
+                installed_version TEXT NOT NULL,
+                available_version TEXT,
+                active INTEGER NOT NULL CHECK (active IN (0, 1)),
+                observed_at REAL NOT NULL,
+                last_seen_at REAL NOT NULL,
+                requested INTEGER NOT NULL DEFAULT 1 CHECK (requested IN (0, 1)),
+                self_updating INTEGER NOT NULL DEFAULT 0 CHECK (self_updating IN (0, 1)),
+                UNIQUE(provider, scope, name)
+            );
+            CREATE INDEX managed_package_updates ON managed_packages(active, available_version, installed_version);
+            CREATE TABLE managed_artifacts (
+                managed_package_id INTEGER NOT NULL REFERENCES managed_packages(id) ON DELETE CASCADE,
+                normalized_path TEXT NOT NULL,
+                PRIMARY KEY (managed_package_id, normalized_path)
+            );
+            CREATE INDEX managed_artifacts_path ON managed_artifacts(normalized_path);
+            INSERT INTO schema_migrations (version) VALUES (\(Self.baselineSchemaVersion));
+            """)
     }
 
     func validateExistingSchema() throws {
@@ -610,16 +628,24 @@ public final class Database: @unchecked Sendable {
         }
         for result in input.providerResults {
             guard result.startedAt <= result.finishedAt,
-                  result.startedAt >= input.startedAt,
-                  result.finishedAt <= input.finishedAt,
-                  result.warningCount >= 0 else { throw DatabaseError.invalidRefreshInput("invalid timing or warnings for \(result.provider.rawValue)") }
-            if result.status == .success, result.dataAsOf == nil { throw DatabaseError.invalidRefreshInput("successful \(result.provider.rawValue) result has no data timestamp") }
-            if result.status != .success, result.dataAsOf != nil { throw DatabaseError.invalidRefreshInput("non-successful \(result.provider.rawValue) result has a data timestamp") }
-            if let dataAsOf = result.dataAsOf, dataAsOf > result.finishedAt { throw DatabaseError.invalidRefreshInput("data timestamp is after \(result.provider.rawValue) finished") }
+                result.startedAt >= input.startedAt,
+                result.finishedAt <= input.finishedAt,
+                result.warningCount >= 0
+            else { throw DatabaseError.invalidRefreshInput("invalid timing or warnings for \(result.provider.rawValue)") }
+            if result.status == .success, result.dataAsOf == nil {
+                throw DatabaseError.invalidRefreshInput("successful \(result.provider.rawValue) result has no data timestamp")
+            }
+            if result.status != .success, result.dataAsOf != nil {
+                throw DatabaseError.invalidRefreshInput("non-successful \(result.provider.rawValue) result has a data timestamp")
+            }
+            if let dataAsOf = result.dataAsOf, dataAsOf > result.finishedAt {
+                throw DatabaseError.invalidRefreshInput("data timestamp is after \(result.provider.rawValue) finished")
+            }
         }
         let managedProviders = input.managedPackageInventories.map(\.provider)
         guard Set(managedProviders).count == managedProviders.count,
-              managedProviders.allSatisfy(RefreshProvider.managedPackageProviders.contains) else {
+            managedProviders.allSatisfy(RefreshProvider.managedPackageProviders.contains)
+        else {
             throw DatabaseError.invalidRefreshInput("invalid managed package provider inventory")
         }
         let statuses = Dictionary(uniqueKeysWithValues: input.providerResults.map { ($0.provider, $0.status) })
@@ -631,16 +657,22 @@ public final class Database: @unchecked Sendable {
             guard prefix.prefix.hasPrefix("/") else { throw DatabaseError.invalidRefreshInput("Homebrew prefix is not absolute") }
             for package in prefix.packages {
                 let key = HomebrewPackageKey(package)
-                guard package.prefix == prefix.prefix, packages.insert(key).inserted, !package.name.isEmpty, !package.fullName.isEmpty, !package.installedVersion.isEmpty else { throw DatabaseError.invalidRefreshInput("invalid or duplicate Homebrew package") }
+                guard package.prefix == prefix.prefix, packages.insert(key).inserted, !package.name.isEmpty, !package.fullName.isEmpty,
+                    !package.installedVersion.isEmpty
+                else { throw DatabaseError.invalidRefreshInput("invalid or duplicate Homebrew package") }
             }
         }
         let inventoriedPaths = Set(input.nativeInventory.applications.map(\.path))
-        guard input.nativeUpdateChecks.allSatisfy({ inventoriedPaths.contains($0.path) }), Set(input.nativeUpdateChecks.map(\.path)).count == input.nativeUpdateChecks.count else {
+        guard input.nativeUpdateChecks.allSatisfy({ inventoriedPaths.contains($0.path) }),
+            Set(input.nativeUpdateChecks.map(\.path)).count == input.nativeUpdateChecks.count
+        else {
             throw DatabaseError.invalidRefreshInput("native update checks must name distinct inventoried applications")
         }
         let expectedTargets = Set(input.homebrewInventory.packages.map(HomebrewPackageKey.init))
         guard Set(input.targetResults.keys) == expectedTargets else { throw DatabaseError.invalidRefreshInput("target results do not match Homebrew packages") }
-        guard Set(input.releaseNoteResults.keys).isSubset(of: expectedTargets) else { throw DatabaseError.invalidRefreshInput("release notes contain an unknown package") }
+        guard Set(input.releaseNoteResults.keys).isSubset(of: expectedTargets) else {
+            throw DatabaseError.invalidRefreshInput("release notes contain an unknown package")
+        }
     }
 
     func latestSession() throws -> (id: Int64, finishedAt: Date, status: RefreshStatus)? {
@@ -654,13 +686,21 @@ public final class Database: @unchecked Sendable {
     }
 
     func insertSession(startedAt: Date, finishedAt: Date, status: RefreshStatus) throws -> Int64 {
-        try run("INSERT INTO refresh_sessions (started_at, finished_at, status) VALUES (?, ?, ?);", bindings: [.double(startedAt.timeIntervalSince1970), .double(finishedAt.timeIntervalSince1970), .text(status.rawValue)])
+        try run(
+            "INSERT INTO refresh_sessions (started_at, finished_at, status) VALUES (?, ?, ?);",
+            bindings: [.double(startedAt.timeIntervalSince1970), .double(finishedAt.timeIntervalSince1970), .text(status.rawValue)])
         guard let handle else { throw DatabaseError.sqlite(message: "Database is closed.") }
         return sqlite3_last_insert_rowid(handle)
     }
 
     func insertProviderRun(sessionID: Int64, result: ProviderRefreshResult) throws {
-        try run("INSERT INTO provider_runs (refresh_session_id, provider, started_at, finished_at, status, error_message, warning_count, data_as_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?);", bindings: [.int64(sessionID), .text(result.provider.rawValue), .double(result.startedAt.timeIntervalSince1970), .double(result.finishedAt.timeIntervalSince1970), .text(result.status.rawValue), .optionalText(result.message.map { String($0.prefix(4_096)) }), .int(Int32(result.warningCount)), .optionalDouble(result.dataAsOf?.timeIntervalSince1970)])
+        try run(
+            "INSERT INTO provider_runs (refresh_session_id, provider, started_at, finished_at, status, error_message, warning_count, data_as_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            bindings: [
+                .int64(sessionID), .text(result.provider.rawValue), .double(result.startedAt.timeIntervalSince1970),
+                .double(result.finishedAt.timeIntervalSince1970), .text(result.status.rawValue), .optionalText(result.message.map { String($0.prefix(4_096)) }),
+                .int(Int32(result.warningCount)), .optionalDouble(result.dataAsOf?.timeIntervalSince1970)
+            ])
     }
 
     func refreshStatus(_ status: ProviderRefreshStatus) -> RefreshStatus {
@@ -708,14 +748,18 @@ public final class Database: @unchecked Sendable {
             let result: Int32
             switch binding {
             case let .text(value): result = sqlite3_bind_text(statement, index, value, -1, sqliteTransient)
-            case let .optionalText(value): result = value.map { sqlite3_bind_text(statement, index, $0, -1, sqliteTransient) } ?? sqlite3_bind_null(statement, index)
+            case let .optionalText(value):
+                result = value.map { sqlite3_bind_text(statement, index, $0, -1, sqliteTransient) } ?? sqlite3_bind_null(statement, index)
             case let .int(value): result = sqlite3_bind_int(statement, index, value)
             case let .int64(value): result = sqlite3_bind_int64(statement, index, value)
             case let .double(value): result = sqlite3_bind_double(statement, index, value)
             case let .optionalDouble(value): result = value.map { sqlite3_bind_double(statement, index, $0) } ?? sqlite3_bind_null(statement, index)
             case let .blob(value):
                 if let value {
-                    result = value.isEmpty ? sqlite3_bind_zeroblob(statement, index, 0) : sqlite3_bind_blob(statement, index, (value as NSData).bytes, Int32(value.count), sqliteTransient)
+                    result =
+                        value.isEmpty
+                        ? sqlite3_bind_zeroblob(statement, index, 0)
+                        : sqlite3_bind_blob(statement, index, (value as NSData).bytes, Int32(value.count), sqliteTransient)
                 } else {
                     result = sqlite3_bind_null(statement, index)
                 }
@@ -747,7 +791,9 @@ public final class Database: @unchecked Sendable {
         var errorMessage: UnsafeMutablePointer<CChar>?
         let result = sqlite3_exec(handle, sql, nil, nil, &errorMessage)
         defer { sqlite3_free(errorMessage) }
-        guard result == SQLITE_OK else { throw DatabaseError.sqlite(message: errorMessage.map { String(cString: $0) } ?? String(cString: sqlite3_errmsg(handle))) }
+        guard result == SQLITE_OK else {
+            throw DatabaseError.sqlite(message: errorMessage.map { String(cString: $0) } ?? String(cString: sqlite3_errmsg(handle)))
+        }
     }
 
     func withStatement(_ sql: String, _ body: (OpaquePointer) throws -> Void) throws {

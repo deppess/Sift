@@ -33,7 +33,9 @@ public struct ChangelogService: Sendable {
         let entries = try database.changelogEntries(selector: item.selector)
         guard !entries.isEmpty else { return nil }
         let versions = try parentApplication(of: item, database: database) ?? item
-        var changelog = Changelog(selector: item.selector, name: item.name, installedVersion: versions.installedVersion, availableVersion: versions.availableVersion, source: source, sourceURL: state.sourceURL, entries: entries, fetchedAt: state.fetchedAt)
+        var changelog = Changelog(
+            selector: item.selector, name: item.name, installedVersion: versions.installedVersion, availableVersion: versions.availableVersion, source: source,
+            sourceURL: state.sourceURL, entries: entries, fetchedAt: state.fetchedAt)
         changelog.installedAt = installDate(of: versions)
         return changelog
     }
@@ -44,24 +46,32 @@ public struct ChangelogService: Sendable {
         if !refetch, let state {
             let age = now.timeIntervalSince(state.fetchedAt)
             if let cached, age >= 0, age < Self.maxAge, covers(cached, item) || age < 60 * 60 { return .changelog(cached) }
-            if state.status == "unavailable", cached == nil, age >= 0, age < Self.missMaxAge { return .unavailable(name: item.name, tried: Self.tried(state.detail)) }
+            if state.status == "unavailable", cached == nil, age >= 0, age < Self.missMaxAge {
+                return .unavailable(name: item.name, tried: Self.tried(state.detail))
+            }
         }
         // A helper installed and updated with another app ("Installed and updated with DaVinci
         // Resolve.") has that app's changelog.
         let parent = try Self.parentApplication(of: item, database: database)
         let target = parent ?? item
-        let homebrewSource: String? = switch target.kind {
-        case .homebrewFormula, .homebrewCask:
-            try target.prefix.flatMap { prefix in try database.homebrewSourceURL(prefix: prefix, kind: target.kind == .homebrewCask ? .cask : .formula, fullName: target.fullName ?? target.name) }
-        default: nil
-        }
+        let homebrewSource: String? =
+            switch target.kind {
+            case .homebrewFormula, .homebrewCask:
+                try target.prefix.flatMap { prefix in
+                    try database.homebrewSourceURL(
+                        prefix: prefix, kind: target.kind == .homebrewCask ? .cask : .formula, fullName: target.fullName ?? target.name)
+                }
+            default: nil
+            }
         switch resolver.resolve(ChangelogSubject(item: target, homebrewSourceURL: homebrewSource)) {
         case let .resolved(resolvedSource, sourceURL, entries):
             let source = parent.map { "\(resolvedSource), for \($0.name)" } ?? resolvedSource
             try database.storeChangelog(selector: item.selector, source: source, sourceURL: sourceURL, entries: entries, fetchedAt: now)
             // The whole stored history, in version order, not just this fetch.
             let history = try database.changelogEntries(selector: item.selector)
-            var changelog = Changelog(selector: item.selector, name: item.name, installedVersion: target.installedVersion, availableVersion: target.availableVersion, source: source, sourceURL: sourceURL, entries: history.isEmpty ? entries : history, fetchedAt: now)
+            var changelog = Changelog(
+                selector: item.selector, name: item.name, installedVersion: target.installedVersion, availableVersion: target.availableVersion, source: source,
+                sourceURL: sourceURL, entries: history.isEmpty ? entries : history, fetchedAt: now)
             changelog.installedAt = Self.installDate(of: target)
             return .changelog(changelog)
         case let .unavailable(tried):
@@ -74,7 +84,8 @@ public struct ChangelogService: Sendable {
         case let .failure(message):
             try database.storeChangelogMiss(selector: item.selector, status: "failure", detail: message, fetchedAt: now)
             if var cached {
-                cached.staleReason = "Couldn't fetch a fresh copy (\(message)); showing the one from \(cached.fetchedAt.formatted(date: .abbreviated, time: .omitted))."
+                cached.staleReason =
+                    "Couldn't fetch a fresh copy (\(message)); showing the one from \(cached.fetchedAt.formatted(date: .abbreviated, time: .omitted))."
                 return .changelog(cached)
             }
             return .unavailable(name: item.name, tried: [message])
@@ -90,7 +101,9 @@ public struct ChangelogService: Sendable {
         let recent = Set(try database.updateLog(since: now.addingTimeInterval(-7 * 24 * 60 * 60)).map(\.selector))
         var due: [CatalogItem] = []
         for item in items where item.updateAvailable || recent.contains(String(item.selector.prefix { $0 != "@" })) {
-            if let state = try database.changelogState(selector: item.selector), now.timeIntervalSince(state.fetchedAt) < (state.status == "unavailable" ? Self.missMaxAge : Self.maxAge) {
+            if let state = try database.changelogState(selector: item.selector),
+                now.timeIntervalSince(state.fetchedAt) < (state.status == "unavailable" ? Self.missMaxAge : Self.maxAge)
+            {
                 guard state.status == "resolved" else { continue }
                 if let cached = try Self.cached(for: item, database: database), covers(cached, item) { continue }
             }
@@ -99,7 +112,9 @@ public struct ChangelogService: Sendable {
         let counter = Mutex(0)
         DispatchQueue.concurrentPerform(iterations: due.count) { index in
             _ = try? changelog(for: due[index], refetch: true, now: now)
-            let done = counter.withLock { value -> Int in value += 1; return value }
+            let done = counter.withLock { value -> Int in
+                value += 1; return value
+            }
             progress?(done, due.count)
         }
         return due.count
@@ -119,7 +134,8 @@ public struct ChangelogService: Sendable {
 
     static func parentApplication(of item: CatalogItem, database: Database) throws -> CatalogItem? {
         guard item.updateSource == NativeUpdateAuthority.bundled.rawValue, let detail = item.updateDetail,
-              let match = detail.firstMatch(of: #/updated with (.+?)\./#) else { return nil }
+            let match = detail.firstMatch(of: #/updated with (.+?)\./#)
+        else { return nil }
         let name = String(match.1)
         return try database.catalogItems(includeAll: true).first { $0.kind == .nativeApp && $0.name == name && $0.selector != item.selector }
     }
@@ -128,7 +144,9 @@ public struct ChangelogService: Sendable {
     private func covers(_ changelog: Changelog, _ item: CatalogItem) -> Bool {
         guard let newest = item.availableVersion ?? item.installedVersion else { return true }
         let normalized = ChangelogVersion.normalized(newest)
-        return changelog.entries.contains { ChangelogVersion.matches($0.version, normalized) } || changelog.entries.first.flatMap { ChangelogVersion.token(in: $0.version) }.map { SparkleVersion.compare($0, normalized) != .orderedAscending } ?? true
+        return changelog.entries.contains { ChangelogVersion.matches($0.version, normalized) }
+            || changelog.entries.first.flatMap { ChangelogVersion.token(in: $0.version) }.map { SparkleVersion.compare($0, normalized) != .orderedAscending }
+                ?? true
     }
 
     private static func tried(_ detail: String?) -> [String] {

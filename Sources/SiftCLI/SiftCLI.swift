@@ -12,12 +12,15 @@ public enum SiftCLI {
         // Changelog accuracy benchmark over Homebrew's most-installed packages; see Benchmark.
         if arguments.first == "__benchmark", arguments.count >= 2 {
             let databaseIndex = arguments.firstIndex(of: "--database")
-            let url = databaseIndex.flatMap { $0 + 1 < arguments.count ? URL(filePath: arguments[$0 + 1]) : nil } ?? SiftApplication.existingDefaultDatabaseURL()
+            let url =
+                databaseIndex.flatMap { $0 + 1 < arguments.count ? URL(filePath: arguments[$0 + 1]) : nil } ?? SiftApplication.existingDefaultDatabaseURL()
             guard let url else { return EXIT_FAILURE }
             // A count ("60"), or a comma-separated list of names to check instead ("iterm2,orbstack").
             let third = arguments.count > 2 && !arguments[2].hasPrefix("-") ? arguments[2] : "50"
             let only = Int(third) == nil ? third.split(separator: ",").map(String.init) : []
-            do { return try Benchmark.run(kind: arguments[1], count: Int(third) ?? 50, only: only, databaseURL: url) } catch { writeError(error.localizedDescription); return EXIT_FAILURE }
+            do { return try Benchmark.run(kind: arguments[1], count: Int(third) ?? 50, only: only, databaseURL: url) } catch {
+                writeError(error.localizedDescription); return EXIT_FAILURE
+            }
         }
         do {
             let invocation = try Invocation(arguments: arguments)
@@ -39,8 +42,12 @@ public enum SiftCLI {
                 let databaseURL = invocation.databaseURL ?? SiftApplication.existingDefaultDatabaseURL()
                 guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else { return EXIT_SUCCESS }
                 let database = try Database.readOnly(url: databaseURL)
-                let items = try target == "apps" ? database.nativeApplicationItems(includeAll: invocation.includeAll) : database.catalogItems(includeAll: invocation.includeAll)
-                let matches = items.filter { $0.selector.localizedCaseInsensitiveHasPrefix(prefix) || $0.aliases.contains { $0.localizedCaseInsensitiveHasPrefix(prefix) } }
+                let items =
+                    try target == "apps"
+                    ? database.nativeApplicationItems(includeAll: invocation.includeAll) : database.catalogItems(includeAll: invocation.includeAll)
+                let matches = items.filter {
+                    $0.selector.localizedCaseInsensitiveHasPrefix(prefix) || $0.aliases.contains { $0.localizedCaseInsensitiveHasPrefix(prefix) }
+                }
                 var aliasSelectors: [String: Set<String>] = [:]
                 for item in items {
                     for alias in item.aliases { aliasSelectors[alias.lowercased(), default: []].insert(item.selector) }
@@ -48,7 +55,8 @@ public enum SiftCLI {
                 for item in matches.prefix(200) {
                     let friendly = item.aliases.first { $0.localizedCaseInsensitiveHasPrefix(prefix) && aliasSelectors[$0.lowercased()]?.count == 1 }
                     let value = friendly ?? item.selector
-                    print("\(value.terminalInline)\t\(item.name.terminalInline) · \(item.kind.rawValue) · \(item.installedVersion?.terminalInline ?? "unknown")")
+                    print(
+                        "\(value.terminalInline)\t\(item.name.terminalInline) · \(item.kind.rawValue) · \(item.installedVersion?.terminalInline ?? "unknown")")
                 }
                 return EXIT_SUCCESS
             }
@@ -61,7 +69,8 @@ public enum SiftCLI {
                 // A provider or kind, or a comma list of selectors and names to check just those.
                 let wanted = Set((filter ?? "").split(separator: ",").map { $0.lowercased() })
                 let items = try database.catalogItems(includeAll: invocation.includeAll).filter { item in
-                    filter == nil || item.updateSource == filter || item.kind.rawValue == filter || wanted.contains(item.selector.lowercased()) || wanted.contains(item.name.lowercased())
+                    filter == nil || item.updateSource == filter || item.kind.rawValue == filter || wanted.contains(item.selector.lowercased())
+                        || wanted.contains(item.name.lowercased())
                 }
                 let results = Mutex([(Int, String)]())
                 DispatchQueue.concurrentPerform(iterations: items.count) { index in
@@ -71,11 +80,20 @@ public enum SiftCLI {
                     switch Result(catching: { try service.changelog(for: item, refetch: invocation.fetch) }) {
                     case let .success(.changelog(changelog)):
                         let flags = ChangelogAudit.flags(changelog, item: item)
-                        line = [flags.isEmpty ? "ok" : "warn", item.selector, item.updateSource ?? item.kind.rawValue, changelog.source, "\(changelog.entries.count)", "\(changelog.newEntries.count)", flags.joined(separator: " "), String(format: "%.1fs", Date().timeIntervalSince(started))].map(\.terminalInline).joined(separator: "\t")
+                        line = [
+                            flags.isEmpty ? "ok" : "warn", item.selector, item.updateSource ?? item.kind.rawValue, changelog.source,
+                            "\(changelog.entries.count)", "\(changelog.newEntries.count)", flags.joined(separator: " "),
+                            String(format: "%.1fs", Date().timeIntervalSince(started))
+                        ].map(\.terminalInline).joined(separator: "\t")
                     case let .success(.unavailable(_, tried)):
-                        line = ["MISS", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", tried.joined(separator: " | "), String(format: "%.1fs", Date().timeIntervalSince(started))].map(\.terminalInline).joined(separator: "\t")
+                        line = [
+                            "MISS", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", tried.joined(separator: " | "),
+                            String(format: "%.1fs", Date().timeIntervalSince(started))
+                        ].map(\.terminalInline).joined(separator: "\t")
                     case let .failure(error):
-                        line = ["ERROR", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", error.localizedDescription, ""].map(\.terminalInline).joined(separator: "\t")
+                        line = ["ERROR", item.selector, item.updateSource ?? item.kind.rawValue, "", "0", "0", error.localizedDescription, ""].map(
+                            \.terminalInline
+                        ).joined(separator: "\t")
                     }
                     results.withLock { $0.append((index, line)) }
                     FileHandle.standardError.write(Data("\r\u{1B}[2K\(results.withLock { $0.count })/\(items.count) \(item.name.terminalInline)".utf8))
@@ -92,18 +110,20 @@ public enum SiftCLI {
             if case .refresh = invocation.command {
                 let databaseURL = try invocation.databaseURL ?? SiftApplication.defaultDatabaseURL()
                 let database = try Database(url: databaseURL)
-                let homebrewUpdate: HomebrewUpdatePolicy = switch invocation.updateHomebrew {
-                case true?: .always
-                case false?: .never
-                case nil: .automatic()
-                }
+                let homebrewUpdate: HomebrewUpdatePolicy =
+                    switch invocation.updateHomebrew {
+                    case true?: .always
+                    case false?: .never
+                    case nil: .automatic()
+                    }
                 let progress = refreshProgress(invocation)
                 progress?("Refreshing…")
                 let summary = try RefreshCoordinator(database: database).refresh(homebrewUpdate: homebrewUpdate, progress: progress)
                 // Changelogs for what's new are fetched now, so `sift changelog` and `sift show`
                 // answer from the cache; a failure here never fails the refresh.
                 progress?("Fetching changelogs…")
-                _ = try? ChangelogService(database: database, renderer: renderPage).prefetch { done, total in progress?("Fetching changelogs \(done)/\(total)…") }
+                _ = try? ChangelogService(database: database, renderer: renderPage).prefetch { done, total in progress?("Fetching changelogs \(done)/\(total)…")
+                }
                 progress?("")
                 print(invocation.json ? try RefreshRenderer.json(summary) : RefreshRenderer.humanReadable(summary))
                 return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
@@ -139,11 +159,12 @@ public enum SiftCLI {
             case let .log(selector):
                 var entries = try database.updateLog(since: invocation.since, includeAll: invocation.includeAll || selector != nil)
                 if let selector {
-                    let item: CatalogItem? = switch try database.resolveCatalogItem(selector, includeAll: true) {
-                    case let .item(item): item
-                    case .missing: nil
-                    case let .ambiguous(matches): throw InvocationError.ambiguousSelector(selector, matches.map(\.selector))
-                    }
+                    let item: CatalogItem? =
+                        switch try database.resolveCatalogItem(selector, includeAll: true) {
+                        case let .item(item): item
+                        case .missing: nil
+                        case let .ambiguous(matches): throw InvocationError.ambiguousSelector(selector, matches.map(\.selector))
+                        }
                     // A removed item has no catalog record left, so its log entries match by name.
                     let base = item.map { String($0.selector.prefix { $0 != "@" }) }
                     entries = entries.filter { entry in
@@ -151,7 +172,9 @@ public enum SiftCLI {
                         return entry.selector.caseInsensitiveCompare(selector) == .orderedSame || entry.name.caseInsensitiveCompare(selector) == .orderedSame
                     }
                 }
-                print(invocation.json ? try LogRenderer.json(entries) : LogRenderer.humanReadable(entries, style: TerminalStyle(enabled: colorEnabled(invocation))))
+                print(
+                    invocation.json
+                        ? try LogRenderer.json(entries) : LogRenderer.humanReadable(entries, style: TerminalStyle(enabled: colorEnabled(invocation))))
                 return EXIT_SUCCESS
             case let .changelog(name):
                 let item: CatalogItem
@@ -163,14 +186,21 @@ public enum SiftCLI {
                 let style = TerminalStyle(enabled: colorEnabled(invocation))
                 let progress = refreshProgress(invocation)
                 progress?("Fetching the changelog for \(item.name.terminalInline)…")
-                let outcome = try ChangelogService(database: Database.writer(url: databaseURL), renderer: renderPage).changelog(for: item, refetch: invocation.fetch)
+                let outcome = try ChangelogService(database: Database.writer(url: databaseURL), renderer: renderPage).changelog(
+                    for: item, refetch: invocation.fetch)
                 progress?("")
                 switch outcome {
                 case let .changelog(changelog):
-                    print(invocation.json ? try ChangelogRenderer.json(changelog) : ChangelogRenderer.humanReadable(changelog, all: invocation.includeAll, full: invocation.full, style: style))
+                    print(
+                        invocation.json
+                            ? try ChangelogRenderer.json(changelog)
+                            : ChangelogRenderer.humanReadable(changelog, all: invocation.includeAll, full: invocation.full, style: style))
                     return EXIT_SUCCESS
                 case let .unavailable(itemName, tried):
-                    print(invocation.json ? try JSONOutput.encode(["name": itemName, "changelog": nil as String?, "tried": tried.joined(separator: "\n")]) : ChangelogRenderer.unavailable(name: itemName, tried: tried, style: style))
+                    print(
+                        invocation.json
+                            ? try JSONOutput.encode(["name": itemName, "changelog": nil as String?, "tried": tried.joined(separator: "\n")])
+                            : ChangelogRenderer.unavailable(name: itemName, tried: tried, style: style))
                     return EXIT_FAILURE
                 }
             case let .show(name):
@@ -180,10 +210,17 @@ public enum SiftCLI {
                     if !invocation.json, let changelog = try ChangelogService.cached(for: item, database: database) {
                         print(CatalogRenderer.detail(item, changelog: changelog, style: TerminalStyle(enabled: colorEnabled(invocation))))
                     } else if let notes {
-                        print(invocation.json ? try CatalogRenderer.json(notes) : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: colorEnabled(invocation))))
+                        print(
+                            invocation.json
+                                ? try CatalogRenderer.json(notes)
+                                : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: colorEnabled(invocation))))
                     } else {
-                        let nativeNotes = try item.kind == .nativeApp && item.updateAvailable ? item.path.flatMap { try database.nativeReleaseNotes(path: $0, targetVersion: item.availableVersion!) } : nil
-                        print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: nil, nativeNotes: nativeNotes, full: invocation.full))
+                        let nativeNotes =
+                            try item.kind == .nativeApp && item.updateAvailable
+                            ? item.path.flatMap { try database.nativeReleaseNotes(path: $0, targetVersion: item.availableVersion!) } : nil
+                        print(
+                            invocation.json
+                                ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: nil, nativeNotes: nativeNotes, full: invocation.full))
                     }
                 case .missing: throw InvocationError.missingCatalogItem(name)
                 case let .ambiguous(matches): throw InvocationError.ambiguousSelector(name, matches.map(\.selector))
@@ -255,8 +292,10 @@ public enum SiftCLI {
         case .homebrewCask: kind = .cask
         case .nativeApp, .package: return nil
         }
-        guard let prefix = item.prefix, let fullName = item.fullName, let installedVersion = item.installedVersion, let availableVersion = item.availableVersion else { return nil }
-        return try database.homebrewReleaseNotes(prefix: prefix, kind: kind, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion)
+        guard let prefix = item.prefix, let fullName = item.fullName, let installedVersion = item.installedVersion, let availableVersion = item.availableVersion
+        else { return nil }
+        return try database.homebrewReleaseNotes(
+            prefix: prefix, kind: kind, fullName: fullName, installedVersion: installedVersion, availableVersion: availableVersion)
     }
 
     private static func writeError(_ message: String, usage: Bool = false) {
@@ -272,9 +311,13 @@ extension String {
 }
 
 struct Invocation {
-    enum Command { case dashboard, refresh, apps(String?), updates, log(String?), show(String), changelog(String), sweep(String?), completions(CompletionShell), complete(String, String) }
+    enum Command {
+        case dashboard, refresh, apps(String?), updates, log(String?), show(String), changelog(String), sweep(String?), completions(CompletionShell), complete(
+            String, String)
+    }
 
-    static let usage = "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
+    static let usage =
+        "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
 
     let command: Command
     let json: Bool
@@ -413,7 +456,9 @@ struct Invocation {
         if full, !command.supportsFull { throw InvocationError.optionNotSupported("--full", command: command) }
         if fetch, !command.supportsFetch { throw InvocationError.optionNotSupported("--fetch", command: command) }
         if since != nil, !command.supportsSince { throw InvocationError.optionNotSupported("--since", command: command) }
-        if let updateHomebrew, !command.supportsUpdateHomebrew { throw InvocationError.optionNotSupported(updateHomebrew ? "--update-homebrew" : "--no-update-homebrew", command: command) }
+        if let updateHomebrew, !command.supportsUpdateHomebrew {
+            throw InvocationError.optionNotSupported(updateHomebrew ? "--update-homebrew" : "--no-update-homebrew", command: command)
+        }
         self.command = command
         self.json = json
         self.databaseURL = databaseURL
@@ -430,12 +475,13 @@ struct Invocation {
     /// `30d`, `2w`, `12h`, or a calendar date (`2026-10-01`, local midnight).
     static func parseSince(_ value: String, now: Date) -> Date? {
         if let unit = value.last, let amount = Int(value.dropLast()), amount >= 0 {
-            let hours: Int? = switch unit {
-            case "h": amount
-            case "d": amount * 24
-            case "w": amount * 24 * 7
-            default: nil
-            }
+            let hours: Int? =
+                switch unit {
+                case "h": amount
+                case "d": amount * 24
+                case "w": amount * 24 * 7
+                default: nil
+                }
             if let hours { return now.addingTimeInterval(-TimeInterval(hours) * 60 * 60) }
         }
         let parts = value.split(separator: "-").compactMap { Int($0) }

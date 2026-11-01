@@ -23,7 +23,8 @@ extension Database {
         let cutoff = since?.timeIntervalSince1970 ?? 0
         var entries: [(entry: UpdateLogEntry, order: Int64)] = []
         // An app a package manager installed is logged by that package manager instead.
-        try withStatement("""
+        try withStatement(
+            """
             SELECT COALESCE(installations.display_name, software.display_name), software.bundle_identifier, installations.normalized_path,
                    version_transitions.from_version, version_transitions.to_version, version_transitions.observed_at, version_transitions.id
             FROM version_transitions
@@ -32,17 +33,25 @@ extension Database {
             WHERE installations.provider = 'native-apps'
               AND version_transitions.observed_at >= ?
               AND (? = 1 OR (installations.classification IN ('user', 'system') AND (\(Self.installationOwnerSQL)) IS NULL));
-            """) { statement in
+            """
+        ) { statement in
             try bind(statement, [.double(cutoff), .int(includeAll ? 1 : 0)])
             while try stepRow(statement) {
                 let name = String(cString: sqlite3_column_text(statement, 0))
                 let path = optionalText(statement, column: 2)
                 let selector = optionalText(statement, column: 1).map { "app:\($0)" } ?? "app:\(path ?? name)"
-                entries.append((UpdateLogEntry(selector: selector, name: name, source: "app", path: path, fromVersion: String(cString: sqlite3_column_text(statement, 3)), toVersion: String(cString: sqlite3_column_text(statement, 4)), observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))), sqlite3_column_int64(statement, 6)))
+                entries.append(
+                    (
+                        UpdateLogEntry(
+                            selector: selector, name: name, source: "app", path: path, fromVersion: String(cString: sqlite3_column_text(statement, 3)),
+                            toVersion: String(cString: sqlite3_column_text(statement, 4)),
+                            observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))), sqlite3_column_int64(statement, 6)
+                    ))
             }
         }
         // Dependency-only formulae and ports are hidden unless includeAll, as in `sift updates`.
-        try withStatement("""
+        try withStatement(
+            """
             SELECT transitions.provider, transitions.kind, transitions.name, transitions.from_version, transitions.to_version, transitions.observed_at, transitions.id,
                    COALESCE(brew.name, transitions.name)
             FROM package_transitions AS transitions
@@ -50,14 +59,21 @@ extension Database {
             LEFT JOIN managed_packages AS managed ON transitions.provider != 'homebrew' AND managed.provider = transitions.provider AND managed.scope = transitions.scope AND managed.name = transitions.name
             WHERE transitions.observed_at >= ?
               AND (? = 1 OR COALESCE(brew.ownership != 'dependency', managed.requested = 1, 1));
-            """) { statement in
+            """
+        ) { statement in
             try bind(statement, [.double(cutoff), .int(includeAll ? 1 : 0)])
             while try stepRow(statement) {
                 let provider = String(cString: sqlite3_column_text(statement, 0))
                 let kind = String(cString: sqlite3_column_text(statement, 1))
                 let name = String(cString: sqlite3_column_text(statement, 7))
                 let selector = provider == "homebrew" ? "\(kind):\(name)" : "\(Self.packageSelectorPrefix(provider)):\(name)"
-                entries.append((UpdateLogEntry(selector: selector, name: name, source: provider, path: nil, fromVersion: String(cString: sqlite3_column_text(statement, 3)), toVersion: String(cString: sqlite3_column_text(statement, 4)), observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))), sqlite3_column_int64(statement, 6)))
+                entries.append(
+                    (
+                        UpdateLogEntry(
+                            selector: selector, name: name, source: provider, path: nil, fromVersion: String(cString: sqlite3_column_text(statement, 3)),
+                            toVersion: String(cString: sqlite3_column_text(statement, 4)),
+                            observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5))), sqlite3_column_int64(statement, 6)
+                    ))
             }
         }
         return entries.sorted {
