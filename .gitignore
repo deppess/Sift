@@ -4,3 +4,18 @@ DerivedData/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
+
+# Local tooling
+.claude/
+.cursor/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
+# OS and secrets
+.DS_Store
+.env
+.env.*
+
+# Local state
+.local/

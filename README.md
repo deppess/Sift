@@ -31,7 +31,7 @@ sift refresh
 
 For applications Sift asks the app's own updater first: its Sparkle feed (from Info.plist or its saved preferences), its Mac App Store listing, its Electron update manifest, or Blackmagic's downloads feed. When that can't be queried it falls back to Homebrew's public cask catalog matched by exact bundle identifier, then to the GitHub release check the app's executable makes, then to a cask with the same app name whose vendor domain the app references. Utilities installed alongside another app (same installer package or product folder) are reported as updated with it. Apps installed by a package manager, including those linked into a Homebrew Caskroom, are reported by that package manager. `sift show` explains every answer, and apps Sift can't check are listed with the reason.
 
-## Build and run
+## Build and test
 
 ```sh
 swift build
