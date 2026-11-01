@@ -88,4 +88,4 @@ An unrelated `sift` formula exists in Homebrew Core and provides a binary of the
 
 ## License
 
-Sift is licensed under the GNU General Public License v3.0 or later; see [LICENSE](LICENSE). Third-party attributions are in [NOTICE](NOTICE). See [PROJECT.md](PROJECT.md) for architecture, scope, security, and attribution requirements.
+All rights reserved. Published for viewing only: no copying, use, modification, distribution or sale without written permission. See [LICENSE](LICENSE).
