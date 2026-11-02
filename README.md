@@ -78,6 +78,20 @@ swift test
 ./Scripts/benchmark
 ```
 
+### Local macOS identity
+
+For a stable local application identity in macOS network monitors, build an ad-hoc-signed app bundle and launch the CLI through its stable path:
+
+```sh
+./Scripts/build-app
+sudo ./Scripts/install-local
+```
+
+This installs `/Applications/Sift.app` and links `/usr/local/bin/sift` to its signed executable.
+`SIFT_INSTALL_ROOT` and `SIFT_BIN_DIRECTORY` can select user-owned locations while developing.
+Ad-hoc signing is local only: it does not establish publisher identity for another Mac. A Developer ID
+certificate is required for a distributable, persistently trusted identity across machines.
+
 `swift test` runs the unit suites without touching the host's package managers or the network. `./Scripts/test-integration` runs the opt-in process, SQLite, permission, schema, and concurrency checks in unique temporary directories, including a real refresh of the host. `./Scripts/test-security` deterministically repeats the security regression and integration tests; it is not a fuzz harness. `./Scripts/benchmark` builds release configuration and reports repeated core-test timings. Set `SIFT_SECURITY_ITERATIONS` or `SIFT_BENCHMARK_ITERATIONS` to adjust runs; `SIFT_SECURITY_SEED` labels a security run.
 
 Use an isolated database while developing:

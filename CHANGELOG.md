@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+## 1.0.3 - 2026-11-01
+
 - Licensed under AGPL-3.0-or-later instead of GPL-3.0-or-later.
+
+### Changelogs
+
+- The cache records the kind of authoritative source that produced a changelog (such as GitHub releases, a Sparkle feed, or a vendor release-notes page). When a cached changelog needs revalidation, Sift retries that source before rediscovering it.
+- A remembered URL is only a scheduling hint: it is revalidated against the current app or package evidence and the existing HTTPS/public-host safety policy before use.
+- Refresh prefetch is bounded to four changelog lookups at a time and a 45-second warming budget, avoiding unbounded workers, page rendering, and SQLite/cache contention on large update sets.
+- Cache lookups reuse already loaded state, removing redundant SQLite reads.
+
+### Reliability and distribution
+
+- The WebKit renderer keeps its navigation delegate alive for the full page load, fixing script-rendered changelog pages that could otherwise fail immediately.
+- `Scripts/build-app` produces a locally ad-hoc-signed `Sift.app` with bundle identifier `org.deppes.sift`; `Scripts/install-local` installs it at a stable path and links the `sift` CLI to the bundled executable.
+- The database schema upgrades in place to version 18, preserving changelog history while recording the successful source type.
 
 ## 1.0.2 - 2026-10-31
 

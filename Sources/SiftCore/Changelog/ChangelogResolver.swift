@@ -13,7 +13,7 @@ public struct ChangelogSubject: Sendable {
 }
 
 public enum ChangelogResolution: Sendable {
-    case resolved(source: String, sourceURL: String?, entries: [ChangelogEntry])
+    case resolved(source: String, sourceURL: String?, sourceKind: String, entries: [ChangelogEntry])
     /// Every place that was tried, in the user's words, and why each gave nothing.
     case unavailable([String])
     case failure(String)
@@ -44,10 +44,10 @@ public struct ChangelogResolver: Sendable {
         self.storefront = storefront.count == 2 && storefront.allSatisfy(\.isLetter) ? storefront : "us"
     }
 
-    public func resolve(_ subject: ChangelogSubject) -> ChangelogResolution {
-        let resolution = resolveFromSources(subject)
-        guard case let .resolved(source, sourceURL, entries) = resolution else { return resolution }
-        return .resolved(source: source, sourceURL: sourceURL, entries: Self.deduplicated(entries))
+    public func resolve(_ subject: ChangelogSubject, preferredSourceKind: String? = nil, preferredSourceURL: String? = nil) -> ChangelogResolution {
+        let resolution = resolveFromSources(subject, preferredSourceKind: preferredSourceKind, preferredSourceURL: preferredSourceURL)
+        guard case let .resolved(source, sourceURL, sourceKind, entries) = resolution else { return resolution }
+        return .resolved(source: source, sourceURL: sourceURL, sourceKind: sourceKind, entries: Self.deduplicated(entries))
     }
 
     /// One entry per version: a feed listing a release once per build (Miniconda's per-Python
@@ -71,13 +71,18 @@ public struct ChangelogResolver: Sendable {
         return result
     }
 
-    private func resolveFromSources(_ subject: ChangelogSubject) -> ChangelogResolution {
+    private func resolveFromSources(_ subject: ChangelogSubject, preferredSourceKind: String?, preferredSourceURL: String?) -> ChangelogResolution {
         var hints = Hints()
         hints.name = subject.item.name
         hints.installed = subject.item.installedVersion.map(ChangelogVersion.normalized)
         if let available = subject.item.availableVersion, available != subject.item.installedVersion { hints.latest = ChangelogVersion.normalized(available) }
         hints.commandLine = subject.item.kind == .homebrewFormula || subject.item.kind == .package
         gatherHints(subject, into: &hints)
+        if let preferred = Source.cached(kind: preferredSourceKind, url: preferredSourceURL), hints.authorizes(preferred) {
+            // A prior success is only a scheduling hint. The reconstructed source remains subject
+            // to normal URL validation and discovery is retained as a fallback.
+            hints.prioritize(preferred)
+        }
         var tried: [String] = []
         var lastError: String?
         // A source that lists versions and dates without saying what changed (a feed with no
@@ -142,7 +147,7 @@ public struct ChangelogResolver: Sendable {
                         continue
                     }
                     if !partials.isEmpty { return Self.combine(partials + [candidate]) }
-                    return .resolved(source: source.label, sourceURL: source.url, entries: entries)
+                    return .resolved(source: source.label, sourceURL: source.url, sourceKind: source.cacheKind, entries: entries)
                 }
                 tried.append("\(source.label): \(entries.isEmpty ? "no versions found" : "only links elsewhere")")
             } catch MetadataHTTPError.notFound {
@@ -155,7 +160,9 @@ public struct ChangelogResolver: Sendable {
         // Versions all from another release line are another product's (Zoom's homepage numbers,
         // LM Studio's page for its Bionic product): no changelog beats the wrong one.
         if partials.contains(where: \.sameLine) { return Self.combine(partials) }
-        if let (source, entries) = versionsOnly { return .resolved(source: "\(source.label) (versions only)", sourceURL: source.url, entries: entries) }
+        if let (source, entries) = versionsOnly {
+            return .resolved(source: "\(source.label) (versions only)", sourceURL: source.url, sourceKind: source.cacheKind, entries: entries)
+        }
         if tried.isEmpty { return .unavailable(["No changelog source is known for this item."]) }
         // A source that failed outright may have the changelog; that's worth retrying sooner.
         if let lastError, tried.allSatisfy({ !$0.hasSuffix(": not found") && !$0.hasSuffix("no versions found") && !$0.hasSuffix("only links elsewhere") }) {
@@ -193,7 +200,7 @@ public struct ChangelogResolver: Sendable {
             let merged = merge(entries, other.entries)
             if merged.count > entries.count { entries = merged; labels.append(other.source.label) }
         }
-        return .resolved(source: labels.joined(separator: " and "), sourceURL: lead.source.url, entries: entries)
+        return .resolved(source: labels.joined(separator: " and "), sourceURL: lead.source.url, sourceKind: lead.source.cacheKind, entries: entries)
     }
 
     static func combine(_ first: Candidate, _ second: Candidate) -> ChangelogResolution { combine([first, second]) }
@@ -260,6 +267,52 @@ public struct ChangelogResolver: Sendable {
             case let .page(url), let .releaseNotes(url): url.absoluteString
             }
         }
+
+        /// Stable, declarative source type stored in the local cache. It never contains parser
+        /// code; cached data is reconstructed only into source types already implemented here.
+        var cacheKind: String {
+            switch self {
+            case .localFiles: "local-files"
+            case .sparkle: "sparkle"
+            case .appStore: "app-store"
+            case .steam: "steam"
+            case .blackmagic: "blackmagic"
+            case .githubReleases: "github-releases"
+            case .githubFile: "github-file"
+            case .githubTags: "github-tags"
+            case .forge: "forge"
+            case .updateFeed: "update-feed"
+            case .filteredFeed: "filtered-feed"
+            case .versionPages: "version-pages"
+            case .adoptium: "adoptium"
+            case .page: "page"
+            case .releaseNotes: "release-notes"
+            }
+        }
+
+        static func cached(kind: String?, url: String?) -> Source? {
+            guard let kind, let url, let value = URL(string: url), isPublicHTTPSURL(value) else { return nil }
+            switch kind {
+            case "sparkle": return .sparkle(value, padding: true)
+            case "update-feed": return .updateFeed(value)
+            case "page": return .page(value)
+            case "release-notes": return .releaseNotes(value)
+            case "github-releases", "github-file", "github-tags":
+                guard let repository = GitHubSource.parse(Hints.repositoryRoot(value))?.repository else { return nil }
+                switch kind {
+                case "github-releases": return .githubReleases(repository)
+                case "github-file": return .githubFile(repository)
+                default: return .githubTags(repository)
+                }
+            case "forge":
+                guard let forge = Hints.forgeRepository(value) else { return nil }
+                return .forge(host: forge.host, path: forge.path)
+            default:
+                // These source kinds need non-URL evidence (an app ID, title filter, or version
+                // template), so they are rediscovered instead of broadening the trust boundary.
+                return nil
+            }
+        }
     }
 
     struct Hints {
@@ -289,6 +342,21 @@ public struct ChangelogResolver: Sendable {
                 return
             }
             if !ordered.contains(source) { ordered.append(source) }
+        }
+
+        mutating func prioritize(_ source: Source) {
+            ordered.removeAll { $0 == source }
+            ordered.insert(source, at: 0)
+        }
+
+        /// A cached URL is not authority by itself. It may only influence ordering when the
+        /// current item independently produced the same source from its bundle/package metadata,
+        /// provider record, or Sift's bundled source rules.
+        func authorizes(_ candidate: Source) -> Bool {
+            sources.contains { source in
+                if case let (.sparkle(left, _), .sparkle(right, _)) = (source, candidate) { return left == right }
+                return source == candidate
+            }
         }
 
         /// A repository adds its releases first, then its changelog file.

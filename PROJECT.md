@@ -113,7 +113,7 @@ The 1.0 per-update notes (`homebrew_release_notes`, `release_notes`) are still c
 
 ## Persistence
 
-Sift 1.0.0 creates its schema (version 15) directly as a clean baseline; it does not carry forward the incremental pre-release migration history, and pre-release caches, including development builds of version 15, are intentionally unsupported. Later versions are steps applied on top of the baseline in one transaction, so a 1.x cache keeps its history: version 16 adds `package_transitions` (version history for Homebrew and managed packages), `managed_packages.identifier` (a Steam app ID), and `changelog_state`; version 17 replaces 16's per-fetch `changelog_entries` with the cumulative `changelog_history`. A cache-only command that finds an older 1.x schema upgrades it in place first. Its core tables include:
+Sift 1.0.0 creates its schema (version 15) directly as a clean baseline; it does not carry forward the incremental pre-release migration history, and pre-release caches, including development builds of version 15, are intentionally unsupported. Later versions are steps applied on top of the baseline in one transaction, so a 1.x cache keeps its history: version 16 adds `package_transitions` (version history for Homebrew and managed packages), `managed_packages.identifier` (a Steam app ID), and `changelog_state`; version 17 replaces 16's per-fetch `changelog_entries` with the cumulative `changelog_history`; version 18 records the successful changelog source type so stale lookups retry it before rediscovery. A cache-only command that finds an older 1.x schema upgrades it in place first. Its core tables include:
 
 - `schema_migrations`
 - `settings`
@@ -164,7 +164,7 @@ Initial global options:
 --database <path>
 ```
 
-`refresh` scans standard native application roots, Spotlight candidates, and symlinked bundles, reads `Info.plist` metadata without executing applications, inventories detected Homebrew prefixes (running `brew update` first when a prefix's metadata is over an hour old), npm globals, uv tools, cargo crates, MacPorts, and Steam libraries, resolves Homebrew targets, checks native applications against their update authority, and caches release notes. Providers run concurrently. Cache-reading commands do not scan, invoke providers, fetch metadata, or write the database. Dynamic completion reads the existing cache when present and otherwise returns no matches.
+`refresh` scans standard native application roots, Spotlight candidates, and symlinked bundles, reads `Info.plist` metadata without executing applications, inventories detected Homebrew prefixes (running `brew update` first when a prefix's metadata is over an hour old), npm globals, uv tools, cargo crates, MacPorts, and Steam libraries, resolves Homebrew targets, checks native applications against their update authority, and warms changelogs for pending/recent changes for at most 45 seconds. Providers run concurrently. Cache-reading commands do not scan, invoke providers, fetch metadata, or write the database. Dynamic completion reads the existing cache when present and otherwise returns no matches.
 
 `--json` writes the dashboard as this envelope:
 

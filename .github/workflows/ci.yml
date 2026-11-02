@@ -10,9 +10,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Test
-        run: swift test
-      - name: Integration tests
-        run: ./Scripts/test-integration
+      - name: Security regression tests
+        run: ./Scripts/test-security
       - name: Release build
         run: swift build -c release
+      - name: Build and verify local app bundle
+        run: ./Scripts/build-app

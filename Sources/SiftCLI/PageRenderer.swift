@@ -16,7 +16,10 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
     nonisolated static func main(url: URL, timeout: TimeInterval) -> Int32 {
         MainActor.assumeIsolated {
             NSApplication.shared.setActivationPolicy(.prohibited)
-            guard let html = PageRenderer().render(url, timeout: timeout) else { return EXIT_FAILURE }
+            // WKWebView retains its navigation delegate weakly. Keep the renderer alive for the
+            // complete load/evaluation cycle rather than constructing a temporary delegate.
+            let renderer = PageRenderer()
+            guard let html = renderer.render(url, timeout: timeout) else { return EXIT_FAILURE }
             FileHandle.standardOutput.write(Data(html.utf8))
             return EXIT_SUCCESS
         }

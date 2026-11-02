@@ -7,6 +7,7 @@ extension Database {
         public let status: String
         public let source: String?
         public let sourceURL: String?
+        public let sourceKind: String?
         public let detail: String?
         public let fetchedAt: Date
     }
@@ -14,7 +15,9 @@ extension Database {
     /// Adds a fetch to the item's history: new versions are inserted, versions already known get
     /// the source's current text (unless it is now only a placeholder), and versions the source no
     /// longer lists are kept.
-    public func storeChangelog(selector: String, source: String, sourceURL: String?, entries: [ChangelogEntry], fetchedAt: Date) throws {
+    public func storeChangelog(
+        selector: String, source: String, sourceURL: String?, sourceKind: String = "unknown", entries: [ChangelogEntry], fetchedAt: Date
+    ) throws {
         lock.lock()
         defer { lock.unlock() }
         // Two entries for one version (a rebuild listed separately) become one.
@@ -70,8 +73,8 @@ extension Database {
             }
             for version in stale { try run("DELETE FROM changelog_history WHERE subject = ? AND version = ?;", bindings: [.text(selector), .text(version)]) }
             try run(
-                "INSERT INTO changelog_state (subject, status, source, source_url, detail, fetched_at) VALUES (?, 'resolved', ?, ?, NULL, ?) ON CONFLICT(subject) DO UPDATE SET status = 'resolved', source = excluded.source, source_url = excluded.source_url, detail = NULL, fetched_at = excluded.fetched_at;",
-                bindings: [.text(selector), .text(source), .optionalText(sourceURL), .double(fetchedAt.timeIntervalSince1970)])
+                "INSERT INTO changelog_state (subject, status, source, source_url, source_kind, detail, fetched_at) VALUES (?, 'resolved', ?, ?, ?, NULL, ?) ON CONFLICT(subject) DO UPDATE SET status = 'resolved', source = excluded.source, source_url = excluded.source_url, source_kind = excluded.source_kind, detail = NULL, fetched_at = excluded.fetched_at;",
+                bindings: [.text(selector), .text(source), .optionalText(sourceURL), .text(sourceKind), .double(fetchedAt.timeIntervalSince1970)])
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -85,7 +88,7 @@ extension Database {
         lock.lock()
         defer { lock.unlock() }
         try run(
-            "INSERT INTO changelog_state (subject, status, source, source_url, detail, fetched_at) VALUES (?, ?, NULL, NULL, ?, ?) ON CONFLICT(subject) DO UPDATE SET status = excluded.status, detail = excluded.detail, fetched_at = excluded.fetched_at, source = CASE WHEN excluded.status = 'failure' THEN changelog_state.source ELSE NULL END, source_url = CASE WHEN excluded.status = 'failure' THEN changelog_state.source_url ELSE NULL END;",
+            "INSERT INTO changelog_state (subject, status, source, source_url, source_kind, detail, fetched_at) VALUES (?, ?, NULL, NULL, NULL, ?, ?) ON CONFLICT(subject) DO UPDATE SET status = excluded.status, detail = excluded.detail, fetched_at = excluded.fetched_at, source = CASE WHEN excluded.status = 'failure' THEN changelog_state.source ELSE NULL END, source_url = CASE WHEN excluded.status = 'failure' THEN changelog_state.source_url ELSE NULL END, source_kind = CASE WHEN excluded.status = 'failure' THEN changelog_state.source_kind ELSE NULL END;",
             bindings: [.text(selector), .text(status), .text(detail), .double(fetchedAt.timeIntervalSince1970)])
     }
 
@@ -93,13 +96,13 @@ extension Database {
         lock.lock()
         defer { lock.unlock() }
         var state: ChangelogState?
-        try withStatement("SELECT status, source, source_url, detail, fetched_at FROM changelog_state WHERE subject = ?;") { statement in
+        try withStatement("SELECT status, source, source_url, source_kind, detail, fetched_at FROM changelog_state WHERE subject = ?;") { statement in
             try bind(statement, [.text(selector)])
             if try stepRow(statement) {
                 state = ChangelogState(
                     status: String(cString: sqlite3_column_text(statement, 0)), source: optionalText(statement, column: 1),
-                    sourceURL: optionalText(statement, column: 2), detail: optionalText(statement, column: 3),
-                    fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 4)))
+                    sourceURL: optionalText(statement, column: 2), sourceKind: optionalText(statement, column: 3), detail: optionalText(statement, column: 4),
+                    fetchedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 5)))
             }
         }
         return state

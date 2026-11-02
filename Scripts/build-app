@@ -1,0 +1,66 @@
+#!/bin/zsh
+set -euo pipefail
+
+# Builds an ad-hoc-signed local application bundle. Its bundle identifier gives macOS network
+# monitors a consistent identity when the bundled executable is launched through the `sift`
+# launcher installed by install-local.
+
+root="${0:A:h:h}"
+configuration="${SIFT_BUILD_CONFIGURATION:-release}"
+output="${SIFT_APP_OUTPUT:-$root/.build/Sift.app}"
+identifier="${SIFT_BUNDLE_IDENTIFIER:-org.deppes.sift}"
+version="$(sed -nE 's/.*current = "([^"]+)".*/\1/p' "$root/Sources/SiftCore/SiftVersion.swift")"
+
+if [[ -z "$version" ]]; then
+    print -u2 "Unable to determine Sift's version."
+    exit 1
+fi
+if [[ "$output" != /*.app || "$output" == "/" ]]; then
+    print -u2 "SIFT_APP_OUTPUT must be an absolute .app path."
+    exit 2
+fi
+
+cd "$root"
+swift build -c "$configuration" --product sift
+binary="$(swift build -c "$configuration" --show-bin-path)/sift"
+
+rm -rf "$output"
+mkdir -p "$output/Contents/MacOS"
+cp "$binary" "$output/Contents/MacOS/sift"
+
+cat > "$output/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>sift</string>
+    <key>CFBundleIdentifier</key>
+    <string>$identifier</string>
+    <key>CFBundleName</key>
+    <string>Sift</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$version</string>
+    <key>CFBundleVersion</key>
+    <string>$version</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>15.0</string>
+</dict>
+</plist>
+EOF
+
+codesign --force --sign - --identifier "$identifier" --timestamp=none "$output"
+codesign --verify --strict --verbose=2 "$output"
+if [[ -n "${SIFT_APP_ARCHIVE:-}" ]]; then
+    archive="${SIFT_APP_ARCHIVE:A}"
+    [[ "$archive" != "/" && "$archive" == *.zip ]] || { print -u2 "SIFT_APP_ARCHIVE must be an absolute .zip path."; exit 1; }
+    mkdir -p "${archive:h}"
+    rm -f "$archive"
+    ditto -c -k --sequesterRsrc --keepParent "$output" "$archive"
+    printf '%s\n' "Created app archive: $archive"
+fi
+printf '%s\n' "Built locally signed app: $output"

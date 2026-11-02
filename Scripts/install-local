@@ -1,0 +1,24 @@
+#!/bin/zsh
+set -euo pipefail
+
+# Installs the app bundle at a stable path and creates a CLI launcher that executes its signed
+# binary. Use SIFT_INSTALL_ROOT to avoid /Applications and /usr/local during development.
+
+root="${0:A:h:h}"
+install_root="${SIFT_INSTALL_ROOT:-/Applications}"
+bin_directory="${SIFT_BIN_DIRECTORY:-/usr/local/bin}"
+app="$install_root/Sift.app"
+launcher="$bin_directory/sift"
+
+[[ "$install_root" == /* && "$install_root" != "/" && "$bin_directory" == /* && "$bin_directory" != "/" ]] || {
+    print -u2 "SIFT_INSTALL_ROOT and SIFT_BIN_DIRECTORY must be non-root absolute paths."
+    exit 2
+}
+
+"$root/Scripts/build-app"
+mkdir -p "$install_root" "$bin_directory"
+rm -rf "$app"
+ditto "$root/.build/Sift.app" "$app"
+ln -sfn "$app/Contents/MacOS/sift" "$launcher"
+printf '%s\n' "Installed $app"
+printf '%s\n' "Linked $launcher"

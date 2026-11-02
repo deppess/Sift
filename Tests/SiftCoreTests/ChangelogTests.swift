@@ -250,12 +250,12 @@ final class ChangelogTests: XCTestCase {
         let releases = ChangelogResolver.Candidate(
             source: .githubReleases(GitHubRepository(owner: "o", name: "r")),
             entries: ["2.8.0", "2.7.0", "2.6.0"].map { ChangelogEntry(version: $0, content: "- Release \($0)") }, covers: true, sameLine: true, thin: false)
-        guard case let .resolved(source, _, entries) = ChangelogResolver.combine(feed, releases) else { return XCTFail("expected a changelog") }
+        guard case let .resolved(source, _, _, entries) = ChangelogResolver.combine(feed, releases) else { return XCTFail("expected a changelog") }
         XCTAssertEqual(source, "GitHub releases (o/r) and the app's update feed")
         XCTAssertEqual(entries.map(\.version), ["2.9.0", "2.8.0", "2.7.0", "2.6.0"])
         let wrong = ChangelogResolver.Candidate(
             source: .page(URL(string: "https://example.com/changelog")!), entries: other, covers: false, sameLine: false, thin: false)
-        guard case let .resolved(_, _, kept) = ChangelogResolver.combine(wrong, feed) else { return XCTFail("expected a changelog") }
+        guard case let .resolved(_, _, _, kept) = ChangelogResolver.combine(wrong, feed) else { return XCTFail("expected a changelog") }
         XCTAssertEqual(kept.map(\.version), ["2.9.0"], "another product's versions aren't merged in")
     }
 
@@ -354,7 +354,7 @@ final class ChangelogTests: XCTestCase {
         let resolver = ChangelogResolver(client: mockedClient(database), environment: [:])
         let item = homebrewItem("gh", installed: "2.103.1")
         guard
-            case let .resolved(source, sourceURL, entries) = resolver.resolve(
+            case let .resolved(source, sourceURL, _, entries) = resolver.resolve(
                 ChangelogSubject(item: item, homebrewSourceURL: "https://github.com/cli/cli/archive/refs/tags/v2.103.1.tar.gz"))
         else { return XCTFail("expected a changelog") }
         XCTAssertEqual(source, "GitHub releases (cli/cli)")
@@ -397,7 +397,7 @@ final class ChangelogTests: XCTestCase {
             availableVersion: "3.3.1", active: true, bundleIdentifier: "com.example.app", path: app.path, prefix: nil, tap: nil, ownership: nil,
             autoUpdates: false, observedAt: .now, updateSource: "sparkle")
         let resolution = ChangelogResolver(client: mockedClient(database), homeDirectory: root.path, environment: [:]).resolve(ChangelogSubject(item: item))
-        guard case let .resolved(source, _, entries) = resolution else { return XCTFail("expected a changelog, got \(resolution)") }
+        guard case let .resolved(source, _, _, entries) = resolution else { return XCTFail("expected a changelog, got \(resolution)") }
         XCTAssertEqual(source, "the app's update feed")
         XCTAssertEqual(entries.map(\.version), ["3.3.1", "3.3.0"], "the linked page's older sections fill in the history")
         XCTAssertEqual(entries.first?.content, "- Faster export")
@@ -447,6 +447,7 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(stale.entries.map(\.version), ["2.0.0"])
         XCTAssertNotNil(stale.staleReason)
         XCTAssertEqual(try ChangelogService.cached(for: item, database: database)?.source, "GitHub releases (cli/cli)")
+        XCTAssertEqual(try database.changelogState(selector: item.selector)?.sourceKind, "github-releases")
     }
 
     func testHistoryAccumulatesAcrossFetchesAndKeepsRealTextOverPlaceholders() throws {

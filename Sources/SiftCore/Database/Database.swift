@@ -92,7 +92,7 @@ public enum DatabaseError: Error, LocalizedError {
 }
 
 public final class Database: @unchecked Sendable {
-    static let schemaVersion = 17
+    static let schemaVersion = 18
     /// The 1.0.0 schema every database starts from; later versions are applied as steps on top.
     static let baselineSchemaVersion = 15
     var handle: OpaquePointer?
@@ -363,6 +363,10 @@ public final class Database: @unchecked Sendable {
                 try execute(Self.schema17)
                 version = 17
             }
+            if version < 18 {
+                try execute(Self.schema18)
+                version = 18
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -432,6 +436,13 @@ public final class Database: @unchecked Sendable {
             ORDER BY entries.position;
         DROP TABLE changelog_entries;
         INSERT INTO schema_migrations (version) VALUES (17);
+        """
+
+    /// A source type lets a stale changelog retry the exact authoritative mechanism that worked
+    /// previously (for example GitHub releases rather than a generic HTML page).
+    static let schema18 = """
+        ALTER TABLE changelog_state ADD COLUMN source_kind TEXT;
+        INSERT INTO schema_migrations (version) VALUES (18);
         """
 
     private func createBaselineSchema() throws {

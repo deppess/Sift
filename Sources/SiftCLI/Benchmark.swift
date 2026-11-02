@@ -42,7 +42,7 @@ enum Benchmark {
                 ownership: nil, autoUpdates: false, observedAt: .now, updateSource: "homebrew")
             let line: String
             switch resolver.resolve(ChangelogSubject(item: item)) {
-            case let .resolved(source, sourceURL, entries):
+            case let .resolved(source, sourceURL, _, entries):
                 let changelog = Changelog(
                     selector: item.selector, name: token, installedVersion: version, availableVersion: nil, source: source, sourceURL: sourceURL,
                     entries: entries, fetchedAt: .now)

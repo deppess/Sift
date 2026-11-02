@@ -14,6 +14,12 @@ public struct ChangelogService: Sendable {
     public static let maxAge: TimeInterval = 6 * 60 * 60
     /// How long "nothing found" stands before looking again.
     public static let missMaxAge: TimeInterval = 24 * 60 * 60
+    /// Changelog resolution can render pages and write the shared SQLite cache. Keep refresh
+    /// prefetch bounded instead of starting one worker per installed update.
+    private static let prefetchParallelism = 4
+    /// Refresh is primarily an inventory/update operation. Warming changelogs must not turn a
+    /// large first refresh into an unbounded sequence of vendor-page renders.
+    public static let prefetchTimeLimit: TimeInterval = 45
 
     private let database: Database
     private let resolver: ChangelogResolver
@@ -29,7 +35,13 @@ public struct ChangelogService: Sendable {
 
     /// The cached changelog only; never fetches. Used by `sift show`.
     public static func cached(for item: CatalogItem, database: Database) throws -> Changelog? {
-        guard let state = try database.changelogState(selector: item.selector), let source = state.source else { return nil }
+        try cached(for: item, state: database.changelogState(selector: item.selector), database: database)
+    }
+
+    /// Builds a cache-only result using state the caller already loaded, avoiding an extra SQLite
+    /// lookup in prefetch and stale-resolution paths.
+    private static func cached(for item: CatalogItem, state: Database.ChangelogState?, database: Database) throws -> Changelog? {
+        guard let state, let source = state.source else { return nil }
         let entries = try database.changelogEntries(selector: item.selector)
         guard !entries.isEmpty else { return nil }
         let versions = try parentApplication(of: item, database: database) ?? item
@@ -41,8 +53,8 @@ public struct ChangelogService: Sendable {
     }
 
     public func changelog(for item: CatalogItem, refetch: Bool = false, now: Date = .now) throws -> ChangelogOutcome {
-        let cached = try Self.cached(for: item, database: database)
         let state = try database.changelogState(selector: item.selector)
+        let cached = try Self.cached(for: item, state: state, database: database)
         if !refetch, let state {
             let age = now.timeIntervalSince(state.fetchedAt)
             if let cached, age >= 0, age < Self.maxAge, covers(cached, item) || age < 60 * 60 { return .changelog(cached) }
@@ -63,10 +75,14 @@ public struct ChangelogService: Sendable {
                 }
             default: nil
             }
-        switch resolver.resolve(ChangelogSubject(item: target, homebrewSourceURL: homebrewSource)) {
-        case let .resolved(resolvedSource, sourceURL, entries):
+        switch resolver.resolve(
+            ChangelogSubject(item: target, homebrewSourceURL: homebrewSource), preferredSourceKind: state?.sourceKind,
+            preferredSourceURL: state?.sourceURL)
+        {
+        case let .resolved(resolvedSource, sourceURL, sourceKind, entries):
             let source = parent.map { "\(resolvedSource), for \($0.name)" } ?? resolvedSource
-            try database.storeChangelog(selector: item.selector, source: source, sourceURL: sourceURL, entries: entries, fetchedAt: now)
+            try database.storeChangelog(
+                selector: item.selector, source: source, sourceURL: sourceURL, sourceKind: sourceKind, entries: entries, fetchedAt: now)
             // The whole stored history, in version order, not just this fetch.
             let history = try database.changelogEntries(selector: item.selector)
             var changelog = Changelog(
@@ -93,10 +109,13 @@ public struct ChangelogService: Sendable {
     }
 
     /// Fetches the changelogs `refresh` makes instant: everything with a pending update and
-    /// everything that changed in the last week, skipping copies that are still fresh. Returns how
-    /// many were fetched.
+    /// everything that changed in the last week, skipping copies that are still fresh. It launches
+    /// no additional work after `timeLimit` has elapsed; anything left is fetched on demand or by
+    /// the next refresh. Returns the number of lookups launched.
     @discardableResult
-    public func prefetch(now: Date = .now, progress: (@Sendable (Int, Int) -> Void)? = nil) throws -> Int {
+    public func prefetch(
+        now: Date = .now, timeLimit: TimeInterval = Self.prefetchTimeLimit, progress: (@Sendable (Int, Int) -> Void)? = nil
+    ) throws -> Int {
         let items = try database.catalogItems()
         let recent = Set(try database.updateLog(since: now.addingTimeInterval(-7 * 24 * 60 * 60)).map(\.selector))
         var due: [CatalogItem] = []
@@ -105,19 +124,30 @@ public struct ChangelogService: Sendable {
                 now.timeIntervalSince(state.fetchedAt) < (state.status == "unavailable" ? Self.missMaxAge : Self.maxAge)
             {
                 guard state.status == "resolved" else { continue }
-                if let cached = try Self.cached(for: item, database: database), covers(cached, item) { continue }
+                if let cached = try Self.cached(for: item, state: state, database: database), covers(cached, item) { continue }
             }
             due.append(item)
         }
+        // Freeze the work list before giving it to concurrently executing closures. Apart from
+        // satisfying Swift 6's sendability rules, this ensures progress totals cannot change
+        // underneath an in-flight prefetch.
+        let dueItems = due
         let counter = Mutex(0)
-        DispatchQueue.concurrentPerform(iterations: due.count) { index in
-            _ = try? changelog(for: due[index], refetch: true, now: now)
-            let done = counter.withLock { value -> Int in
-                value += 1; return value
+        let deadline = Date().addingTimeInterval(max(timeLimit, 0))
+        var launched = 0
+        for start in stride(from: 0, to: dueItems.count, by: Self.prefetchParallelism) {
+            guard Date() < deadline else { break }
+            let end = min(start + Self.prefetchParallelism, dueItems.count)
+            DispatchQueue.concurrentPerform(iterations: end - start) { offset in
+                _ = try? changelog(for: dueItems[start + offset], refetch: true, now: now)
+                let done = counter.withLock { value -> Int in
+                    value += 1; return value
+                }
+                progress?(done, dueItems.count)
             }
-            progress?(done, due.count)
+            launched += end - start
         }
-        return due.count
+        return launched
     }
 
     /// When the installed copy arrived: the app bundle's Info.plist (rewritten by every install
