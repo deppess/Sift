@@ -516,27 +516,36 @@ public struct ChangelogResolver: Sendable {
         let items = try SparkleAppcastParser.parse(client.fetch(url, resource: .sparkleAppcast(host: host)).body)
             .filter(\.isDefaultChannel)
             .sorted { SparkleVersion.compare($0.version, $1.version, padding: padding) == .orderedDescending }
+        // Each item's own notes and, when those are a placeholder, the page they link to: the
+        // item's releaseNotesLink, or one inside the placeholder text itself.
+        let notes = items.map { item -> (content: String, link: URL?) in
+            let content = item.releaseNotesHTML.map { HTMLMarkdown.convert($0) } ?? ""
+            guard ChangelogDocument.isPlaceholder(content) else { return (content, nil) }
+            let embedded = item.releaseNotesHTML.flatMap { html in HTMLMarkdown.links(in: html, base: url).first?.url }
+            let link = item.releaseNotesURL.flatMap(URL.init(string:)) ?? embedded
+            return (content, link.flatMap { isPublicHTTPSURL($0) && $0.host != nil ? $0 : nil })
+        }
         var entries: [ChangelogEntry] = []
         var linkedPages = 0
         var linkedSplit: [ChangelogEntry]?
-        for item in items {
-            var content = item.releaseNotesHTML.map { HTMLMarkdown.convert($0) } ?? ""
+        // Linked pages read ahead of the loop, once the first shows that each item links a page
+        // of its own (CleanShot's): reading one often means rendering it in WebKit, seconds each.
+        var readAhead: [URL: LinkedPage] = [:]
+        for (index, item) in items.enumerated() {
+            var content = notes[index].content
             var source: String?
             // A feed that only links to its notes: the linked page, for the newest releases.
-            // The link is the item's releaseNotesLink, or one inside the placeholder text itself.
-            let embedded = item.releaseNotesHTML.flatMap { html in HTMLMarkdown.links(in: html, base: url).first?.url }
             if ChangelogDocument.isPlaceholder(content), let linkedSplit,
                 let own = linkedSplit.first(where: { ChangelogVersion.matches($0.version, ChangelogVersion.normalized(item.displayVersion)) })
             {
                 content = own.content
-            } else if ChangelogDocument.isPlaceholder(content), linkedPages < 12,
-                let link = item.releaseNotesURL.flatMap(URL.init(string:)) ?? embedded, isPublicHTTPSURL(link), let linkHost = link.host
-            {
+            } else if ChangelogDocument.isPlaceholder(content), linkedPages < 12, let link = notes[index].link {
                 linkedPages += 1
-                if let html = try? fetchText(link, resource: .changelogPage(host: linkHost)) {
+                if let page = readAhead[link] ?? readLinkedPage(link) {
+                    let html = page.html
                     // A page that covers every version is split, and this version's part kept;
                     // a script-built page is rendered first.
-                    let split = read(html, url: link, render: true)
+                    let split = page.split
                     let itemVersion = ChangelogVersion.normalized(item.displayVersion)
                     // This version's own section, or the newest section that says it covers later versions.
                     let own =
@@ -560,6 +569,13 @@ public struct ChangelogResolver: Sendable {
                     source = link.absoluteString
                     // Older items in the same feed usually link to the same page.
                     if split.count > 1 { linkedSplit = split }
+                    // Pages for one version each: the rest are read together. Which one each item
+                    // uses is still decided here, in feed order.
+                    if linkedPages == 1, linkedSplit == nil {
+                        var seen: Set<URL> = [link]
+                        let upcoming = notes[(index + 1)...].compactMap(\.link).filter { seen.insert($0).inserted }.prefix(11)
+                        readAhead = readLinkedPages(Array(upcoming))
+                    }
                 } else if let linkedSplit,
                     let own = linkedSplit.first(where: { ChangelogVersion.matches($0.version, ChangelogVersion.normalized(item.displayVersion)) })
                 {
@@ -580,6 +596,25 @@ public struct ChangelogResolver: Sendable {
             if ChangelogDocument.isMeaningful(history) { return Self.merge(entries, history) }
         }
         return entries
+    }
+
+    /// A release-notes page a feed item links to, and its entries.
+    struct LinkedPage: Sendable {
+        let html: String
+        let split: [ChangelogEntry]
+    }
+
+    private func readLinkedPage(_ link: URL) -> LinkedPage? {
+        guard let host = link.host, let html = try? fetchText(link, resource: .changelogPage(host: host)) else { return nil }
+        return LinkedPage(html: html, split: read(html, url: link, render: true))
+    }
+
+    /// Several linked pages read at once; one that can't be fetched is left out and tried again
+    /// when its item comes up.
+    private func readLinkedPages(_ links: [URL]) -> [URL: LinkedPage] {
+        let pages = UnsafeResults<LinkedPage?>(count: links.count)
+        DispatchQueue.concurrentPerform(iterations: links.count) { index in pages[index] = .some(readLinkedPage(links[index])) }
+        return Dictionary(zip(links, pages.values).compactMap { link, page in page.map { (link, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
     static func rfc822Date(_ text: String) -> Date? {
@@ -818,9 +853,13 @@ public struct ChangelogResolver: Sendable {
     /// unless it is only a placeholder, and versions only the second has are added.
     static func merge(_ primary: [ChangelogEntry], _ secondary: [ChangelogEntry]) -> [ChangelogEntry] {
         var merged = primary
+        // Each entry's version token, found once: comparing every pair would find it again each time.
+        var tokens = merged.map { ChangelogVersion.token(in: $0.version) }
         for entry in secondary {
-            if let index = merged.firstIndex(where: {
-                ChangelogVersion.matches($0.version, entry.version) || ChangelogVersion.matches(entry.version, $0.version)
+            let token = ChangelogVersion.token(in: entry.version)
+            if let index = merged.indices.first(where: {
+                ChangelogVersion.matches(merged[$0].version, token: tokens[$0], entry.version)
+                    || ChangelogVersion.matches(entry.version, token: token, merged[$0].version)
             }) {
                 if ChangelogDocument.isPlaceholder(merged[index].content) {
                     let old = merged[index]
@@ -830,20 +869,25 @@ public struct ChangelogResolver: Sendable {
                 }
             } else {
                 merged.append(entry)
+                tokens.append(token)
             }
         }
-        return newestFirst(merged)
+        return newestFirst(merged, tokens: tokens)
     }
 
     /// Versioned entries newest first, then the rest in their order (a sort comparing only
     /// versioned pairs isn't a consistent ordering and scrambles mixed lists).
     static func newestFirst(_ entries: [ChangelogEntry]) -> [ChangelogEntry] {
-        let versioned = entries.enumerated().compactMap { offset, entry in ChangelogVersion.token(in: entry.version).map { (offset, $0, entry) } }
+        newestFirst(entries, tokens: entries.map { ChangelogVersion.token(in: $0.version) })
+    }
+
+    private static func newestFirst(_ entries: [ChangelogEntry], tokens: [String?]) -> [ChangelogEntry] {
+        let versioned = entries.indices.compactMap { offset in tokens[offset].map { (offset, $0, entries[offset]) } }
         let sorted = versioned.sorted { left, right in
             let order = SparkleVersion.compare(left.1, right.1)
             return order == .orderedSame ? left.0 < right.0 : order == .orderedDescending
         }.map(\.2)
-        let unversioned = entries.filter { ChangelogVersion.token(in: $0.version) == nil }
+        let unversioned = entries.indices.filter { tokens[$0] == nil }.map { entries[$0] }
         return sorted + unversioned
     }
 
@@ -865,14 +909,18 @@ public struct ChangelogResolver: Sendable {
             return (name, version, sha)
         }.sorted { SparkleVersion.compare($0.version, $1.version) == .orderedDescending }
         let described = githubPages > 3 ? 12 : 4
+        let compares = versioned.indices.map { index -> URL? in
+            guard index < described, index + 1 < versioned.count, let base = encodeGitHubPathComponent(versioned[index + 1].sha),
+                let head = encodeGitHubPathComponent(versioned[index].sha)
+            else { return nil }
+            return URL(string: "https://api.github.com/repos/\(owner)/\(name)/compare/\(base)...\(head)")
+        }
+        warm(compares.compactMap { $0 }) { _ in .githubReleaseList }
         var entries: [ChangelogEntry] = []
         for (index, tag) in versioned.enumerated() {
             var content = ""
             var date: Date?
-            if index < described, index + 1 < versioned.count,
-                let base = encodeGitHubPathComponent(versioned[index + 1].sha), let head = encodeGitHubPathComponent(tag.sha),
-                let compare = URL(string: "https://api.github.com/repos/\(owner)/\(name)/compare/\(base)...\(head)"),
-                let data = try? client.fetch(compare, resource: .githubReleaseList).body,
+            if let compare = compares[index], let data = try? client.fetch(compare, resource: .githubReleaseList).body,
                 let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let commits = document["commits"] as? [[String: Any]]
             {
                 let messages = commits.compactMap { (($0["commit"] as? [String: Any])?["message"] as? String)?.split(separator: "\n").first.map(String.init) }
@@ -931,6 +979,7 @@ public struct ChangelogResolver: Sendable {
     /// Several versions' pages read together, newest first; a page that isn't up yet (the latest
     /// version's, sometimes) is skipped.
     private func versionPages(_ pages: [VersionedURL]) throws -> [ChangelogEntry] {
+        warm(pages.map(\.url)) { .changelogPage(host: $0.host?.lowercased() ?? "") }
         var entries: [ChangelogEntry] = []
         var firstError: Error?
         for page in pages {
@@ -970,9 +1019,14 @@ public struct ChangelogResolver: Sendable {
                 (try JSONSerialization.jsonObject(with: client.fetch(names, resource: .changelogPage(host: "api.adoptium.net")).body) as? [String: Any])?[
                     "releases"] as? [String]
         else { throw MetadataHTTPError.invalidResponse }
+        let notesURL = { (name: String) in
+            name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-."))).flatMap {
+                URL(string: "https://api.adoptium.net/v3/info/release_notes/\($0)")
+            }
+        }
+        warm(list.prefix(10).compactMap(notesURL)) { _ in .changelogPage(host: "api.adoptium.net") }
         return list.prefix(10).compactMap { name -> ChangelogEntry? in
-            guard let encoded = name.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-."))),
-                let url = URL(string: "https://api.adoptium.net/v3/info/release_notes/\(encoded)"),
+            guard let url = notesURL(name),
                 let data = try? client.fetch(url, resource: .changelogPage(host: "api.adoptium.net")).body,
                 let notes = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["release_notes"] as? [[String: Any]]
             else { return nil }
@@ -1024,8 +1078,14 @@ public struct ChangelogResolver: Sendable {
         releases = Self.ownProductReleases(releases, name: name)
         let withText = releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
         if releases.count >= 30, withText * 10 >= releases.count * 8 { return releases }
-        for file in Self.repositoryChangelogPaths {
-            let raw = kind == .gitlab ? "https://\(host)/\(path)/-/raw/HEAD/\(file)" : "https://\(host)/\(path)/raw/branch/main/\(file)"
+        let rawURL = { (file: String) in kind == .gitlab ? "https://\(host)/\(path)/-/raw/HEAD/\(file)" : "https://\(host)/\(path)/raw/branch/main/\(file)" }
+        for (offset, file) in Self.repositoryChangelogPaths.enumerated() {
+            let raw = rawURL(file)
+            if offset % Self.warmBatch == 0 {
+                warm(Self.repositoryChangelogPaths.dropFirst(offset).prefix(Self.warmBatch).compactMap { URL(string: rawURL($0)) }) { _ in
+                    .changelogPage(host: host)
+                }
+            }
             guard let url = URL(string: raw) else { continue }
             let text: String
             do { text = try fetchText(url, resource: .changelogPage(host: host)) } catch MetadataHTTPError.notFound { continue } catch { break }
@@ -1047,8 +1107,13 @@ public struct ChangelogResolver: Sendable {
         guard let owner = encodeGitHubPathComponent(repository.owner), let name = encodeGitHubPathComponent(repository.name) else {
             throw MetadataHTTPError.unsupportedURL
         }
-        for path in Self.repositoryChangelogPaths {
-            let url = URL(string: "https://raw.githubusercontent.com/\(owner)/\(name)/HEAD/\(path)")!
+        let rawURL = { (path: String) in URL(string: "https://raw.githubusercontent.com/\(owner)/\(name)/HEAD/\(path)")! }
+        for (offset, path) in Self.repositoryChangelogPaths.enumerated() {
+            let url = rawURL(path)
+            // Most spellings are missing, and each miss was a round trip of its own.
+            if offset % Self.warmBatch == 0 {
+                warm(Self.repositoryChangelogPaths.dropFirst(offset).prefix(Self.warmBatch).map(rawURL)) { _ in .githubChangelog }
+            }
             let text: String
             do { text = try fetchText(url, resource: .githubChangelog) } catch MetadataHTTPError.notFound { continue }
             let entries = ChangelogDocument.entries(fromMarkdown: text, sourceURL: "https://github.com/\(repository.path)/blob/HEAD/\(path)")
@@ -1270,6 +1335,7 @@ public struct ChangelogResolver: Sendable {
         var candidates: [URL] = []
         // Subdomains that don't exist (most sites have no docs. or releases.) aren't guessed at further.
         var liveHosts = hosts
+        warm(hosts.compactMap { URL(string: "https://\($0)/robots.txt") }) { .changelogPage(host: $0.host ?? "") }
         for site in hosts {
             guard let robotsURL = URL(string: "https://\(site)/robots.txt") else { continue }
             let robots: String
@@ -1307,11 +1373,15 @@ public struct ChangelogResolver: Sendable {
             isPublicHTTPSURL($0) && seen.insert($0.absoluteString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))).inserted
         }
         let ranked = unique.map { ($0, Self.discoveryScore($0, name: name)) }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
-        // The common paths are guesses: keep only those that answer.
+        // The common paths are guesses: keep only those that answer with a page of their own. A
+        // site that answers every address with its homepage (folivora.ai) has none of them, and
+        // reading the homepage again under each address rendered it in WebKit every time.
+        warm(ranked.filter { guesses.contains($0.absoluteString) }) { .changelogPage(host: $0.host?.lowercased() ?? "") }
+        let baseBody = try? client.fetch(base, resource: .changelogPage(host: host)).body
         return ranked.filter { url in
             guard guesses.contains(url.absoluteString) else { return true }
-            guard let host = url.host?.lowercased() else { return false }
-            return (try? client.fetch(url, resource: .changelogPage(host: host))) != nil
+            guard let host = url.host?.lowercased(), let body = try? client.fetch(url, resource: .changelogPage(host: host)).body else { return false }
+            return body != baseBody
         }
     }
 
@@ -1460,6 +1530,18 @@ public struct ChangelogResolver: Sendable {
         let data = try client.fetch(url, resource: resource).body
         return String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
     }
+
+    /// As many requests at once as the HTTP client allows, so the reading that follows finds
+    /// them cached: which result is used, and in what order, stays the reader's. A failure isn't
+    /// cached and is met again there.
+    private func warm(_ urls: [URL], resource: (URL) -> MetadataResource) {
+        let requests = urls.map { ($0, resource($0)) }
+        guard requests.count > 1 else { return }
+        DispatchQueue.concurrentPerform(iterations: requests.count) { index in _ = try? client.fetch(requests[index].0, resource: requests[index].1) }
+    }
+
+    /// Requests a loop may stop early in, warmed a few at a time: ahead of the loop, but not far ahead.
+    private static let warmBatch = 6
 
     // MARK: - Hints
 

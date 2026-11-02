@@ -3,6 +3,22 @@ import Foundation
 /// Splits changelog documents (a CHANGELOG.md, a project's changelog web page, release
 /// descriptions) into per-version entries. Nothing here fetches or executes anything.
 enum ChangelogDocument {
+    // Patterns tested on every line, heading, or entry, compiled once (see ChangelogVersion).
+    nonisolated(unsafe) private static let pointReleaseLine = #/^(?:[a-z]{1,12})?v?\d+(\.\d+)+\s+\(released\b/#
+    nonisolated(unsafe) private static let releaseOrVersionNumber = #/\b(release|version)\s+v?\d/#
+    nonisolated(unsafe) private static let bulletChangesIn = #/^\* (?:noteworthy |major |user-visible |)changes in\b/#
+    nonisolated(unsafe) private static let headingLead = #/^(version|release|changes in|noteworthy changes|what's new in|what’s new in|new in)\b/#
+    nonisolated(unsafe) private static let leadingVersion = #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#
+    nonisolated(unsafe) private static let versionAlone = #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#
+    nonisolated(unsafe) private static let orgChangesIn = #/^\* (?:[\w-]+ )?changes in\b/#
+    nonisolated(unsafe) private static let escapedPunctuation = #/\\([\\.\-_*()\[\]#+!])/#
+    nonisolated(unsafe) private static let inlineLink = #/\[([^\]]*)\]\([^)]*\)/#
+    nonisolated(unsafe) private static let referenceLink = #/\[([^\]]*)\]\[[^\]]*\]/#
+    nonisolated(unsafe) private static let isoDay = #/\d{4}-\d{2}-\d{2}/#
+    nonisolated(unsafe) private static let monthDayYear = #/(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b/#
+    nonisolated(unsafe) private static let dayMonthYear = #/(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]* \d{4}\b/#
+    nonisolated(unsafe) private static let releaseWords = #/(?i)\b(released|stable|\[stable\]|final)\b\.?/#
+    nonisolated(unsafe) private static let webLink = #/https?://\S+/#
     /// A Markdown document split at its version headings: the heading level most version
     /// headings use, so sub-headings ("### Fixes") stay inside their entry. Text before the first
     /// version heading (a title, an "Unreleased" section) is dropped.
@@ -91,7 +107,7 @@ enum ChangelogDocument {
         // includes fixes to …"), split into entries of their own.
         entries = entries.flatMap { entry -> [ChangelogEntry] in
             let lines = entry.content.components(separatedBy: "\n")
-            let starts = lines.indices.filter { lines[$0].firstMatch(of: #/^(?:[a-z]{1,12})?v?\d+(\.\d+)+\s+\(released\b/#) != nil }
+            let starts = lines.indices.filter { lines[$0].firstMatch(of: pointReleaseLine) != nil }
             guard !starts.isEmpty else { return [entry] }
             var split = [
                 ChangelogEntry(
@@ -145,18 +161,18 @@ enum ChangelogDocument {
             // that merely mentions a standard ("…conforming to POSIX 1003.1-2001:").
             let isHeading =
                 lower.hasPrefix("* ")
-                && (lower.firstMatch(of: #/\b(release|version)\s+v?\d/#) != nil
-                    || lower.firstMatch(of: #/^\* (?:noteworthy |major |user-visible |)changes in\b/#) != nil)
-                || lower.firstMatch(of: #/^(version|release|changes in|noteworthy changes|what's new in|what’s new in|new in)\b/#) != nil
+                && (lower.firstMatch(of: releaseOrVersionNumber) != nil
+                    || lower.firstMatch(of: bulletChangesIn) != nil)
+                || lower.firstMatch(of: headingLead) != nil
                 || lower.hasPrefix("changes from ")
                 || lower.hasPrefix("this document details the changes between this version")
                 // Bash's NEWS: "This is a terse description of the new features added to bash-5.3 since …"
                 || lower.hasPrefix("this is a terse description of the new features added to")
                 // Not a wrapped sentence that happens to start with a number ("52.5s\".").
-                || (lower.firstMatch(of: #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#) != nil && !lower.hasSuffix(".")
+                || (lower.firstMatch(of: leadingVersion) != nil && !lower.hasSuffix(".")
                     && (next.isEmpty || next.allSatisfy { "=-~^*".contains($0) }))
                 // A version alone on its line with a date next ("2.0" / "November 2026").
-                || (line.count <= 40 && lower.firstMatch(of: #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#) != nil
+                || (line.count <= 40 && lower.firstMatch(of: versionAlone) != nil
                     && (date(in: lines[(index + 1)..<min(lines.count, index + 4)].joined(separator: " ")) != nil
                         || shortDateLine(before: index, in: lines) != nil))
             // A heading stands on its own: a blank line, a list, or indented text follows it, or it
@@ -169,7 +185,7 @@ enum ChangelogDocument {
             // Bash's "This document details the changes between this version, …" wraps onto a
             // second line but is always a heading.
             // Likewise an Org-style "* Changes in Emacs 30.2" with its text right below.
-            let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: #/^\* (?:[\w-]+ )?changes in\b/#) != nil
+            let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: orgChangesIn) != nil
             if isHeading,
                 standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version")
                     || lower.hasPrefix("this is a terse description")
@@ -230,7 +246,7 @@ enum ChangelogDocument {
         var text = line.dropFirst(level).trimmingCharacters(in: .whitespaces)
         while text.hasSuffix("#") { text.removeLast() }
         // Escaped punctuation ("v14\.5\.0" in Ansible's generated changelogs) reads as itself.
-        let unescaped = text.replacing(#/\\([\\.\-_*()\[\]#+!])/#) { String($0.1) }
+        let unescaped = text.replacing(escapedPunctuation) { String($0.1) }
         return (level, stripInlineMarkdown(unescaped.trimmingCharacters(in: .whitespaces)))
     }
 
@@ -247,8 +263,8 @@ enum ChangelogDocument {
 
     /// "[1.2.0](https://…) - 2026-10-21" reads as "1.2.0 - 2026-10-21".
     static func stripInlineMarkdown(_ text: String) -> String {
-        var result = text.replacing(#/\[([^\]]*)\]\([^)]*\)/#) { String($0.1) }
-        result = result.replacing(#/\[([^\]]*)\]\[[^\]]*\]/#) { String($0.1) }
+        var result = text.replacing(inlineLink) { String($0.1) }
+        result = result.replacing(referenceLink) { String($0.1) }
         result = result.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
         return result.trimmingCharacters(in: .whitespaces)
     }
@@ -258,10 +274,10 @@ enum ChangelogDocument {
     private static func cleanTitle(_ heading: String, version: String) -> String? {
         guard let range = heading.range(of: version) else { return nil }
         var rest = String(heading[range.upperBound...])
-        rest = rest.replacing(#/\d{4}-\d{2}-\d{2}/#, with: "")
-        rest = rest.replacing(#/(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b/#, with: "")
-        rest = rest.replacing(#/(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]* \d{4}\b/#, with: "")
-        rest = rest.replacing(#/(?i)\b(released|stable|\[stable\]|final)\b\.?/#, with: "")
+        rest = rest.replacing(isoDay, with: "")
+        rest = rest.replacing(monthDayYear, with: "")
+        rest = rest.replacing(dayMonthYear, with: "")
+        rest = rest.replacing(releaseWords, with: "")
         let trimmed = rest.trimmingCharacters(in: CharacterSet(charactersIn: " -–—:()[]·|,.?*").union(.whitespaces))
         return trimmed.count >= 3 && trimmed.contains(where: \.isLetter) ? trimmed : nil
     }
@@ -291,48 +307,57 @@ enum ChangelogDocument {
     }
 
     /// A day as a version: 2026-10-21.
-    static func dayVersion(_ date: Date) -> String {
+    static func dayVersion(_ date: Date) -> String { dayFormatter.string(from: date) }
+
+    // Built once: dates are read from every heading and many body lines. A DateFormatter that is
+    // no longer changed can be used from several threads.
+    private static let dayFormatter = utcFormatter("yyyy-MM-dd")
+    nonisolated(unsafe) private static let ordinalDay = #/(\d{1,2})(st|nd|rd|th)\b/#
+    nonisolated(unsafe) private static let numericDate = #/(\d{4})[-/](\d{2})[-/](\d{2})/#
+    nonisolated(unsafe) private static let slashedMonthDate = #/(\d{4})\s*/\s*([A-Za-z]{3})[a-z]*\s*/\s*(\d{1,2})/#
+    nonisolated(unsafe) private static let sept = #/(?i)\bsept\b\.?/#
+    nonisolated(unsafe) private static let writtenDates: [(Regex<Substring>, [DateFormatter])] = [
+        (
+            try! Regex(#"(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b"#),
+            ["MMMM d, yyyy", "MMM d, yyyy", "MMMM d yyyy", "MMM d yyyy", "MMM. d, yyyy"].map(utcFormatter)
+        ),
+        (
+            try! Regex(#"(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,? \d{4}\b"#),
+            ["d MMMM yyyy", "d MMM yyyy", "d MMMM, yyyy", "d MMM, yyyy"].map(utcFormatter)
+        ),
+        (
+            try! Regex(#"(?i)^\s*(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\s*$"#),
+            [utcFormatter("MMMM yyyy")]
+        )
+    ]
+
+    private static func utcFormatter(_ format: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        formatter.dateFormat = format
+        return formatter
     }
 
     static func date(in original: String) -> Date? {
+        // Every date has a year.
+        guard original.contains(where: \.isNumber) else { return nil }
         // "July 21st, 2026" reads as "July 21, 2026".
-        let text = original.replacing(#/(\d{1,2})(st|nd|rd|th)\b/#) { String($0.1) }
-        if let match = text.firstMatch(of: #/(\d{4})[-/](\d{2})[-/](\d{2})/#),
-            let year = Int(match.1), let month = Int(match.2), let day = Int(match.3)
-        {
+        let text = original.replacing(ordinalDay) { String($0.1) }
+        if let match = text.firstMatch(of: numericDate), let year = Int(match.1), let month = Int(match.2), let day = Int(match.3) {
             return utcDate(year: year, month: month, day: day)
         }
         // "2025/ Feb / 03" (FL Studio).
-        if let match = text.firstMatch(of: #/(\d{4})\s*/\s*([A-Za-z]{3})[a-z]*\s*/\s*(\d{1,2})/#), let year = Int(match.1), let day = Int(match.3),
+        if let match = text.firstMatch(of: slashedMonthDate), let year = Int(match.1), let day = Int(match.3),
             let month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].firstIndex(of: match.2.lowercased())
         {
             return utcDate(year: year, month: month + 1, day: day)
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        let patterns: [(Regex<Substring>, [String])] = [
-            (
-                try! Regex(#"(?i)\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4}\b"#),
-                ["MMMM d, yyyy", "MMM d, yyyy", "MMMM d yyyy", "MMM d yyyy", "MMM. d, yyyy"]
-            ),
-            (
-                try! Regex(#"(?i)\b\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,? \d{4}\b"#),
-                ["d MMMM yyyy", "d MMM yyyy", "d MMMM, yyyy", "d MMM, yyyy"]
-            ),
-            (try! Regex(#"(?i)^\s*(?:january|february|march|april|may|june|july|august|september|october|november|december) \d{4}\s*$"#), ["MMMM yyyy"])
-        ]
-        for (pattern, formats) in patterns {
+        for (pattern, formatters) in writtenDates {
             guard let match = text.firstMatch(of: pattern) else { continue }
             // "Sept." is "Sep", but "September" stays whole.
-            let value = String(text[match.range]).replacing(#/(?i)\bsept\b\.?/#, with: "Sep")
-            for format in formats {
-                formatter.dateFormat = format
+            let value = String(text[match.range]).replacing(sept, with: "Sep")
+            for formatter in formatters {
                 if let date = formatter.date(from: value) { return date }
             }
         }
@@ -353,7 +378,7 @@ enum ChangelogDocument {
     /// of these don't count as a changelog.
     static func isPlaceholder(_ content: String) -> Bool {
         let plain = stripInlineMarkdown(content)
-            .replacing(#/https?://\S+/#, with: "LINK")
+            .replacing(webLink, with: "LINK")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if plain.isEmpty || plain == "LINK" { return true }
         guard plain.count <= 240 else { return false }

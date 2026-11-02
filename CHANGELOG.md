@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changelogs
+
+- Long changelogs are read up to 20 times faster: version and date patterns are compiled once instead of on every line, and merging two sources no longer re-reads each version for every pair (fish's 68-version file: 2.5 s to 0.2 s; Bash's NEWS: 10.5 s to 0.5 s).
+- Repository changelog files on GitHub, GitLab, and Codeberg are probed several spellings at a time instead of one after another (a repository without one: about 4 s to under 1 s). Tag comparisons, version pages, Adoptium notes, and a site's robots files are fetched together too.
+- A site that answers every address with its homepage no longer has each guessed changelog address rendered in WebKit.
+- An update feed whose items each link a release-notes page of their own has those pages read together, and at most four pages render in WebKit at once (CleanShot X: 28 s to 9 s; BetterTouchTool: 47 s to 16 s).
+
 ## 1.0.3 - 2026-11-01
 
 - Licensed under AGPL-3.0-or-later instead of GPL-3.0-or-later.

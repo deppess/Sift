@@ -92,20 +92,29 @@ public struct Changelog: Codable, Equatable, Sendable {
 
 /// Version strings as changelogs and package managers write them.
 enum ChangelogVersion {
+    // Swift compiles a regex literal again every time it is evaluated (about 0.1 ms), which
+    // dominated reading a long changelog: patterns used per line or per entry are compiled once.
+    // Regex isn't Sendable, but its compiled program is set up atomically, so sharing is safe.
+    nonisolated(unsafe) private static let rangeTarget = #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#
+    nonisolated(unsafe) private static let namedVersion = #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
+    nonisolated(unsafe) private static let anyVersion = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
+    nonisolated(unsafe) private static let wholeNumberVersion = #/(?i)\b(?:version|build)\s+(\d+)\b/#
+    nonisolated(unsafe) private static let channelSuffix = #/^(\d+(?:\.\d+)+)[a-z]+\d*$/#
+    nonisolated(unsafe) private static let calendarVersion = #/^(19|20)\d\d\.\d{1,2}\.\d{1,2}$/#
+
     /// The first version-looking token: "v2.103.2" in "Release v2.103.2 (2026-10-21)" is
     /// "2.103.2"; "Version 8" is "8".
     static func token(in text: String) -> String? {
+        // Every pattern needs a digit; most body lines and headings tested have none.
+        guard text.contains(where: \.isNumber) else { return nil }
         // A short word may be attached: "go1.25.0", "bash-5.3-release", "v2.1".
-        if let match = text.firstMatch(of: #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#), text.range(of: "from", options: .caseInsensitive) != nil {
+        if let match = text.firstMatch(of: rangeTarget), text.range(of: "from", options: .caseInsensitive) != nil {
             return String(match.1)
         }
         // The number after "release" or "version" wins over others ("POSIX 1003.1" in a heading).
-        if let match = text.firstMatch(of: #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#) {
-            return String(match.1)
-        }
-        let pattern = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
-        if let match = text.firstMatch(of: pattern) { return String(match.1) }
-        if let match = text.firstMatch(of: #/(?i)\b(?:version|build)\s+(\d+)\b/#) { return String(match.1) }
+        if let match = text.firstMatch(of: namedVersion) { return String(match.1) }
+        if let match = text.firstMatch(of: anyVersion) { return String(match.1) }
+        if let match = text.firstMatch(of: wholeNumberVersion) { return String(match.1) }
         return nil
     }
 
@@ -128,8 +137,14 @@ enum ChangelogVersion {
 
     static func matches(_ entryVersion: String, _ installed: String) -> Bool {
         guard !installed.isEmpty else { return false }
+        return entryVersion == installed || matches(entryVersion, token: token(in: entryVersion), installed)
+    }
+
+    /// `matches` with the entry's token already found, for comparing many entries.
+    static func matches(_ entryVersion: String, token: String?, _ installed: String) -> Bool {
+        guard !installed.isEmpty else { return false }
         if entryVersion == installed { return true }
-        guard let token = token(in: entryVersion) else { return false }
+        guard let token else { return false }
         return token == installed || SparkleVersion.compare(token, installed) == .orderedSame
     }
 
@@ -147,7 +162,7 @@ enum ChangelogVersion {
         }
         if key(token) == key(installed) { return true }
         // A channel letter or build on the installed version (Zen's 1.24b, Xcodes' 4.1.1b41).
-        if let match = installed.firstMatch(of: #/^(\d+(?:\.\d+)+)[a-z]+\d*$/#), String(match.1) == token { return true }
+        if let match = installed.firstMatch(of: channelSuffix), String(match.1) == token { return true }
         // Leading zeros ("019" and "19") and a build number after the release ("26.1.5.5384"
         // installed, "26.1.5" listed).
         let numbers = { (value: String) in value.split(separator: ".").map { part in Int(part).map(String.init) ?? String(part) } }
@@ -161,7 +176,7 @@ enum ChangelogVersion {
     static func isCalendarDated(_ entries: [ChangelogEntry], installed: String?) -> Bool {
         guard let installed, let major = Int(installed.prefix { $0.isNumber }), major < 1990 else { return false }
         let tokens = entries.compactMap { token(in: $0.version) }
-        let dated = tokens.filter { $0.firstMatch(of: #/^(19|20)\d\d\.\d{1,2}\.\d{1,2}$/#) != nil }
+        let dated = tokens.filter { $0.firstMatch(of: calendarVersion) != nil }
         return !tokens.isEmpty && dated.count * 2 >= tokens.count
     }
 

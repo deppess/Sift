@@ -404,6 +404,59 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries.first?.sourceURL, "https://help.example.com/notes")
     }
 
+    func testFeedItemsLinkingAPageEachKeepTheirOwnNotes() throws {
+        let database = try Database(url: url)
+        let versions = ["3.4.0", "3.3.1", "3.3.0", "3.2.0"]
+        MetadataURLProtocol.handler = { request in
+            let address = request.url!.absoluteString
+            if address == "https://updates.example.com/appcast.xml" {
+                let items = versions.enumerated().map { index, version in
+                    """
+                    <item><pubDate>Tue, 20 Oct 2026 10:00:00 +0000</pubDate><sparkle:releaseNotesLink>https://updates.example.com/notes-\(version).html</sparkle:releaseNotesLink><enclosure sparkle:version="\(40 - index)" sparkle:shortVersionString="\(version)" url="https://x/a.zip"/></item>
+                    """
+                }
+                let feed = "<rss xmlns:sparkle=\"http://www.andymatuschak.org/xml-namespaces/sparkle\"><channel>\(items.joined())</channel></rss>"
+                return (200, Data(feed.utf8), [:])
+            }
+            if let version = versions.first(where: { address == "https://updates.example.com/notes-\($0).html" }) {
+                return (200, Data("<html><body><h2>\(version)</h2><ul><li>Changes in \(version)</li></ul></body></html>".utf8), [:])
+            }
+            return (404, nil, [:])
+        }
+        let root = FileManager.default.temporaryDirectory.appending(path: "sift-changelog-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appending(path: "Example.app")
+        try makeApplication(
+            at: app,
+            metadata: [
+                "CFBundleIdentifier": "com.example.app", "CFBundleName": "Example", "CFBundleShortVersionString": "3.3.0", "CFBundleVersion": "38",
+                "SUFeedURL": "https://updates.example.com/appcast.xml"
+            ])
+        let item = CatalogItem(
+            selector: "app:com.example.app", aliases: ["Example"], kind: .nativeApp, name: "Example", fullName: nil, installedVersion: "3.3.0",
+            availableVersion: "3.4.0", active: true, bundleIdentifier: "com.example.app", path: app.path, prefix: nil, tap: nil, ownership: nil,
+            autoUpdates: false, observedAt: .now, updateSource: "sparkle")
+        let resolution = ChangelogResolver(client: mockedClient(database), homeDirectory: root.path, environment: [:]).resolve(ChangelogSubject(item: item))
+        guard case let .resolved(_, _, _, entries) = resolution else { return XCTFail("expected a changelog, got \(resolution)") }
+        XCTAssertEqual(entries.map(\.version), versions)
+        XCTAssertEqual(entries.map(\.content), versions.map { "- Changes in \($0)" }, "each item reads its own page, read ahead or not")
+        XCTAssertEqual(entries.map(\.sourceURL), versions.map { "https://updates.example.com/notes-\($0).html" })
+    }
+
+    func testDiscoveryDropsGuessedAddressesThatAnswerWithTheHomepage() throws {
+        let database = try Database(url: url)
+        let homepage = Data("<html><body><h1>Example</h1><p>The best app.</p></body></html>".utf8)
+        MetadataURLProtocol.handler = { request in
+            let url = request.url!
+            guard url.host == "example.com", !url.path.hasSuffix(".txt"), !url.path.hasSuffix(".xml") else { return (404, nil, [:]) }
+            if url.path == "/releases" { return (200, Data("<html><body><h2>2.0</h2><p>New</p></body></html>".utf8), [:]) }
+            return (200, homepage, [:])
+        }
+        let resolver = ChangelogResolver(client: mockedClient(database), environment: [:])
+        let pages = resolver.discoverChangelogPages(near: URL(string: "https://example.com/")!, name: "Example")
+        XCTAssertEqual(pages.map(\.absoluteString), ["https://example.com/releases"], "every other address is the homepage again")
+    }
+
     func testServiceCachesAndFallsBackToTheLastGoodCopy() throws {
         let database = try Database(url: url)
         let package = HomebrewPackage(
