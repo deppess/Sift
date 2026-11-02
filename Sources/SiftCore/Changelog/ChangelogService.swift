@@ -134,20 +134,23 @@ public struct ChangelogService: Sendable {
         let dueItems = due
         let counter = Mutex(0)
         let deadline = Date().addingTimeInterval(max(timeLimit, 0))
-        var launched = 0
-        for start in stride(from: 0, to: dueItems.count, by: Self.prefetchParallelism) {
-            guard Date() < deadline else { break }
-            let end = min(start + Self.prefetchParallelism, dueItems.count)
-            DispatchQueue.concurrentPerform(iterations: end - start) { offset in
-                _ = try? changelog(for: dueItems[start + offset], refetch: true, now: now)
+        // Each worker takes the next item as soon as it is free: a slow changelog (a vendor page
+        // rendered in WebKit) holds up only its own worker, not a whole batch.
+        let next = Mutex(0)
+        DispatchQueue.concurrentPerform(iterations: min(Self.prefetchParallelism, dueItems.count)) { _ in
+            while let index = next.withLock({ value -> Int? in
+                guard value < dueItems.count, Date() < deadline else { return nil }
+                value += 1
+                return value - 1
+            }) {
+                _ = try? changelog(for: dueItems[index], refetch: true, now: now)
                 let done = counter.withLock { value -> Int in
                     value += 1; return value
                 }
                 progress?(done, dueItems.count)
             }
-            launched += end - start
         }
-        return launched
+        return next.withLock { $0 }
     }
 
     /// When the installed copy arrived: the app bundle's Info.plist (rewritten by every install

@@ -148,6 +148,15 @@ enum ChangelogFeeds {
 
     /// Pages whose content is built by scripts: little visible text, an empty app root, or a
     /// "please enable JavaScript" notice.
+    /// A page with text of its own and nothing to run (CleanShot's per-version notes): WebKit
+    /// would show the same text, so rendering it (seconds each) can't find more.
+    static func isStaticDocument(_ html: String) -> Bool {
+        let lower = html.lowercased()
+        guard !lower.contains("<script"), !lower.contains("http-equiv=\"refresh\""), !lower.contains("http-equiv='refresh'"), !lower.contains("http-equiv=refresh")
+        else { return false }
+        return HTMLMarkdown.convert(html).filter { !$0.isWhitespace }.count >= 200
+    }
+
     static func looksScriptBuilt(_ html: String) -> Bool {
         let lower = html.lowercased()
         if lower.contains("enable javascript") || lower.contains("requires javascript") || lower.contains("javascript is required")

@@ -42,12 +42,16 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
         while !finished, !failed, Date() < deadline { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05)) }
         guard finished else { return nil }
         // Scripts keep filling the page after the load event; wait until its text stops growing.
+        // A page still empty a while after loading has nothing coming (VirtualDJ's answers with
+        // no body) and is read as it is, not waited on until the deadline.
+        let emptyGrace = Date().addingTimeInterval(5)
         var lastLength = -1
         var stableRounds = 0
         while Date() < deadline, stableRounds < 3 {
             let length = (evaluate("document.body ? document.body.innerText.length : 0", in: view, until: deadline) as? Int) ?? 0
-            stableRounds = length == lastLength && length > 0 ? stableRounds + 1 : 0
+            stableRounds = length == lastLength && (length > 0 || Date() > emptyGrace) ? stableRounds + 1 : 0
             lastLength = length
+            if stableRounds == 3 { break }
             let pause = Date().addingTimeInterval(0.4)
             while Date() < pause { RunLoop.main.run(mode: .default, before: pause) }
         }

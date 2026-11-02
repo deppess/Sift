@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Synchronization
 
 public enum MetadataResource: Equatable, Sendable {
     case githubReference
@@ -92,6 +93,9 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     private let delegate: MetadataHTTPSessionDelegate
     private let environment: [String: String]
     private let now: () -> Date
+    /// Addresses that timed out or couldn't connect this run: asking again (a read-ahead, then
+    /// the reader) would only wait again, so the same error answers at once.
+    private let failures = Mutex<[URL: MetadataHTTPError]>([:])
 
     public init(
         database: Database, configuration: URLSessionConfiguration = .ephemeral, environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -173,6 +177,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             guard let body = cached.body else { throw MetadataHTTPError.invalidResponse }
             return MetadataHTTPResponse(body: body)
         }
+        if let failure = failures.withLock({ $0[url] }) { throw failure }
         if policy.serialGitHub {
             let githubConcurrency = policy.token != nil ? Self.githubConcurrencyAuthenticated : Self.githubConcurrencyAnonymous
             guard githubConcurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
@@ -183,6 +188,11 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         defer { Self.concurrency.signal() }
         var request = URLRequest(url: url)
         request.timeoutInterval = min(policy.timeout, remaining(until: deadline))
+        // A timeout after waiting in line for a slot says nothing about the address itself.
+        let remember = { (failure: MetadataHTTPError) in
+            if case .timedOut = failure, request.timeoutInterval < policy.timeout { return }
+            self.failures.withLock { $0[url] = failure }
+        }
         request.setValue(policy.accept, forHTTPHeaderField: "Accept")
         for (name, value) in policy.headers { request.setValue(value, forHTTPHeaderField: name) }
         if let token = policy.token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
@@ -195,13 +205,16 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         guard result.wait(timeout: deadline) else {
             task.cancel()
             _ = result.waitForCompletion(timeout: .now() + 2)
+            remember(.timedOut)
             throw MetadataHTTPError.timedOut
         }
         let (data, response): (Data, HTTPURLResponse)
         do { (data, response) = try result.value().get() } catch {
             task.cancel()
             _ = result.waitForCompletion(timeout: .now() + 2)
-            throw normalizedTransportError(error)
+            let failure = normalizedTransportError(error)
+            remember(failure)
+            throw failure
         }
         let validatedAt = now()
         if response.statusCode == 304, cached == nil { throw MetadataHTTPError.invalidResponse }

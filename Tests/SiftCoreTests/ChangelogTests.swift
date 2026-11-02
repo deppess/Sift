@@ -443,6 +443,18 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries.map(\.sourceURL), versions.map { "https://updates.example.com/notes-\($0).html" })
     }
 
+    func testGenericWordsDoNotMakeALinkAChangelog() {
+        let html = """
+            <a href="https://news.ycombinator.com/item?id=1">Hacker News</a>
+            <a href="https://docs.example.com/clipboard">Browse clipboard history with previews</a>
+            <a href="https://example.com/history">Version history</a>
+            <a href="https://help.vendor.net/notes">Release notes</a>
+            <a href="https://example.com/releases/Example.zip">Download</a>
+            """
+        let links = ChangelogResolver.changelogLinks(in: html, base: URL(string: "https://example.com/")!).map(\.absoluteString)
+        XCTAssertEqual(links, ["https://example.com/history", "https://help.vendor.net/notes"])
+    }
+
     func testDiscoveryDropsGuessedAddressesThatAnswerWithTheHomepage() throws {
         let database = try Database(url: url)
         let homepage = Data("<html><body><h1>Example</h1><p>The best app.</p></body></html>".utf8)

@@ -1283,7 +1283,7 @@ public struct ChangelogResolver: Sendable {
             if client.debug { MetadataHTTPClient.trace("read embedded data on \(url.absoluteString): \(embedded.count) entries") }
             return embedded
         }
-        if render, !ChangelogDocument.isMeaningful(entries), ChangelogFeeds.looksScriptBuilt(html) || entries.isEmpty {
+        if render, !ChangelogDocument.isMeaningful(entries), ChangelogFeeds.looksScriptBuilt(html) || entries.isEmpty && !ChangelogFeeds.isStaticDocument(html) {
             let rendered = renderedEntries(url)
             if ChangelogDocument.isMeaningful(rendered) { return rendered }
         }
@@ -1377,11 +1377,11 @@ public struct ChangelogResolver: Sendable {
         // site that answers every address with its homepage (folivora.ai) has none of them, and
         // reading the homepage again under each address rendered it in WebKit every time.
         warm(ranked.filter { guesses.contains($0.absoluteString) }) { .changelogPage(host: $0.host?.lowercased() ?? "") }
-        let baseBody = try? client.fetch(base, resource: .changelogPage(host: host)).body
+        var bodies = Set([try? client.fetch(base, resource: .changelogPage(host: host)).body].compactMap { $0 })
         return ranked.filter { url in
             guard guesses.contains(url.absoluteString) else { return true }
             guard let host = url.host?.lowercased(), let body = try? client.fetch(url, resource: .changelogPage(host: host)).body else { return false }
-            return body != baseBody
+            return bodies.insert(body).inserted
         }
     }
 
@@ -1481,6 +1481,8 @@ public struct ChangelogResolver: Sendable {
         "changelog", "change log", "changes", "release notes", "release-notes", "releasenotes", "releases", "what's new", "whats-new", "whatsnew", "what’s new",
         "version history", "history", "news", "updates"
     ]
+    private static let genericChangelogWords: Set<String> = ["changes", "history", "news", "updates"]
+    private static let downloadExtensions: Set<String> = ["zip", "dmg", "pkg", "gz", "bz2", "xz", "tgz", "exe", "msi", "deb", "rpm", "appimage", "7z"]
 
     static func looksLikeChangelogURL(_ url: URL) -> Bool {
         let path = url.path.lowercased()
@@ -1497,16 +1499,30 @@ public struct ChangelogResolver: Sendable {
             guard isPublicHTTPSURL(link.url), link.url != base else { continue }
             let text = link.text.lowercased()
             let path = link.url.path.lowercased()
+            // A download under /releases/ (folivora.ai/releases/KeyboardCleanTool.zip) isn't a page.
+            guard !Self.downloadExtensions.contains(link.url.pathExtension.lowercased()) else { continue }
             var score = 0
+            // Generic words also name other things ("Hacker News", "Browse clipboard history"):
+            // in a link's text they count only when they are most of it, and alone they don't
+            // make another site's page a changelog.
+            let shortText = text.split(whereSeparator: \.isWhitespace).count <= 3
+            var specific = false
             for (rank, word) in changelogWords.enumerated() {
-                if text.contains(word) { score = max(score, 40 - rank) }
+                let generic = genericChangelogWords.contains(word)
+                if text.contains(word), !generic || shortText { score = max(score, 40 - rank); specific = specific || !generic }
                 if path.contains(word.replacingOccurrences(of: " ", with: "-")) || path.contains(word.replacingOccurrences(of: " ", with: "")) {
                     score = max(score, 30 - rank)
+                    specific = specific || !generic
                 }
             }
             guard score > 0 else { continue }
             let host = link.url.host?.lowercased() ?? ""
-            if site != nil, HomebrewCaskCatalog.vendorDomain(host) == site { score += 20 } else if host != "github.com" { score -= 25 }
+            if site != nil, HomebrewCaskCatalog.vendorDomain(host) == site {
+                score += 20
+            } else if host != "github.com" {
+                guard specific else { continue }
+                score -= 25
+            }
             // On a site with several products, a link inside this product's section
             // (/products/microsnitch/…) wins, and one into a sibling product's section
             // (/products/littlesnitch/…) loses.
