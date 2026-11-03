@@ -211,7 +211,10 @@ enum ChangelogVersion {
         if isBuild(installed) { return entries.contains { token(in: $0.version).map(isBuild) ?? false } }
         let majors = entries.compactMap { token(in: $0.version).flatMap { Int($0.prefix { $0.isNumber }) } }
         guard !majors.isEmpty else { return true }
-        return majors.contains { $0 == major || $0 >= 1990 && $0 <= 2100 }
+        // A beta of the next major (Little Snitch 7.0 beta) has no notes yet; its previous major's
+        // are the closest changelog there is.
+        let prerelease = installed.range(of: #"(?i)(alpha|beta|rc|preview)"#, options: .regularExpression) != nil
+        return majors.contains { $0 == major || prerelease && $0 == major - 1 || $0 >= 1990 && $0 <= 2100 }
     }
 
     /// The index of the installed version's entry: an exact match, or else a loose one.

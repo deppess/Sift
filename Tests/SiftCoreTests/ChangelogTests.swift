@@ -264,6 +264,13 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogVersion.installedIndex(in: entries, installed: "8.5.9307"), 2, "the build is the version's last part")
     }
 
+    func testABetaOfTheNextMajorAcceptsThePreviousMajorsNotes() {
+        let notes = ["6.5", "6.4.1", "6.4"].map { ChangelogEntry(version: $0, content: "- change") }
+        XCTAssertTrue(ChangelogVersion.sameLine(notes, installed: "7.0 beta"))
+        XCTAssertFalse(ChangelogVersion.sameLine(notes, installed: "7.0"), "a release of 7 isn't documented by 6's notes")
+        XCTAssertFalse(ChangelogVersion.sameLine(notes, installed: "8.0 beta"), "only the major just before")
+    }
+
     func testCopyrightHolderIsReadAsAGitHubAccount() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "sift-copyright-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
