@@ -2,7 +2,21 @@
 
 ## Unreleased
 
-### Changelogs
+## 1.0.4 - 2026-11-02
+
+### Changelogs found and read correctly
+
+- Text that only points elsewhere ("Please visit the Help Centre…") is never shown as a version's notes, including copies already stored: the version reads "(no details given)" instead (Affinity's).
+- Changelogs numbered by build ("BUILD 9644 (2026-09-21)") are read, and an installed version is placed by its build (VirtualDJ's 8.5.9307 is build 9307), so only the builds after it show as new. Notes written as `-Fix …` lines read as bullets.
+- VirtualDJ's changelog is found at its own page, which neither the app nor its site links.
+- An update to a new major version keeps that version's own release notes: going from 7 to 8.3, the 8.x notes are no longer set aside as another product's (KeyboardCleanTool).
+- A homepage listing versions without the installed one (OnyX's table of the newest release for each macOS) gives way to the changelog it links when that has the installed version. Lines starting with a typed "•" read as bullets.
+- An app whose update feed carries no notes has its vendor's site searched when the feed is served from that site (Avior's feed is on aviorapp.com, whose changelog it now reads). A line that is only a version and its date ("v1.52.0 2026-10-22") reads as a release heading even with a list right below it.
+- A repository whose tags all carry its own name (LLVM's `llvmorg-23.1.4`) has its releases read for the packages it ships (clang-format). Zero-padded release numbers ("usbutils 020") are versions, and a license's version ("GPL-2.0") no longer is.
+- A beta of a new major version shows the previous major's release notes instead of bare version numbers, since its own aren't published yet (Little Snitch 7.0 beta shows 6.5's).
+- An app with no other known source is looked up as its copyright holder's GitHub project of the same name (Caffeinate, from Lennard Kittner, is LennardKittner/Caffeinate).
+
+### Faster changelogs
 
 - Long changelogs are read up to 20 times faster: version and date patterns are compiled once instead of on every line, and merging two sources no longer re-reads each version for every pair (fish's 68-version file: 2.5 s to 0.2 s; Bash's NEWS: 10.5 s to 0.5 s).
 - Repository changelog files on GitHub, GitLab, and Codeberg are probed several spellings at a time instead of one after another (a repository without one: about 4 s to under 1 s). Tag comparisons, version pages, Adoptium notes, and a site's robots files are fetched together too.
@@ -12,17 +26,8 @@
 - A rendered page is read as soon as its text has settled, 0.4 s sooner, and a page that stays empty is given up on after a few seconds instead of 25 (VirtualDJ's).
 - An address that timed out or couldn't connect isn't asked again during the same run.
 - Refresh prefetches changelogs with four workers that each take the next item when free, instead of in batches waiting on their slowest item: about twice as many are fetched within the time limit. Together with the changes above, a refresh that warms 45 changelogs takes 22 s instead of about 60.
-- Text that only points elsewhere ("Please visit the Help Centre…") is never shown as a version's notes, including copies already stored: the version reads "(no details given)" instead (Affinity's).
 - With a GitHub token (`GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth login`), GitHub releases are read through GraphQL, which sends only the fields Sift reads instead of every release's assets: gh's 210 releases are 0.5 MB instead of 7 MB (about 4 s to 1.6 s). Without a token, or if GraphQL fails, the REST API is used as before.
 - Long changelogs display faster with `--all` (Claude Code's 434 versions: 0.33 s to 0.24 s).
-- Changelogs numbered by build ("BUILD 9644 (2026-09-21)") are read, and an installed version is placed by its build (VirtualDJ's 8.5.9307 is build 9307), so only the builds after it show as new. Notes written as `-Fix …` lines read as bullets.
-- VirtualDJ's changelog is found at its own page, which neither the app nor its site links.
-- An update to a new major version keeps that version's own release notes: going from 7 to 8.3, the 8.x notes are no longer set aside as another product's (KeyboardCleanTool).
-- A homepage listing versions without the installed one (OnyX's table of the newest release for each macOS) gives way to the changelog it links when that has the installed version. Lines starting with a typed "•" read as bullets.
-- An app whose update feed carries no notes has its vendor's site searched when the feed is served from that site (Avior's feed is on aviorapp.com, whose changelog it now reads). A line that is only a version and its date ("v1.52.0 2026-10-22") reads as a release heading even with a list right below it.
-- A repository whose tags all carry its own name (LLVM's `llvmorg-23.1.4`) has its releases read for the packages it ships (clang-format). Zero-padded release numbers ("usbutils 020") are versions, and a license's version ("GPL-2.0") no longer is.
-- A beta of a new major version shows the previous major's release notes instead of bare version numbers, since its own aren't published yet (Little Snitch 7.0 beta shows 6.5's).
-- An app with no other known source is looked up as its copyright holder's GitHub project of the same name (Caffeinate, from Lennard Kittner, is LennardKittner/Caffeinate).
 
 ## 1.0.3 - 2026-11-01
 
