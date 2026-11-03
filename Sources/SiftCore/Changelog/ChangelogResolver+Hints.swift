@@ -375,6 +375,8 @@ extension ChangelogResolver {
         guard let path = item.path else { return }
         let application = NativeApplicationProvider(homeDirectory: homeDirectory).application(atPath: path)
         let bundleIdentifier = item.bundleIdentifier ?? application?.bundleIdentifier
+        // Read once: scanning a bundle's executables for addresses is the slow part.
+        let urls = application.map(BundleURLScanner.urls(in:)) ?? []
         switch item.updateSource {
         case NativeUpdateAuthority.appStore.rawValue:
             if let bundleIdentifier { hints.add(.appStore(bundleIdentifier: bundleIdentifier)) }
@@ -397,7 +399,6 @@ extension ChangelogResolver {
                 Self.bundleChangelogFiles(application.bundlePath)
                 + Self.appDataChangelogFiles(name: item.name, bundleIdentifier: bundleIdentifier, home: homeDirectory)
             if !bundled.isEmpty { hints.add(.localFiles(bundled)) }
-            let urls = BundleURLScanner.urls(in: application)
             if let repository = BundleURLScanner.releaseRepository(in: urls, for: application) { hints.add(repository) }
             // A changelog page the app links to itself, on its own vendor's site (the domain its
             // bundle identifier names); links to other sites in a binary are often dependencies'.
@@ -419,7 +420,7 @@ extension ChangelogResolver {
             let fileName = (path as NSString).lastPathComponent
             // By exact bundle identifier, or else (as the update check does) a cask with the
             // app's file name whose vendor domain the app references.
-            let hosts = Set((application.map(BundleURLScanner.urls(in:)) ?? []).compactMap { $0.host?.lowercased() })
+            let hosts = Set(urls.compactMap { $0.host?.lowercased() })
             if let entry = catalog.entry(bundleIdentifier: bundleIdentifier, bundleFileName: fileName)
                 ?? catalog.entry(bundleFileName: fileName, referencedHosts: hosts)?.entry
             {
