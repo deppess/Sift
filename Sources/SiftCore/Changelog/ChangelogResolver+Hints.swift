@@ -171,6 +171,7 @@ extension ChangelogResolver {
         (["microsoft-edge", "com.microsoft.edgemac"], "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel"),
         (["windows-app", "com.microsoft.rdc.macos"], "https://learn.microsoft.com/en-us/windows-app/whats-new?tabs=macos"),
         (["miniconda"], "https://www.anaconda.com/docs/getting-started/miniconda/release-notes"),
+        (["virtualdj", "com.atomixproductions.virtualdj"], "https://virtualdj.com/products/virtualdj/changelog.html"),
         (
             [
                 "microsoft-word", "microsoft-excel", "microsoft-powerpoint", "microsoft-outlook", "microsoft-onenote", "microsoft-office",
@@ -435,6 +436,21 @@ extension ChangelogResolver {
                 homebrewAPIHints(token: entry.token, cask: true, into: &hints)
             }
         }
+        // Nothing else known: a small open-source app is often its copyright holder's GitHub
+        // project of the same name (Lennard Kittner's Caffeinate is LennardKittner/Caffeinate).
+        if hints.sources.isEmpty, let application, let owner = Self.copyrightHolder(bundlePath: application.bundlePath) {
+            hints.add(GitHubRepository(owner: owner, name: item.name.replacingOccurrences(of: " ", with: "")))
+        }
+    }
+
+    /// The person or company an app's copyright line names, as a GitHub account would spell it:
+    /// "Copyright © 2024 Lennard Kittner. All rights reserved." is LennardKittner.
+    static func copyrightHolder(bundlePath: String) -> String? {
+        guard let info = NSDictionary(contentsOfFile: bundlePath + "/Contents/Info.plist"), let line = info["NSHumanReadableCopyright"] as? String else { return nil }
+        let words = line.replacing(#/(?i)copyright|©|\(c\)|all rights reserved|\b(?:19|20)\d\d\b|[-–,.]/#, with: " ").split(whereSeparator: \.isWhitespace)
+        guard (1...3).contains(words.count), words.allSatisfy({ $0.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } }) else { return nil }
+        let owner = words.joined()
+        return owner.count <= 39 ? owner : nil
     }
 
     /// Changelog files an app keeps in its own data folders (VirtualDJ saves the one it downloads

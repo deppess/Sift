@@ -249,6 +249,34 @@ final class ChangelogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("(no details given)"))
     }
 
+    func testBuildNumberedPagesAreReadAndPlaceTheInstalledBuild() {
+        // VirtualDJ's log: bold "BUILD n" lines with a date, no headings; the app's version is 8.5.<build>.
+        let html = """
+            <html><body><b>BUILD 9729</b> (2026-10-22)<br><br><b> <br>(now with Apple Music)<br><br></b>- add Apple Music integration<br><br><hr><br>\
+            <b>BUILD 9644</b> (2026-09-21)<br><br>-Shoutout AI<br>-Spotify support<br><br><hr><br>\
+            <b>BUILD 9307</b> (2026-04-28)<br><br>-fix stems on older Macs<br><br><hr><br>\
+            <b>BUILD 9295</b> (2026-04-19)<br><br>-BPM editor changes<br></body></html>
+            """
+        let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://virtualdj.com/products/virtualdj/changelog.html")!)
+        XCTAssertEqual(entries.map(\.version), ["9729", "9644", "9307", "9295"])
+        XCTAssertEqual(entries[1].date, ChangelogDocument.utcDate(year: 2026, month: 9, day: 21))
+        XCTAssertTrue(entries[1].content.contains("Spotify support"))
+        XCTAssertEqual(ChangelogVersion.installedIndex(in: entries, installed: "8.5.9307"), 2, "the build is the version's last part")
+    }
+
+    func testCopyrightHolderIsReadAsAGitHubAccount() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "sift-copyright-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        func holder(_ line: String) throws -> String? {
+            let app = root.appending(path: "\(UUID().uuidString).app")
+            try makeApplication(at: app, metadata: ["CFBundleIdentifier": "com.example.app", "NSHumanReadableCopyright": line])
+            return ChangelogResolver.copyrightHolder(bundlePath: app.path)
+        }
+        XCTAssertEqual(try holder("Copyright © 2024 Lennard Kittner. All rights reserved."), "LennardKittner")
+        XCTAssertEqual(try holder("© 2019-2026 Acme"), "Acme")
+        XCTAssertNil(try holder("Made with love by the whole team at a small studio"), "a sentence, not a name")
+    }
+
     func testKnownReleaseNotesPagesMatchACaskOrAnApp() {
         func item(_ kind: CatalogKind, _ name: String, bundle: String? = nil) -> CatalogItem {
             CatalogItem(

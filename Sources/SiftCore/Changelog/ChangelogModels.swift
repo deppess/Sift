@@ -61,7 +61,7 @@ public struct Changelog: Codable, Equatable, Sendable {
             return entries.filter { $0.date.map { $0 > installedAt.addingTimeInterval(24 * 60 * 60) } ?? false }
         }
         guard let installedVersion else { return [] }
-        let installed = ChangelogVersion.normalized(installedVersion)
+        let installed = ChangelogVersion.comparable(ChangelogVersion.normalized(installedVersion), in: entries)
         if let index = ChangelogVersion.installedIndex(in: entries, installed: installed) { return Array(entries[..<index]) }
         // The installed version has no entry of its own (a rebuild, or a source that skips
         // versions): keep the entries that compare newer.
@@ -115,6 +115,9 @@ enum ChangelogVersion {
         if let match = text.firstMatch(of: namedVersion) { return String(match.1) }
         if let match = text.firstMatch(of: anyVersion) { return String(match.1) }
         if let match = text.firstMatch(of: wholeNumberVersion) { return String(match.1) }
+        // A bare build number standing for the version (VirtualDJ's "9729"), though not a year
+        // heading ("2026") over a year's releases.
+        if isBuild(text) { return text }
         return nil
     }
 
@@ -122,6 +125,20 @@ enum ChangelogVersion {
     static func isNewer(_ left: ChangelogEntry, _ right: ChangelogEntry) -> Bool {
         guard let a = token(in: left.version), let b = token(in: right.version) else { return false }
         return SparkleVersion.compare(a, b) == .orderedDescending
+    }
+
+    /// A bare build number (VirtualDJ's "9729"), not a year heading ("2026") over a year's releases.
+    static func isBuild(_ text: String) -> Bool {
+        (4...7).contains(text.count) && text.allSatisfy { $0.isASCII && $0.isNumber } && !(1990...2100).contains(Int(text) ?? 0)
+    }
+
+    /// The installed version as entries numbered by build alone compare it: 8.5.9307 is build 9307.
+    static func comparable(_ installed: String, in entries: [ChangelogEntry]) -> String {
+        let parts = installed.split(separator: ".")
+        guard parts.count >= 3, let build = parts.last.map(String.init), isBuild(build),
+            entries.first(where: { token(in: $0.version) != nil }).map({ isBuild($0.version) }) == true
+        else { return installed }
+        return build
     }
 
     /// What an installed version is compared as: Homebrew's `_1` revision and a cask's `,build`
@@ -190,7 +207,8 @@ enum ChangelogVersion {
     /// are dated releases. Entries all from another line (0.1.x for an app at 4.4212, a server's
     /// 8.x for its client at 1.53) are another product's.
     static func sameLine(_ entries: [ChangelogEntry], installed: String?) -> Bool {
-        guard let installed, let major = Int(installed.prefix { $0.isNumber }) else { return true }
+        guard let installed = installed.map({ comparable($0, in: entries) }), let major = Int(installed.prefix { $0.isNumber }) else { return true }
+        if isBuild(installed) { return entries.contains { token(in: $0.version).map(isBuild) ?? false } }
         let majors = entries.compactMap { token(in: $0.version).flatMap { Int($0.prefix { $0.isNumber }) } }
         guard !majors.isEmpty else { return true }
         return majors.contains { $0 == major || $0 >= 1990 && $0 <= 2100 }
@@ -198,6 +216,7 @@ enum ChangelogVersion {
 
     /// The index of the installed version's entry: an exact match, or else a loose one.
     static func installedIndex(in entries: [ChangelogEntry], installed: String) -> Int? {
+        let installed = comparable(installed, in: entries)
         if let index = entries.firstIndex(where: { matches($0.version, installed) }) ?? entries.firstIndex(where: { looselyMatches($0.version, installed) }) {
             return index
         }

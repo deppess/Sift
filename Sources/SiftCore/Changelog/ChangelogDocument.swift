@@ -11,6 +11,7 @@ enum ChangelogDocument {
     nonisolated(unsafe) private static let leadingVersion = #/^v?\d+(\.\d+)+[a-z]?(?:$|[\s:(\-–—,])/#
     nonisolated(unsafe) private static let versionAlone = #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#
     nonisolated(unsafe) private static let orgChangesIn = #/^\* (?:[\w-]+ )?changes in\b/#
+    nonisolated(unsafe) private static let buildLine = #/^(?:\*\*)?build\s+\d+(?:\*\*)?\s*(?:\([^)]*\))?\s*$/#
     nonisolated(unsafe) private static let escapedPunctuation = #/\\([\\.\-_*()\[\]#+!])/#
     nonisolated(unsafe) private static let inlineLink = #/\[([^\]]*)\]\([^)]*\)/#
     nonisolated(unsafe) private static let referenceLink = #/\[([^\]]*)\]\[[^\]]*\]/#
@@ -162,6 +163,8 @@ enum ChangelogDocument {
                     || lower.firstMatch(of: bulletChangesIn) != nil)
                 || lower.firstMatch(of: headingLead) != nil
                 || lower.hasPrefix("changes from ")
+                // A build number with its date ("**BUILD 9644** (2026-09-21)", VirtualDJ's).
+                || lower.firstMatch(of: buildLine) != nil
                 || lower.hasPrefix("this document details the changes between this version")
                 // Bash's NEWS: "This is a terse description of the new features added to bash-5.3 since …"
                 || lower.hasPrefix("this is a terse description of the new features added to")
@@ -183,8 +186,10 @@ enum ChangelogDocument {
             // second line but is always a heading.
             // Likewise an Org-style "* Changes in Emacs 30.2" with its text right below.
             let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: orgChangesIn) != nil
+            // A line that is only a build and its date is a heading whatever follows ("-Fix …").
+            let buildHeading = lower.firstMatch(of: buildLine) != nil
             if isHeading,
-                standsAlone || orgHeading || lower.hasPrefix("this document details the changes between this version")
+                standsAlone || orgHeading || buildHeading || lower.hasPrefix("this document details the changes between this version")
                     || lower.hasPrefix("this is a terse description")
             {
                 headings.append((index, 1, line.trimmingCharacters(in: CharacterSet(charactersIn: "* :").union(.whitespaces))))
@@ -230,8 +235,15 @@ enum ChangelogDocument {
             $0.prefix { $0 == " " || $0 == "\t" }.count
         }
         let common = indents.min() ?? 0
+        // "-Fix stems" lines making up most of the notes are bullets written without their space
+        // (VirtualDJ's); one in running text is an option the text wrapped onto ("-R, no longer").
+        let dashed = { (line: String) in line.hasPrefix("-") && line.dropFirst().first?.isLetter == true }
+        let nonEmpty = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let dashedCount = nonEmpty.filter { dashed($0.trimmingCharacters(in: .whitespaces)) }.count
+        let dashList = dashedCount >= 2 && dashedCount * 2 > nonEmpty.count
         return lines.map { line -> String in
             let stripped = String(line.dropFirst(min(common, line.prefix { $0 == " " || $0 == "\t" }.count)))
+            if dashList, dashed(stripped) { return "- " + stripped.dropFirst() }
             return stripped.hasPrefix("** ") ? "### " + stripped.dropFirst(3) : stripped
         }.joined(separator: "\n")
     }

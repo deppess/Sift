@@ -39,7 +39,9 @@ public enum ChangelogAudit {
             }
             // Versions far from the installed one: another product's tags, or a number that
             // isn't a version (a standard, a year).
-            if let installed = changelog.installedVersion.map(ChangelogVersion.normalized), let major = Int(installed.prefix { $0.isNumber }) {
+            if let installed = changelog.installedVersion.map({ ChangelogVersion.comparable(ChangelogVersion.normalized($0), in: entries) }),
+                let major = Int(installed.prefix { $0.isNumber })
+            {
                 let outliers = versioned.filter { entry in
                     guard let other = Int(entry.version.prefix { $0.isNumber }) else { return false }
                     return other > max(major * 4, major + 20) && !(other >= 1990 && other <= 2100)

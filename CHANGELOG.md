@@ -15,6 +15,9 @@
 - Text that only points elsewhere ("Please visit the Help Centre…") is never shown as a version's notes, including copies already stored: the version reads "(no details given)" instead (Affinity's).
 - With a GitHub token (`GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth login`), GitHub releases are read through GraphQL, which sends only the fields Sift reads instead of every release's assets: gh's 210 releases are 0.5 MB instead of 7 MB (about 4 s to 1.6 s). Without a token, or if GraphQL fails, the REST API is used as before.
 - Long changelogs display faster with `--all` (Claude Code's 434 versions: 0.33 s to 0.24 s).
+- Changelogs numbered by build ("BUILD 9644 (2026-09-21)") are read, and an installed version is placed by its build (VirtualDJ's 8.5.9307 is build 9307), so only the builds after it show as new. Notes written as `-Fix …` lines read as bullets.
+- VirtualDJ's changelog is found at its own page, which neither the app nor its site links.
+- An app with no other known source is looked up as its copyright holder's GitHub project of the same name (Caffeinate, from Lennard Kittner, is LennardKittner/Caffeinate).
 
 ## 1.0.3 - 2026-11-01
 
