@@ -299,6 +299,14 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries.map(\.version), ["5.1.2", "5.1.1", "5.1.0"])
     }
 
+    func testABuildNumberIsAVersionOnlyWhenItLeads() {
+        XCTAssertEqual(ChangelogVersion.token(in: "BUILD 9644 (2026-09-21)"), "9644")
+        XCTAssertEqual(ChangelogVersion.token(in: "9644"), "9644")
+        XCTAssertEqual(ChangelogVersion.token(in: "Version 8"), "8")
+        XCTAssertNil(ChangelogVersion.token(in: "GIMP on MS Store now requires Windows Build 20348"), "another product's build")
+        XCTAssertNil(ChangelogVersion.token(in: "2026"), "a year heading")
+    }
+
     func testABetaOfTheNextMajorAcceptsThePreviousMajorsNotes() {
         let notes = ["6.5", "6.4.1", "6.4"].map { ChangelogEntry(version: $0, content: "- change") }
         XCTAssertTrue(ChangelogVersion.sameLine(notes, installed: "7.0 beta"))

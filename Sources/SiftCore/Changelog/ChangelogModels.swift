@@ -98,7 +98,8 @@ enum ChangelogVersion {
     nonisolated(unsafe) private static let rangeTarget = #/(?i)\bto\s+v?(\d+(?:\.\d+)+[a-z]?)\s*$/#
     nonisolated(unsafe) private static let namedVersion = #/(?i)\b(?:release|version)\s+v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
     nonisolated(unsafe) private static let anyVersion = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
-    nonisolated(unsafe) private static let wholeNumberVersion = #/(?i)\b(?:version|build)\s+(\d+)\b/#
+    // "Version 8" anywhere; "Build 9644" only leading ("requires Windows Build 20348" is another product's).
+    nonisolated(unsafe) private static let wholeNumberVersion = #/(?i)\bversion\s+(\d+)\b|^\W*build\s+(\d+)\b/#
     nonisolated(unsafe) private static let channelSuffix = #/^(\d+(?:\.\d+)+)[a-z]+\d*$/#
     nonisolated(unsafe) private static let calendarVersion = #/^(19|20)\d\d\.\d{1,2}\.\d{1,2}$/#
 
@@ -114,7 +115,7 @@ enum ChangelogVersion {
         // The number after "release" or "version" wins over others ("POSIX 1003.1" in a heading).
         if let match = text.firstMatch(of: namedVersion) { return String(match.1) }
         if let match = text.firstMatch(of: anyVersion) { return String(match.1) }
-        if let match = text.firstMatch(of: wholeNumberVersion) { return String(match.1) }
+        if let match = text.firstMatch(of: wholeNumberVersion), let number = match.1 ?? match.2 { return String(number) }
         // A bare build number standing for the version (VirtualDJ's "9729"), though not a year
         // heading ("2026") over a year's releases.
         if isBuild(text) { return text }
