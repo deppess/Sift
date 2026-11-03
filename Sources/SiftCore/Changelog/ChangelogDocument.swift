@@ -12,6 +12,7 @@ enum ChangelogDocument {
     nonisolated(unsafe) private static let versionAlone = #/^(?:[a-z][\w ]{0,30} )?v?\d+(\.\d+)+\s*$/#
     nonisolated(unsafe) private static let orgChangesIn = #/^\* (?:[\w-]+ )?changes in\b/#
     nonisolated(unsafe) private static let buildLine = #/^(?:\*\*)?build\s+\d+(?:\*\*)?\s*(?:\([^)]*\))?\s*$/#
+    nonisolated(unsafe) private static let versionDateLine = #/^v?\d+(?:\.\d+)+[a-z]?\s*[-–—·|(]?\s*(?:\d{4}-\d{2}-\d{2}|[a-z]{3,9}\.? \d{1,2},? \d{4}|\d{1,2} [a-z]{3,9},? \d{4})\)?$/#
     nonisolated(unsafe) private static let escapedPunctuation = #/\\([\\.\-_*()\[\]#+!])/#
     nonisolated(unsafe) private static let inlineLink = #/\[([^\]]*)\]\([^)]*\)/#
     nonisolated(unsafe) private static let referenceLink = #/\[([^\]]*)\]\[[^\]]*\]/#
@@ -163,8 +164,9 @@ enum ChangelogDocument {
                     || lower.firstMatch(of: bulletChangesIn) != nil)
                 || lower.firstMatch(of: headingLead) != nil
                 || lower.hasPrefix("changes from ")
-                // A build number with its date ("**BUILD 9644** (2026-09-21)", VirtualDJ's).
-                || lower.firstMatch(of: buildLine) != nil
+                // A build number with its date ("**BUILD 9644** (2026-09-21)", VirtualDJ's), or a
+                // version with its date alone on its line (Avior's).
+                || lower.firstMatch(of: buildLine) != nil || lower.firstMatch(of: versionDateLine) != nil
                 || lower.hasPrefix("this document details the changes between this version")
                 // Bash's NEWS: "This is a terse description of the new features added to bash-5.3 since …"
                 || lower.hasPrefix("this is a terse description of the new features added to")
@@ -186,8 +188,9 @@ enum ChangelogDocument {
             // second line but is always a heading.
             // Likewise an Org-style "* Changes in Emacs 30.2" with its text right below.
             let orgHeading = line.hasPrefix("* ") && lower.firstMatch(of: orgChangesIn) != nil
-            // A line that is only a build and its date is a heading whatever follows ("-Fix …").
-            let buildHeading = lower.firstMatch(of: buildLine) != nil
+            // A line that is only a build or a version and its date is a heading whatever follows
+            // ("-Fix …" lines, a list right below "v1.52.0 2026-10-22").
+            let buildHeading = lower.firstMatch(of: buildLine) != nil || lower.firstMatch(of: versionDateLine) != nil
             if isHeading,
                 standsAlone || orgHeading || buildHeading || lower.hasPrefix("this document details the changes between this version")
                     || lower.hasPrefix("this is a terse description")

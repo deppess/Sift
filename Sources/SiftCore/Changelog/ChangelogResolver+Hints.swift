@@ -423,6 +423,13 @@ extension ChangelogResolver {
                 guard domain == vendor || label.count >= 4 && appKey.hasPrefix(label) else { continue }
                 hints.add(link: url.absoluteString)
             }
+            // The vendor's site when the app's own update feed is served from it (appcast.aviorapp.com
+            // for com.aviorapp.avior): a feed without notes often has a changelog page there.
+            if let vendor, let feedHost = application.sparkleFeedURL.flatMap(URL.init(string:))?.host?.lowercased(),
+                HomebrewCaskCatalog.vendorDomain(feedHost) == vendor
+            {
+                hints.add(link: "https://\(vendor)/")
+            }
         }
         // Homebrew's cask for the same bundle: its homepage, and the GitHub project it downloads from.
         if let catalog = try? client.fetch(HomebrewCaskCatalog.url, resource: .homebrewCaskCatalog, derivedAs: "index-v2", HomebrewCaskCatalog.init(data:)) {

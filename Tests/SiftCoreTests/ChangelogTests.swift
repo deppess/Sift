@@ -264,6 +264,21 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogVersion.installedIndex(in: entries, installed: "8.5.9307"), 2, "the build is the version's last part")
     }
 
+    func testAccordionReleasesHeadedByVersionAndDateAreRead() {
+        // Avior's changelog: each release a <details> whose <summary> holds only its version and date.
+        func release(_ version: String, _ date: String, _ note: String) -> String {
+            "<details class=\"release\"><summary class=\"release__summary\"><div class=\"release__header-content\"><span class=\"release__version\">v\(version)</span> "
+                + "<span class=\"release__date\">\(date)</span></div><div class=\"release__toggle-icon\"><svg><path d=\"M1\"/></svg></div></summary>"
+                + "<div class=\"release__notes\"><ul><li>\(note)</li></ul></div></details>"
+        }
+        let html = "<html><body><h2>Changelog</h2>" + release("1.52.0", "2026-10-22", "Faster sync") + release("1.47.0", "2026-06-11", "New widgets")
+            + release("1.46.0", "2026-05-02", "Bug fixes") + "</body></html>"
+        let entries = ChangelogResolver.pageEntries(html, url: URL(string: "https://aviorapp.com/changelog")!)
+        XCTAssertEqual(entries.map(\.version), ["1.52.0", "1.47.0", "1.46.0"])
+        XCTAssertEqual(entries[0].content, "- Faster sync")
+        XCTAssertEqual(entries[1].date, ChangelogDocument.utcDate(year: 2026, month: 6, day: 11))
+    }
+
     func testAHomepageWithoutTheInstalledVersionGivesWayToItsLinkedChangelog() throws {
         let database = try Database(url: url)
         MetadataURLProtocol.handler = { request in
