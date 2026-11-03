@@ -7,11 +7,11 @@
 - Long changelogs are read up to 20 times faster: version and date patterns are compiled once instead of on every line, and merging two sources no longer re-reads each version for every pair (fish's 68-version file: 2.5 s to 0.2 s; Bash's NEWS: 10.5 s to 0.5 s).
 - Repository changelog files on GitHub, GitLab, and Codeberg are probed several spellings at a time instead of one after another (a repository without one: about 4 s to under 1 s). Tag comparisons, version pages, Adoptium notes, and a site's robots files are fetched together too.
 - A site that answers every address with its homepage has that page read once, not rendered in WebKit under each guessed changelog address (KeyboardCleanTool: 38 s to 5 s).
-- Pages WebKit can't change (no scripts, text of their own) are no longer rendered, and an update feed's linked release-notes pages are read together, at most four rendering at once (CleanShot X: 28 s to 0.2 s).
+- Pages WebKit can't change (no scripts and text of their own, or no body at all) are no longer rendered, and an update feed's linked release-notes pages are read together, at most four rendering at once (CleanShot X: 28 s to 0.2 s).
 - Links that only mention a generic word ("Hacker News", "Browse clipboard history") or lead to a download are no longer followed as changelog links (BetterTouchTool: 47 s to 1 s).
 - A rendered page is read as soon as its text has settled, 0.4 s sooner, and a page that stays empty is given up on after a few seconds instead of 25 (VirtualDJ's).
 - An address that timed out or couldn't connect isn't asked again during the same run.
-- Refresh prefetches changelogs with four workers that each take the next item when free, instead of in batches waiting on their slowest item: about twice as many are fetched within the time limit.
+- Refresh prefetches changelogs with four workers that each take the next item when free, instead of in batches waiting on their slowest item: about twice as many are fetched within the time limit. Together with the changes above, a refresh that warms 45 changelogs takes 22 s instead of about 60.
 - Text that only points elsewhere ("Please visit the Help Centre…") is never shown as a version's notes, including copies already stored: the version reads "(no details given)" instead (Affinity's).
 - With a GitHub token (`GITHUB_TOKEN`, `GH_TOKEN`, or `gh auth login`), GitHub releases are read through GraphQL, which sends only the fields Sift reads instead of every release's assets: gh's 210 releases are 0.5 MB instead of 7 MB (about 4 s to 1.6 s). Without a token, or if GraphQL fails, the REST API is used as before.
 - Long changelogs display faster with `--all` (Claude Code's 434 versions: 0.33 s to 0.24 s).
