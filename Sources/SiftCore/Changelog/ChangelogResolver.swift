@@ -745,29 +745,36 @@ public struct ChangelogResolver: Sendable {
             throw MetadataHTTPError.unsupportedURL
         }
         var entries: [ChangelogEntry] = []
+        // With a token, GraphQL answers with only the fields read below; REST's lists carry every
+        // release's assets too (gh's 210 releases: 7 MB). REST stays the fallback.
+        let listed = client.hasGitHubToken ? try? githubGraphQLReleases(repository) : nil
         for page in 1...githubPages {
-            let url = URL(string: "https://api.github.com/repos/\(owner)/\(name)/releases?per_page=100&page=\(page)")!
-            let data: Data
-            do { data = try client.fetch(url, resource: .githubReleaseList).body } catch  where page > 1 { break } catch MetadataHTTPError.serverFailure {
-                // A page of 100 long release notes can time out on GitHub's side (openai/codex): a
-                // smaller first page still answers.
-                let smaller = URL(string: "https://api.github.com/repos/\(owner)/\(name)/releases?per_page=30")!
-                guard let retried = try? client.fetch(smaller, resource: .githubReleaseList).body else {
-                    throw MetadataHTTPError.serverFailure(statusCode: 504)
-                }
-                data = retried
-            } catch MetadataHTTPError.rateLimited, MetadataHTTPError.forbidden {
-                // Out of API quota: the releases feed has the latest ten without spending any.
-                let feed = URL(string: "https://github.com/\(owner)/\(name)/releases.atom")!
-                // The feed lists pre-releases and drafts too; only versioned releases of this item stay.
-                let items = ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage(host: "github.com")).body)
-                    .filter {
-                        ChangelogVersion.token(in: $0.version) == $0.version
-                            && $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil
+            var releases = listed ?? []
+            if listed == nil {
+                let url = URL(string: "https://api.github.com/repos/\(owner)/\(name)/releases?per_page=100&page=\(page)")!
+                let data: Data
+                do { data = try client.fetch(url, resource: .githubReleaseList).body } catch  where page > 1 { break } catch MetadataHTTPError.serverFailure {
+                    // A page of 100 long release notes can time out on GitHub's side (openai/codex): a
+                    // smaller first page still answers.
+                    let smaller = URL(string: "https://api.github.com/repos/\(owner)/\(name)/releases?per_page=30")!
+                    guard let retried = try? client.fetch(smaller, resource: .githubReleaseList).body else {
+                        throw MetadataHTTPError.serverFailure(statusCode: 504)
                     }
-                return Self.ownProductReleases(items, name: currentName, preferCLI: preferCLI)
+                    data = retried
+                } catch MetadataHTTPError.rateLimited, MetadataHTTPError.forbidden {
+                    // Out of API quota: the releases feed has the latest ten without spending any.
+                    let feed = URL(string: "https://github.com/\(owner)/\(name)/releases.atom")!
+                    // The feed lists pre-releases and drafts too; only versioned releases of this item stay.
+                    let items = ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage(host: "github.com")).body)
+                        .filter {
+                            ChangelogVersion.token(in: $0.version) == $0.version
+                                && $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil
+                        }
+                    return Self.ownProductReleases(items, name: currentName, preferCLI: preferCLI)
+                }
+                guard let parsed = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
+                releases = parsed
             }
-            guard let releases = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
             for release in releases where release["draft"] as? Bool != true && (prereleases || release["prerelease"] as? Bool != true) {
                 guard let tag = release["tag_name"] as? String else { continue }
                 let title = (release["name"] as? String)?.trimmingCharacters(in: .whitespaces)
@@ -784,9 +791,45 @@ public struct ChangelogResolver: Sendable {
                         version: version, title: titled, date: date, content: body,
                         sourceURL: release["html_url"] as? String ?? "https://github.com/\(repository.path)/releases/tag/\(tag)"))
             }
-            if releases.count < 100 { break }
+            if listed != nil || releases.count < 100 { break }
         }
         return Self.ownProductReleases(entries, name: currentName, preferCLI: preferCLI)
+    }
+
+    /// A repository's releases from GitHub's GraphQL API, newest first, under the names its REST
+    /// API uses. A later page that fails ends the list there, as with REST.
+    private func githubGraphQLReleases(_ repository: GitHubRepository) throws -> [[String: Any]] {
+        let query = """
+            query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) {
+            releases(first: 100, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) {
+            pageInfo { hasNextPage endCursor } nodes { tagName name publishedAt description url isDraft isPrerelease } } } }
+            """
+        let url = URL(string: "https://api.github.com/graphql")!
+        var releases: [[String: Any]] = []
+        var cursor: String?
+        for page in 1...githubPages {
+            let variables: [String: Any] = ["owner": repository.owner, "name": repository.name, "after": cursor ?? NSNull()]
+            let list: [String: Any]
+            do {
+                let body = try JSONSerialization.data(withJSONObject: ["query": query, "variables": variables], options: .sortedKeys)
+                let document = try JSONSerialization.jsonObject(with: client.fetch(url, resource: .githubReleaseList, body: body).body) as? [String: Any]
+                guard document?["errors"] == nil,
+                    let found = ((document?["data"] as? [String: Any])?["repository"] as? [String: Any])?["releases"] as? [String: Any]
+                else { throw MetadataHTTPError.invalidResponse }
+                list = found
+            } catch  where page > 1 { break }
+            for node in list["nodes"] as? [[String: Any]] ?? [] {
+                releases.append([
+                    "tag_name": node["tagName"] as Any, "name": node["name"] as Any, "published_at": node["publishedAt"] as Any,
+                    "body": node["description"] as Any, "html_url": node["url"] as Any, "draft": node["isDraft"] as Any,
+                    "prerelease": node["isPrerelease"] as Any
+                ])
+            }
+            let info = list["pageInfo"] as? [String: Any]
+            guard info?["hasNextPage"] as? Bool == true, let next = info?["endCursor"] as? String else { break }
+            cursor = next
+        }
+        return releases
     }
 
     /// In a repository that releases several products (golang/tools' gopls/v0.17, taplo's
@@ -1283,7 +1326,8 @@ public struct ChangelogResolver: Sendable {
             if client.debug { MetadataHTTPClient.trace("read embedded data on \(url.absoluteString): \(embedded.count) entries") }
             return embedded
         }
-        if render, !ChangelogDocument.isMeaningful(entries), ChangelogFeeds.looksScriptBuilt(html) || entries.isEmpty && !ChangelogFeeds.isStaticDocument(html) {
+        if render, !ChangelogDocument.isMeaningful(entries), ChangelogFeeds.looksScriptBuilt(html) || entries.isEmpty && !ChangelogFeeds.isStaticDocument(html)
+        {
             let rendered = renderedEntries(url)
             if ChangelogDocument.isMeaningful(rendered) { return rendered }
         }

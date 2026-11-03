@@ -95,7 +95,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     private let now: () -> Date
     /// Addresses that timed out or couldn't connect this run: asking again (a read-ahead, then
     /// the reader) would only wait again, so the same error answers at once.
-    private let failures = Mutex<[URL: MetadataHTTPError]>([:])
+    private let failures = Mutex<[String: MetadataHTTPError]>([:])
 
     public init(
         database: Database, configuration: URLSessionConfiguration = .ephemeral, environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -108,15 +108,17 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
 
-    public func fetch(_ url: URL, resource: MetadataResource) throws -> MetadataHTTPResponse {
-        guard debug else { return try perform(url, policy: policy(for: resource)) }
+    /// GET, or with `body` a POST of that JSON (GitHub's GraphQL), cached by the URL and body.
+    public func fetch(_ url: URL, resource: MetadataResource, body: Data? = nil) throws -> MetadataHTTPResponse {
+        guard debug else { return try perform(url, policy: policy(for: resource), body: body) }
+        let method = body == nil ? "GET" : "POST"
         let started = Date()
         do {
-            let response = try perform(url, policy: policy(for: resource))
-            Self.trace("GET \(url.absoluteString) -> \(response.body.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            let response = try perform(url, policy: policy(for: resource), body: body)
+            Self.trace("\(method) \(url.absoluteString) -> \(response.body.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
             return response
         } catch {
-            Self.trace("GET \(url.absoluteString) -> \(error.localizedDescription) after \(Int(Date().timeIntervalSince(started) * 1000)) ms")
+            Self.trace("\(method) \(url.absoluteString) -> \(error.localizedDescription) after \(Int(Date().timeIntervalSince(started) * 1000)) ms")
             throw error
         }
     }
@@ -166,18 +168,20 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         return value
     }
 
-    private func perform(_ url: URL, policy: MetadataHTTPPolicy) throws -> MetadataHTTPResponse {
+    private func perform(_ url: URL, policy: MetadataHTTPPolicy, body: Data? = nil) throws -> MetadataHTTPResponse {
+        // One URL answers many queries when they're posted: each body is a cache entry of its own.
+        let key = body.map { url.absoluteString + "#" + fingerprint($0) } ?? url.absoluteString
         guard isAllowedMetadataURL(url, policy: policy) else { throw MetadataHTTPError.unsupportedURL }
         let deadline = DispatchTime.now() + policy.outerTimeout
         let timestamp = now()
-        let cached = try database.cachedMetadataResponse(url: url.absoluteString, resourceKind: policy.cacheKey).map { decodedCache($0, policy: policy) }
+        let cached = try database.cachedMetadataResponse(url: key, resourceKind: policy.cacheKey).map { decodedCache($0, policy: policy) }
         let age = cached.map { timestamp.timeIntervalSince($0.validatedAt) }
         if let cached, let age, age >= 0, age < policy.maxAge {
             if cached.statusCode == 404 { throw MetadataHTTPError.notFound }
             guard let body = cached.body else { throw MetadataHTTPError.invalidResponse }
             return MetadataHTTPResponse(body: body)
         }
-        if let failure = failures.withLock({ $0[url] }) { throw failure }
+        if let failure = failures.withLock({ $0[key] }) { throw failure }
         if policy.serialGitHub {
             let githubConcurrency = policy.token != nil ? Self.githubConcurrencyAuthenticated : Self.githubConcurrencyAnonymous
             guard githubConcurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
@@ -187,11 +191,16 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         guard Self.concurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
         defer { Self.concurrency.signal() }
         var request = URLRequest(url: url)
+        if let body {
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         request.timeoutInterval = min(policy.timeout, remaining(until: deadline))
         // A timeout after waiting in line for a slot says nothing about the address itself.
         let remember = { (failure: MetadataHTTPError) in
             if case .timedOut = failure, request.timeoutInterval < policy.timeout { return }
-            self.failures.withLock { $0[url] = failure }
+            self.failures.withLock { $0[key] = failure }
         }
         request.setValue(policy.accept, forHTTPHeaderField: "Accept")
         for (name, value) in policy.headers { request.setValue(value, forHTTPHeaderField: name) }
@@ -220,7 +229,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         if response.statusCode == 304, cached == nil { throw MetadataHTTPError.invalidResponse }
         if response.statusCode == 304, let cached {
             try database.storeMetadataResponse(
-                url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: cached.statusCode, body: encodedCacheBody(cached.body, policy: policy),
+                url: key, resourceKind: policy.cacheKey, statusCode: cached.statusCode, body: encodedCacheBody(cached.body, policy: policy),
                 etag: response.value(forHTTPHeaderField: "ETag") ?? cached.etag,
                 lastModified: response.value(forHTTPHeaderField: "Last-Modified") ?? cached.lastModified, validatedAt: validatedAt)
             if cached.statusCode == 404 { throw MetadataHTTPError.notFound }
@@ -229,7 +238,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         }
         if response.statusCode == 404 {
             try database.storeMetadataResponse(
-                url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: 404, body: nil, etag: response.value(forHTTPHeaderField: "ETag"),
+                url: key, resourceKind: policy.cacheKey, statusCode: 404, body: nil, etag: response.value(forHTTPHeaderField: "ETag"),
                 lastModified: response.value(forHTTPHeaderField: "Last-Modified"), validatedAt: validatedAt)
             throw MetadataHTTPError.notFound
         }
@@ -239,7 +248,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         }
         guard (200...299).contains(response.statusCode) else { throw MetadataHTTPError.transport("Metadata server returned HTTP \(response.statusCode).") }
         try database.storeMetadataResponse(
-            url: url.absoluteString, resourceKind: policy.cacheKey, statusCode: response.statusCode, body: encodedCacheBody(data, policy: policy),
+            url: key, resourceKind: policy.cacheKey, statusCode: response.statusCode, body: encodedCacheBody(data, policy: policy),
             etag: response.value(forHTTPHeaderField: "ETag"), lastModified: response.value(forHTTPHeaderField: "Last-Modified"), validatedAt: validatedAt)
         return MetadataHTTPResponse(body: data)
     }
@@ -316,7 +325,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     /// anonymous request or the reverse.
     private func githubPolicy(_ name: String, responseLimit limit: Int, maxAge: TimeInterval = 6 * 60 * 60) -> MetadataHTTPPolicy {
         let token = githubToken()
-        let representation = token.map { "auth-\(tokenFingerprint($0))" } ?? "anonymous"
+        let representation = token.map { "auth-\(fingerprint(Data($0.utf8)))" } ?? "anonymous"
         return MetadataHTTPPolicy(
             cacheKey: "\(name)-v3-\(representation)", allowedHosts: ["api.github.com"], responseLimit: limit, accept: "application/vnd.github+json",
             headers: ["X-GitHub-Api-Version": "2022-11-28", "User-Agent": SiftVersion.userAgent], token: token, serialGitHub: true,
@@ -369,8 +378,8 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         return token.isEmpty || token.contains(where: \.isWhitespace) ? nil : token
     }
 
-    private func tokenFingerprint(_ token: String) -> String {
-        SHA256.hash(data: Data(token.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+    private func fingerprint(_ data: Data) -> String {
+        SHA256.hash(data: data).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
     private func blockedUntil(for policy: MetadataHTTPPolicy) -> Date? {

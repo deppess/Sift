@@ -376,6 +376,43 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(requested.filter { $0.contains("api.github.com/repos/cli/cli/releases") }.count, 1, "a short page is the last one")
     }
 
+    func testWithATokenReleasesComeFromGraphQL() throws {
+        let database = try Database(url: url)
+        var requested: [String] = []
+        MetadataURLProtocol.handler = { request in
+            let url = request.url!.absoluteString
+            requested.append("\(request.httpMethod ?? "GET") \(url)")
+            guard url == "https://api.github.com/graphql" else { return (404, nil, [:]) }
+            let nodes: [[String: Any]] = [
+                [
+                    "tagName": "v2.103.2", "name": "GitHub CLI 2.103.2", "description": "- Fix attach", "publishedAt": "2026-10-23T10:00:00Z",
+                    "url": "https://github.com/cli/cli/releases/tag/v2.103.2", "isDraft": false, "isPrerelease": false
+                ],
+                [
+                    "tagName": "v2.104.0-rc1", "name": NSNull(), "description": "- Preview", "publishedAt": NSNull(), "url": "https://x", "isDraft": false,
+                    "isPrerelease": true
+                ],
+                [
+                    "tagName": "v2.103.1", "name": "Christmas", "description": "- Hints", "publishedAt": "2026-10-20T10:00:00Z",
+                    "url": "https://github.com/cli/cli/releases/tag/v2.103.1", "isDraft": false, "isPrerelease": false
+                ]
+            ]
+            let page: [String: Any] = ["data": ["repository": ["releases": ["pageInfo": ["hasNextPage": false], "nodes": nodes]]]]
+            return (200, try! JSONSerialization.data(withJSONObject: page), [:])
+        }
+        let client = MetadataHTTPClient(database: database, configuration: mockedConfiguration(), environment: ["GITHUB_TOKEN": "test-token"])
+        guard
+            case let .resolved(_, _, _, entries) = ChangelogResolver(client: client, environment: [:]).resolve(
+                ChangelogSubject(
+                    item: homebrewItem("gh", installed: "2.103.1"), homebrewSourceURL: "https://github.com/cli/cli/archive/refs/tags/v2.103.1.tar.gz"))
+        else { return XCTFail("expected a changelog") }
+        XCTAssertEqual(entries.map(\.version), ["2.103.2", "2.103.1"])
+        XCTAssertEqual(entries[1].title, "Christmas")
+        XCTAssertEqual(entries[0].sourceURL, "https://github.com/cli/cli/releases/tag/v2.103.2")
+        XCTAssertEqual(requested.filter { $0.contains("/releases?") }, [], "no REST list with all its assets")
+        XCTAssertTrue(requested.contains("POST https://api.github.com/graphql"))
+    }
+
     func testAPlaceholderFeedFollowsTheLinkInsideItsDescription() throws {
         let database = try Database(url: url)
         MetadataURLProtocol.handler = { request in
