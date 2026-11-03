@@ -100,6 +100,8 @@ enum ChangelogVersion {
     nonisolated(unsafe) private static let anyVersion = #/(?i)(?:^|[^\w.])(?:[a-z]{1,12}[-_]?)?v?(\d+(?:\.\d+)+(?:-?(?:alpha|beta|rc|preview|pre|dev)\.?\d*)?)/#
     // "Version 8" anywhere; "Build 9644" only leading ("requires Windows Build 20348" is another product's).
     nonisolated(unsafe) private static let wholeNumberVersion = #/(?i)\bversion\s+(\d+)\b|^\W*build\s+(\d+)\b/#
+    /// A name and a zero-padded release number alone ("usbutils 020").
+    nonisolated(unsafe) private static let paddedRelease = #/(?i)^[a-z][\w.+-]*\s+v?(0\d{2})\s*$/#
     nonisolated(unsafe) private static let channelSuffix = #/^(\d+(?:\.\d+)+)[a-z]+\d*$/#
     nonisolated(unsafe) private static let calendarVersion = #/^(19|20)\d\d\.\d{1,2}\.\d{1,2}$/#
 
@@ -114,8 +116,10 @@ enum ChangelogVersion {
         }
         // The number after "release" or "version" wins over others ("POSIX 1003.1" in a heading).
         if let match = text.firstMatch(of: namedVersion) { return String(match.1) }
-        if let match = text.firstMatch(of: anyVersion) { return String(match.1) }
+        // A license's version isn't the item's ("SPDX-License-Identifier: GPL-2.0-only").
+        if let match = text.matches(of: anyVersion).first(where: { !$0.0.lowercased().contains("gpl") }) { return String(match.1) }
         if let match = text.firstMatch(of: wholeNumberVersion), let number = match.1 ?? match.2 { return String(number) }
+        if let match = text.firstMatch(of: paddedRelease) { return String(match.1) }
         // A bare build number standing for the version (VirtualDJ's "9729"), though not a year
         // heading ("2026") over a year's releases.
         if isBuild(text) { return text }

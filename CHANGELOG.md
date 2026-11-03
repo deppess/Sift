@@ -20,6 +20,7 @@
 - An update to a new major version keeps that version's own release notes: going from 7 to 8.3, the 8.x notes are no longer set aside as another product's (KeyboardCleanTool).
 - A homepage listing versions without the installed one (OnyX's table of the newest release for each macOS) gives way to the changelog it links when that has the installed version. Lines starting with a typed "•" read as bullets.
 - An app whose update feed carries no notes has its vendor's site searched when the feed is served from that site (Avior's feed is on aviorapp.com, whose changelog it now reads). A line that is only a version and its date ("v1.52.0 2026-10-22") reads as a release heading even with a list right below it.
+- A repository whose tags all carry its own name (LLVM's `llvmorg-23.1.4`) has its releases read for the packages it ships (clang-format). Zero-padded release numbers ("usbutils 020") are versions, and a license's version ("GPL-2.0") no longer is.
 - A beta of a new major version shows the previous major's release notes instead of bare version numbers, since its own aren't published yet (Little Snitch 7.0 beta shows 6.5's).
 - An app with no other known source is looked up as its copyright holder's GitHub project of the same name (Caffeinate, from Lennard Kittner, is LennardKittner/Caffeinate).
 

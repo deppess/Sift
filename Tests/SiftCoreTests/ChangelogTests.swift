@@ -299,12 +299,23 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(entries.map(\.version), ["5.1.2", "5.1.1", "5.1.0"])
     }
 
+    func testTagsPrefixedWithTheRepositorysOwnNameAreItsReleases() {
+        let tagged = ["23.1.4", "23.1.3"].map {
+            ChangelogEntry(version: $0, content: "- change", sourceURL: "https://github.com/llvm/llvm-project/releases/tag/llvmorg-\($0)")
+        }
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(tagged, name: "clang-format", repository: "llvm/llvm-project").count, 2)
+        XCTAssertEqual(ChangelogResolver.ownProductReleases(tagged, name: "clang-format").count, 0, "without the repository, another product's prefix")
+    }
+
     func testABuildNumberIsAVersionOnlyWhenItLeads() {
         XCTAssertEqual(ChangelogVersion.token(in: "BUILD 9644 (2026-09-21)"), "9644")
         XCTAssertEqual(ChangelogVersion.token(in: "9644"), "9644")
         XCTAssertEqual(ChangelogVersion.token(in: "Version 8"), "8")
         XCTAssertNil(ChangelogVersion.token(in: "GIMP on MS Store now requires Windows Build 20348"), "another product's build")
         XCTAssertNil(ChangelogVersion.token(in: "2026"), "a year heading")
+        XCTAssertEqual(ChangelogVersion.token(in: "usbutils 020"), "020", "a zero-padded release number")
+        XCTAssertNil(ChangelogVersion.token(in: "SPDX-License-Identifier: GPL-2.0-only"), "a license's version")
+        XCTAssertEqual(ChangelogVersion.token(in: "Release 3.1 (GPL-2.0)"), "3.1")
     }
 
     func testABetaOfTheNextMajorAcceptsThePreviousMajorsNotes() {

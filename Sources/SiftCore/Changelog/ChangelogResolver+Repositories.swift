@@ -36,7 +36,7 @@ extension ChangelogResolver {
                             ChangelogVersion.token(in: $0.version) == $0.version
                                 && $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil
                         }
-                    return Self.ownProductReleases(items, name: currentName, preferCLI: preferCLI)
+                    return Self.ownProductReleases(items, name: currentName, preferCLI: preferCLI, repository: repository.path)
                 }
                 guard let parsed = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw MetadataHTTPError.invalidResponse }
                 releases = parsed
@@ -59,7 +59,7 @@ extension ChangelogResolver {
             }
             if listed != nil || releases.count < 100 { break }
         }
-        return Self.ownProductReleases(entries, name: currentName, preferCLI: preferCLI)
+        return Self.ownProductReleases(entries, name: currentName, preferCLI: preferCLI, repository: repository.path)
     }
 
     /// A repository's releases from GitHub's GraphQL API, newest first, under the names its REST
@@ -101,7 +101,7 @@ extension ChangelogResolver {
     /// In a repository that releases several products (golang/tools' gopls/v0.17, taplo's
     /// release-taplo-cli-0.9, bash-language-server's vscode-client-1.0), the releases whose tag
     /// prefix names this item; with no prefix naming it, only the unprefixed tags.
-    static func ownProductReleases(_ entries: [ChangelogEntry], name: String, preferCLI: Bool = false) -> [ChangelogEntry] {
+    static func ownProductReleases(_ entries: [ChangelogEntry], name: String, preferCLI: Bool = false, repository: String = "") -> [ChangelogEntry] {
         func prefix(_ entry: ChangelogEntry) -> String {
             guard let tag = entry.sourceURL?.components(separatedBy: "/releases/tag/").dropFirst().first?.removingPercentEncoding else { return "" }
             return BundleURLScanner.matchKey(String(tag.prefix { !$0.isNumber }).replacingOccurrences(of: "release", with: ""))
@@ -116,7 +116,10 @@ extension ChangelogResolver {
             "rust", "go", "py", "python", "node", "js", "ts", "swift", "cli", "app", "desktop", "stable", "main", "core", "release", "macos", "mac"
         ]
         if groups.count == 1, let only = groups.keys.first {
-            return only.isEmpty || key.isEmpty || key.contains(only) || only.contains(key) || generic.contains(only) ? entries : []
+            // A prefix naming the repository itself is its own (llvm/llvm-project's llvmorg-21.1.5).
+            let repositoryKeys = repository.split(separator: "/").map { BundleURLScanner.matchKey(String($0)) }.filter { $0.count >= 3 }
+            let own = only.isEmpty || key.isEmpty || key.contains(only) || only.contains(key) || generic.contains(only)
+            return own || repositoryKeys.contains(where: only.contains) ? entries : []
         }
         let named = groups.keys.filter { !$0.isEmpty && (key.contains($0) || $0.contains(key)) }
         // The closest name: "server" for bash-language-server; for a command-line package, the
@@ -204,7 +207,7 @@ extension ChangelogResolver {
             )
         }
         // Pre-release tags (Codex's 0.166.0-alpha.6) go when there are releases.
-        let own = Self.ownProductReleases(entries, name: itemName, preferCLI: preferCLI)
+        let own = Self.ownProductReleases(entries, name: itemName, preferCLI: preferCLI, repository: repository.path)
         let stable = own.filter { $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil }
         return stable.isEmpty ? own : stable
     }
@@ -240,7 +243,7 @@ extension ChangelogResolver {
                         sourceURL: "https://\(host)/\(path)/\(kind == .gitlab ? "-/" : "")releases/tag/\(tag)"))
             }
         }
-        releases = Self.ownProductReleases(releases, name: name)
+        releases = Self.ownProductReleases(releases, name: name, repository: path)
         if Self.releasesSuffice(releases) { return releases }
         let rawURL = { (file: String) in kind == .gitlab ? "https://\(host)/\(path)/-/raw/HEAD/\(file)" : "https://\(host)/\(path)/raw/branch/main/\(file)" }
         for (offset, file) in Self.repositoryChangelogPaths.enumerated() {
