@@ -8,6 +8,7 @@ public enum ChangelogRenderer {
         -> String
     {
         let newEntries = changelog.newEntries
+        let installedVersion = changelog.installedVersion.map(ChangelogVersion.normalized)
         let installedEntry = changelog.installedEntry
         var lines: [String] = []
         let installed = changelog.installedVersion?.terminalInline ?? "unknown"
@@ -37,7 +38,7 @@ public enum ChangelogRenderer {
         }
         for entry in shown {
             lines.append("")
-            lines.append(entryHeading(entry, changelog: changelog, newEntries: newEntries, style: style))
+            lines.append(entryHeading(entry, installed: installedVersion, newEntries: newEntries, style: style))
             let body = render(entry.content, full: full, style: style)
             lines.append(
                 body.isEmpty
@@ -72,11 +73,11 @@ public enum ChangelogRenderer {
         try JSONOutput.encode(changelog)
     }
 
-    private static func entryHeading(_ entry: ChangelogEntry, changelog: Changelog, newEntries: [ChangelogEntry], style: TerminalStyle) -> String {
+    private static func entryHeading(_ entry: ChangelogEntry, installed: String?, newEntries: [ChangelogEntry], style: TerminalStyle) -> String {
         var parts = [style.heading(entry.version.terminalInline)]
         if let title = entry.title { parts.append(title.terminalInline) }
         if let date = entry.date { parts.append(style.label(ChangelogRenderer.dateText(date))) }
-        if let installed = changelog.installedVersion, ChangelogVersion.matches(entry.version, ChangelogVersion.normalized(installed)) {
+        if let installed, ChangelogVersion.matches(entry.version, installed) {
             parts.append(style.success("installed"))
         } else if newEntries.contains(entry) {
             parts.append(style.warning("new"))
@@ -92,7 +93,10 @@ public enum ChangelogRenderer {
         return date.formatted(style)
     }
 
+    /// An entry's notes for the terminal; text that only points elsewhere ("Please visit the Help
+    /// Centre for the latest release notes") is no notes at all.
     static func render(_ markdown: String, full: Bool, style: TerminalStyle) -> String {
+        guard !ChangelogDocument.isPlaceholder(markdown) else { return "" }
         var renderer = MarkdownTerminalRenderer(style: style)
         renderer.linkDestinations = full
         return renderer.render(markdown, full: full)

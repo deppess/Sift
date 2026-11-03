@@ -377,6 +377,15 @@ enum ChangelogDocument {
     /// Centre for the latest release notes", "See the changelog", a bare link. Entries made only
     /// of these don't count as a changelog.
     static func isPlaceholder(_ content: String) -> Bool {
+        // Long notes answer early: without link syntax, words free of `*`, backticks, and URLs
+        // pass through the rewriting below unchanged, and those alone can exceed a pointer's length.
+        if content.utf8.count > 240, !content.contains("]("), !content.contains("][") {
+            var length = -1
+            for word in content.split(whereSeparator: \.isWhitespace) where !word.contains(where: { $0 == "*" || $0 == "`" }) && !word.contains("://") {
+                length += word.count + 1
+                if length > 240 { return false }
+            }
+        }
         let plain = stripInlineMarkdown(content)
             .replacing(webLink, with: "LINK")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")

@@ -12,6 +12,8 @@
 - A rendered page is read as soon as its text has settled, 0.4 s sooner, and a page that stays empty is given up on after a few seconds instead of 25 (VirtualDJ's).
 - An address that timed out or couldn't connect isn't asked again during the same run.
 - Refresh prefetches changelogs with four workers that each take the next item when free, instead of in batches waiting on their slowest item: about twice as many are fetched within the time limit.
+- Text that only points elsewhere ("Please visit the Help Centre…") is never shown as a version's notes, including copies already stored: the version reads "(no details given)" instead (Affinity's).
+- Long changelogs display faster with `--all` (Claude Code's 434 versions: 0.33 s to 0.24 s).
 
 ## 1.0.3 - 2026-11-01
 

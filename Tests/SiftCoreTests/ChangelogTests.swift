@@ -239,6 +239,16 @@ final class ChangelogTests: XCTestCase {
         XCTAssertFalse(rendered.contains("2.101.0"))
     }
 
+    func testPlaceholderNotesAreNeverShown() {
+        let changelog = Changelog(
+            selector: "app:com.example.app", name: "Example", installedVersion: "3.2.3", availableVersion: "3.3.3", source: "the app's update feed",
+            sourceURL: nil, entries: [ChangelogEntry(version: "3.3.3", content: "Please visit the Help Centre for the latest release notes.")],
+            fetchedAt: .now)
+        let rendered = ChangelogRenderer.humanReadable(changelog)
+        XCTAssertFalse(rendered.contains("Help Centre"))
+        XCTAssertTrue(rendered.contains("(no details given)"))
+    }
+
     func testResultsFromAnotherReleaseLineAndThinOnesAreCombined() {
         let other = ["0.1.71", "0.1.70"].map { ChangelogEntry(version: $0, content: "- x") }
         XCTAssertFalse(ChangelogVersion.sameLine(other, installed: "4.4212.0"), "0.1.x is another product's line")
