@@ -37,9 +37,7 @@ extension ChangelogResolver {
             return [.releaseNotes(URL(string: "https://docs.python.org/\(minor)/whatsnew/changelog.html")!)]
         case (.homebrewFormula, let name) where name.hasPrefix("python@"):
             return [.releaseNotes(URL(string: "https://docs.python.org/\(name.dropFirst(7))/whatsnew/changelog.html")!)]
-        case (.nativeApp, "com.image-line.flstudio"), (.nativeApp, "com.image-line.fl-cloud-plugins"):
-            return [.releaseNotes(URL(string: "https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/WhatsNew.htm")!)]
-        case (.nativeApp, "com.valvesoftware.steam"):
+        case (.nativeApp, "com.valvesoftware.steam"), (.homebrewCask, "steam"):
             return [.steam(appID: "593110")]
         case (.homebrewCask, "claude-code"), (.homebrewFormula, "claude-code"):
             return [.githubFile(GitHubRepository(owner: "anthropics", name: "claude-code"))]
@@ -49,24 +47,8 @@ extension ChangelogResolver {
                     URL(string: "https://chromereleases.googleblog.com/feeds/posts/default/-/Stable%20updates?redirect=false&max-results=25")!,
                     title: "Stable Channel Update for Desktop")
             ]
-        case (.homebrewCask, "android-studio"), (.nativeApp, "com.google.android.studio"):
-            return [.releaseNotes(URL(string: "https://developer.android.com/studio/releases")!)]
         case (.homebrewCask, "flutter"), (.homebrewFormula, "flutter"):
             return [.releaseNotes(URL(string: "https://docs.flutter.dev/release/release-notes")!)]
-        case (.homebrewCask, "gcloud-cli"), (.homebrewCask, "google-cloud-sdk"):
-            return [.releaseNotes(URL(string: "https://cloud.google.com/sdk/docs/release-notes")!)]
-        case (.homebrewCask, "zoom"), (.nativeApp, "us.zoom.xos"):
-            return [.releaseNotes(URL(string: "https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0061222")!)]
-        case (.homebrewCask, "unity-hub"), (.nativeApp, "com.unity3d.unityhub"):
-            return [.releaseNotes(URL(string: "https://unity.com/unity-hub/release-notes")!)]
-        case (.homebrewCask, "postman"), (.nativeApp, "com.postmanlabs.mac"):
-            return [.releaseNotes(URL(string: "https://www.postman.com/release-notes/postman-app/")!)]
-        case (.homebrewCask, "warp"), (.nativeApp, "dev.warp.Warp-Stable"):
-            return [.releaseNotes(URL(string: "https://docs.warp.dev/changelog")!)]
-        case (.homebrewCask, "google-drive"), (.nativeApp, "com.google.drivefs"):
-            return [.releaseNotes(URL(string: "https://support.google.com/a/answer/7577057?hl=en")!)]
-        case (.homebrewCask, "chatgpt"), (.nativeApp, "com.openai.chat"):
-            return [.releaseNotes(URL(string: "https://help.openai.com/en/articles/9703738-chatgpt-macos-app-release-notes")!)]
         case (.homebrewFormula, "zsh"):
             return [.githubFile(GitHubRepository(owner: "zsh-users", name: "zsh"))]
         case (.homebrewFormula, "glib"):
@@ -85,18 +67,6 @@ extension ChangelogResolver {
             return ["NEWS", "NEWS.\(major - 1)"].map {
                 .releaseNotes(URL(string: "https://raw.githubusercontent.com/emacs-mirror/emacs/emacs-\(major)/etc/\($0)")!)
             }
-        case (.homebrewCask, "steam"):
-            return [.steam(appID: "593110")]
-        case (.homebrewCask, "1password"), (.nativeApp, "com.1password.1password"):
-            return [.releaseNotes(URL(string: "https://releases.1password.com/mac/stable/")!)]
-        case (.homebrewCask, "claude"), (.nativeApp, "com.anthropic.claudefordesktop"):
-            return [.releaseNotes(URL(string: "https://support.claude.com/en/articles/12138966-claude-desktop-release-notes")!)]
-        case (.homebrewCask, "microsoft-edge"), (.nativeApp, "com.microsoft.edgemac"):
-            return [.releaseNotes(URL(string: "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel")!)]
-        case (.homebrewCask, "windows-app"), (.nativeApp, "com.microsoft.rdc.macos"):
-            return [.releaseNotes(URL(string: "https://learn.microsoft.com/en-us/windows-app/whats-new?tabs=macos")!)]
-        case (.homebrewCask, "miniconda"):
-            return [.releaseNotes(URL(string: "https://www.anaconda.com/docs/getting-started/miniconda/release-notes")!)]
         case (.homebrewCask, "mongodb-compass"), (.nativeApp, "com.mongodb.compass"):
             return [.githubReleases(GitHubRepository(owner: "mongodb-js", name: "compass"))]
         case (.homebrewCask, let name) where name.hasPrefix("temurin"):
@@ -106,14 +76,10 @@ extension ChangelogResolver {
         default:
             break
         }
-        // Office for Mac's apps share one page of release notes, dated per update.
-        let office = [
-            "microsoft-word", "microsoft-excel", "microsoft-powerpoint", "microsoft-outlook", "microsoft-onenote", "microsoft-office",
-            "microsoft-office-businesspro",
-            "com.microsoft.Word", "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.microsoft.Outlook", "com.microsoft.onenote.mac"
-        ]
-        if [.homebrewCask, .nativeApp].contains(item.kind), office.contains(item.bundleIdentifier ?? item.name) {
-            return [.releaseNotes(URL(string: "https://learn.microsoft.com/en-us/officeupdates/release-notes-office-for-mac")!)]
+        if [.homebrewCask, .nativeApp].contains(item.kind),
+            let page = releaseNotesPages.first(where: { $0.names.contains(item.bundleIdentifier ?? item.name) })?.url
+        {
+            return [.releaseNotes(URL(string: page)!)]
         }
         // JetBrains' IDEs: the releases API carries each version's "what's new".
         if let code = jetBrainsProductCodes[item.bundleIdentifier ?? item.name],
@@ -184,6 +150,35 @@ extension ChangelogResolver {
             return []
         }
     }
+
+    /// Release-notes pages no package metadata points to, by cask name or bundle identifier; Office
+    /// for Mac's apps share one page, dated per update.
+    private static let releaseNotesPages: [(names: [String], url: String)] = [
+        (
+            ["com.image-line.flstudio", "com.image-line.fl-cloud-plugins"],
+            "https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/WhatsNew.htm"
+        ),
+        (["android-studio", "com.google.android.studio"], "https://developer.android.com/studio/releases"),
+        (["gcloud-cli", "google-cloud-sdk"], "https://cloud.google.com/sdk/docs/release-notes"),
+        (["zoom", "us.zoom.xos"], "https://support.zoom.com/hc/en/article?id=zm_kb&sysparm_article=KB0061222"),
+        (["unity-hub", "com.unity3d.unityhub"], "https://unity.com/unity-hub/release-notes"),
+        (["postman", "com.postmanlabs.mac"], "https://www.postman.com/release-notes/postman-app/"),
+        (["warp", "dev.warp.Warp-Stable"], "https://docs.warp.dev/changelog"),
+        (["google-drive", "com.google.drivefs"], "https://support.google.com/a/answer/7577057?hl=en"),
+        (["chatgpt", "com.openai.chat"], "https://help.openai.com/en/articles/9703738-chatgpt-macos-app-release-notes"),
+        (["1password", "com.1password.1password"], "https://releases.1password.com/mac/stable/"),
+        (["claude", "com.anthropic.claudefordesktop"], "https://support.claude.com/en/articles/12138966-claude-desktop-release-notes"),
+        (["microsoft-edge", "com.microsoft.edgemac"], "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-relnote-stable-channel"),
+        (["windows-app", "com.microsoft.rdc.macos"], "https://learn.microsoft.com/en-us/windows-app/whats-new?tabs=macos"),
+        (["miniconda"], "https://www.anaconda.com/docs/getting-started/miniconda/release-notes"),
+        (
+            [
+                "microsoft-word", "microsoft-excel", "microsoft-powerpoint", "microsoft-outlook", "microsoft-onenote", "microsoft-office",
+                "microsoft-office-businesspro", "com.microsoft.Word", "com.microsoft.Excel", "com.microsoft.Powerpoint", "com.microsoft.Outlook",
+                "com.microsoft.onenote.mac"
+            ], "https://learn.microsoft.com/en-us/officeupdates/release-notes-office-for-mac"
+        )
+    ]
 
     static let jetBrainsProductCodes: [String: String] = [
         "intellij-idea": "IIU", "com.jetbrains.intellij": "IIU", "intellij-idea-ce": "IIC", "com.jetbrains.intellij.ce": "IIC",

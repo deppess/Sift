@@ -249,6 +249,18 @@ final class ChangelogTests: XCTestCase {
         XCTAssertTrue(rendered.contains("(no details given)"))
     }
 
+    func testKnownReleaseNotesPagesMatchACaskOrAnApp() {
+        func item(_ kind: CatalogKind, _ name: String, bundle: String? = nil) -> CatalogItem {
+            CatalogItem(
+                selector: "\(kind):\(name)", aliases: [], kind: kind, name: name, fullName: name, installedVersion: "1.0", availableVersion: nil, active: true,
+                bundleIdentifier: bundle, path: nil, prefix: nil, tap: nil, ownership: nil, autoUpdates: false, observedAt: .now, updateSource: nil)
+        }
+        let office = ChangelogResolver.Source.releaseNotes(URL(string: "https://learn.microsoft.com/en-us/officeupdates/release-notes-office-for-mac")!)
+        XCTAssertEqual(ChangelogResolver.knownSources(for: item(.homebrewCask, "microsoft-word")), [office])
+        XCTAssertEqual(ChangelogResolver.knownSources(for: item(.nativeApp, "Microsoft Word", bundle: "com.microsoft.Word")), [office])
+        XCTAssertEqual(ChangelogResolver.knownSources(for: item(.homebrewFormula, "microsoft-word")), [], "only casks and apps")
+    }
+
     func testResultsFromAnotherReleaseLineAndThinOnesAreCombined() {
         let other = ["0.1.71", "0.1.70"].map { ChangelogEntry(version: $0, content: "- x") }
         XCTAssertFalse(ChangelogVersion.sameLine(other, installed: "4.4212.0"), "0.1.x is another product's line")
