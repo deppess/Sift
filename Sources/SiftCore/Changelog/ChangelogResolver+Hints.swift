@@ -266,6 +266,11 @@ extension ChangelogResolver {
             let url = URL(string: "https://registry.npmjs.org/\(encoded)/latest"),
             let data = try? client.fetch(url, resource: .packageRegistry).body, let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return }
+        Self.npmLinks(manifest, into: &hints)
+    }
+
+    /// A package.json's repository (a URL, or an object holding one) and homepage.
+    private static func npmLinks(_ manifest: [String: Any], into hints: inout Hints) {
         hints.add(link: (manifest["repository"] as? String) ?? ((manifest["repository"] as? [String: Any])?["url"] as? String))
         hints.add(link: manifest["homepage"] as? String)
     }
@@ -289,8 +294,7 @@ extension ChangelogResolver {
             if let data = try? Data(contentsOf: package.appending(path: "package.json")),
                 let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             {
-                hints.add(link: (manifest["repository"] as? String) ?? ((manifest["repository"] as? [String: Any])?["url"] as? String))
-                hints.add(link: manifest["homepage"] as? String)
+                Self.npmLinks(manifest, into: &hints)
             } else {
                 npmHints(item.name, into: &hints)
             }
@@ -299,6 +303,9 @@ extension ChangelogResolver {
             for (_, link) in Self.rankedProjectURLs(links) { hints.add(link: link) }
             if links.isEmpty { pypiHints(item.name, into: &hints) }
         case RefreshProvider.cargo.rawValue:
+            // The installed crate's Cargo.toml names what crates.io would; the registry is asked
+            // only without it, as for npm and uv.
+            var linked = false
             if let version = item.installedVersion,
                 let sources = try? FileManager.default.contentsOfDirectory(atPath: scope.appending(path: "registry/src").path)
             {
@@ -309,12 +316,13 @@ extension ChangelogResolver {
                         for key in ["repository", "homepage"] {
                             if let match = manifest.firstMatch(of: try! Regex("(?m)^\\s*\(key)\\s*=\\s*\"([^\"]+)\"")) {
                                 hints.add(link: String(match.output[1].substring ?? ""))
+                                linked = true
                             }
                         }
                     }
                 }
             }
-            cratesHints(item.name, into: &hints)
+            if !linked { cratesHints(item.name, into: &hints) }
         case RefreshProvider.steamGames.rawValue:
             // A cache from 1.0 has no app ID yet; Steam's own manifests have it.
             if let appID = item.identifier ?? steamAppID(named: item.name) { hints.add(.steam(appID: appID)) }
