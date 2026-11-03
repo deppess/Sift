@@ -582,7 +582,7 @@ public struct ChangelogResolver: Sendable {
                     content = own.content
                 }
             }
-            entries.append(ChangelogEntry(version: item.displayVersion, date: item.publishedAt.flatMap(Self.rfc822Date), content: content, sourceURL: source))
+            entries.append(ChangelogEntry(version: item.displayVersion, date: item.publishedAt.flatMap(ChangelogDocument.rfc822Date), content: content, sourceURL: source))
         }
         // The notes page the feed links to usually covers every version (Cyberduck's,
         // Postman's): its older sections fill in the history the feed no longer lists.
@@ -617,19 +617,6 @@ public struct ChangelogResolver: Sendable {
         return Dictionary(zip(links, pages.values).compactMap { link, page in page.map { (link, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
-    static func rfc822Date(_ text: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        for format in [
-            "EEE, dd MMM yyyy HH:mm:ss Z", "EEE, d MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm:ss zzz", "dd MMM yyyy HH:mm:ss Z", "yyyy-MM-dd'T'HH:mm:ssZ",
-            "yyyy-MM-dd"
-        ] {
-            formatter.dateFormat = format
-            if let date = formatter.date(from: text.trimmingCharacters(in: .whitespaces)) { return date }
-        }
-        return ChangelogDocument.date(in: text)
-    }
-
     // MARK: App Store
 
     private func appStore(_ bundleIdentifier: String) throws -> [ChangelogEntry] {
@@ -650,7 +637,7 @@ public struct ChangelogResolver: Sendable {
             if ChangelogDocument.isMeaningful(history) { return history }
         }
         guard let version = listing["version"] as? String else { return [] }
-        let date = (listing["currentVersionReleaseDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+        let date = (listing["currentVersionReleaseDate"] as? String).flatMap { ChangelogDocument.isoDate($0) }
         return [ChangelogEntry(version: version, date: date, content: (listing["releaseNotes"] as? String) ?? "", sourceURL: storeURL?.absoluteString)]
     }
 
@@ -665,7 +652,7 @@ public struct ChangelogResolver: Sendable {
                 let notes = (dictionary["releaseNotes"] ?? dictionary["notes"] ?? dictionary["text"]) as? String
                 if let version, ChangelogVersion.token(in: version) != nil, let notes, !notes.isEmpty, seen.insert(version).inserted {
                     let dateText = (dictionary["releaseDate"] ?? dictionary["date"] ?? dictionary["secondarySubtitle"]) as? String
-                    let date = dateText.flatMap { ISO8601DateFormatter().date(from: $0) ?? ChangelogDocument.date(in: $0) }
+                    let date = dateText.flatMap { ChangelogDocument.isoDate($0) ?? ChangelogDocument.date(in: $0) }
                     entries.append(ChangelogEntry(version: ChangelogVersion.token(in: version) ?? version, date: date, content: notes))
                 }
                 dictionary.values.forEach(walk)
@@ -730,7 +717,7 @@ public struct ChangelogResolver: Sendable {
             let number = (major, minor, release["releaseNum"] as? Int ?? 0)
             let version = number.2 == 0 ? "\(major).\(minor)" : "\(major).\(minor).\(number.2)"
             let html = (download["desc"] as? String) ?? ""
-            let date = (download["date"] as? String).flatMap { ChangelogDocument.date(in: $0) ?? Self.rfc822Date($0) }
+            let date = (download["date"] as? String).flatMap { ChangelogDocument.date(in: $0) ?? ChangelogDocument.rfc822Date($0) }
             entries.append((ChangelogEntry(version: version, title: name, date: date, content: HTMLMarkdown.convert(html)), number))
         }
         return entries.sorted { $0.1 > $1.1 }.map(\.0)
@@ -779,7 +766,7 @@ public struct ChangelogResolver: Sendable {
                 guard let tag = release["tag_name"] as? String else { continue }
                 let title = (release["name"] as? String)?.trimmingCharacters(in: .whitespaces)
                 let version = ChangelogVersion.token(in: tag) ?? title.flatMap(ChangelogVersion.token(in:)) ?? tag
-                let date = (release["published_at"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+                let date = (release["published_at"] as? String).flatMap { ChangelogDocument.isoDate($0) }
                 var body = ChangelogDocument.tidy((release["body"] as? String) ?? "")
                 // Some projects paste their whole changelog file into every release.
                 let sections = ChangelogDocument.entries(fromMarkdown: body, sourceURL: nil)
@@ -970,7 +957,7 @@ public struct ChangelogResolver: Sendable {
                     .filter { !$0.lowercased().hasPrefix("merge ") }
                 content = messages.reversed().map { "- \($0)" }.joined(separator: "\n")
                 date = ((commits.last?["commit"] as? [String: Any])?["committer"] as? [String: Any])?["date"].flatMap { $0 as? String }.flatMap {
-                    ISO8601DateFormatter().date(from: $0)
+                    ChangelogDocument.isoDate($0)
                 }
             }
             entries.append(
@@ -1110,7 +1097,7 @@ public struct ChangelogResolver: Sendable {
                 guard let tag = release["tag_name"] as? String, let version = ChangelogVersion.token(in: tag) else { continue }
                 let body = (release["description"] as? String) ?? (release["body"] as? String) ?? ""
                 let date = ((release["released_at"] ?? release["published_at"] ?? release["created_at"]) as? String).flatMap {
-                    ISO8601DateFormatter().date(from: $0.replacing(#/\.\d+/#, with: ""))
+                    ChangelogDocument.isoDate($0.replacing(#/\.\d+/#, with: ""))
                 }
                 releases.append(
                     ChangelogEntry(

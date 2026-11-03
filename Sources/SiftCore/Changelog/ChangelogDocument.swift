@@ -364,6 +364,28 @@ enum ChangelogDocument {
         return nil
     }
 
+    /// An ISO 8601 timestamp, as APIs and feeds write them ("2026-10-23T10:00:00Z").
+    static func isoDate(_ text: String) -> Date? { isoFormatter.date(from: text) }
+
+    /// A feed's date: RFC 822 ("Tue, 20 Oct 2026 10:00:00 +0000") and its usual variants, or else
+    /// any date written in the text.
+    static func rfc822Date(_ text: String) -> Date? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return feedFormatters.lazy.compactMap { $0.date(from: trimmed) }.first ?? date(in: text)
+    }
+
+    // Thread-safe once set up, like DateFormatter, though not marked Sendable.
+    nonisolated(unsafe) private static let isoFormatter = ISO8601DateFormatter()
+    private static let feedFormatters = [
+        "EEE, dd MMM yyyy HH:mm:ss Z", "EEE, d MMM yyyy HH:mm:ss Z", "EEE, dd MMM yyyy HH:mm:ss zzz", "dd MMM yyyy HH:mm:ss Z", "yyyy-MM-dd'T'HH:mm:ssZ",
+        "yyyy-MM-dd"
+    ].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = format
+        return formatter
+    }
+
     static func utcDate(year: Int, month: Int, day: Int) -> Date? {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

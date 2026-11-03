@@ -84,7 +84,7 @@ enum UpdateFeedJSON {
                     links.append(url)
                 } else {
                     let date = dateKeys.lazy.compactMap { key -> Date? in
-                        if let text = object[key] as? String { return ISO8601DateFormatter().date(from: text) ?? ChangelogDocument.date(in: text) }
+                        if let text = object[key] as? String { return ChangelogDocument.isoDate(text) ?? ChangelogDocument.date(in: text) }
                         if let number = object[key] as? Double { return Date(timeIntervalSince1970: number > 1e11 ? number / 1000 : number) }
                         return nil
                     }.first

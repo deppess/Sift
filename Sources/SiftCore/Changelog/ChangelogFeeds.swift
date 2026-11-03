@@ -28,7 +28,7 @@ enum ChangelogFeeds {
             let html = item["content:encoded"] ?? item["content"] ?? item["description"] ?? item["summary"] ?? ""
             let content = html.contains("<") ? HTMLMarkdown.convert(html) : ChangelogDocument.tidy(html)
             let date = (item["pubDate"] ?? item["updated"] ?? item["published"]).flatMap {
-                ISO8601DateFormatter().date(from: $0) ?? ChangelogResolver.rfc822Date($0)
+                ChangelogDocument.isoDate($0) ?? ChangelogDocument.rfc822Date($0)
             }
             let version = ChangelogVersion.token(in: title) ?? title
             return ChangelogEntry(
@@ -119,7 +119,7 @@ enum ChangelogFeeds {
                     let version = ChangelogVersion.token(in: label) ?? label
                     if seen.insert(version).inserted {
                         let date = dateKeys.lazy.compactMap { object[$0] as? String }.first.flatMap {
-                            ISO8601DateFormatter().date(from: $0) ?? ChangelogDocument.date(in: $0)
+                            ChangelogDocument.isoDate($0) ?? ChangelogDocument.date(in: $0)
                         }
                         entries.append(
                             ChangelogEntry(
