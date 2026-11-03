@@ -244,6 +244,8 @@ enum ChangelogDocument {
         return lines.map { line -> String in
             let stripped = String(line.dropFirst(min(common, line.prefix { $0 == " " || $0 == "\t" }.count)))
             if dashList, dashed(stripped) { return "- " + stripped.dropFirst() }
+            // A typed bullet ("• Issue corrected", OnyX's) is a list item.
+            if stripped.hasPrefix("• ") { return "- " + stripped.dropFirst(2) }
             return stripped.hasPrefix("** ") ? "### " + stripped.dropFirst(3) : stripped
         }.joined(separator: "\n")
     }

@@ -131,7 +131,9 @@ public struct ChangelogResolver: Sendable {
                     // is a start that the next source may extend.
                     let withText = entries.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
                     let thin = entries.count < 3 || withText * 2 < entries.count
-                    let sameLine = ChangelogVersion.sameLine(entries, installed: hints.installed)
+                    // The update's line counts as the item's too: going from 7 to 8.3, 8.x notes are its own.
+                    let sameLine =
+                        ChangelogVersion.sameLine(entries, installed: hints.installed) || hints.latest.map { ChangelogVersion.sameLine(entries, installed: $0) } == true
                     let candidate = Candidate(source: source, entries: entries, covers: coversInstalled, sameLine: sameLine, thin: thin)
                     if versioned, !coversInstalled || thin || !sameLine, extraTries < 2 {
                         partials.append(candidate)

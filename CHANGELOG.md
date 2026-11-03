@@ -17,6 +17,8 @@
 - Long changelogs display faster with `--all` (Claude Code's 434 versions: 0.33 s to 0.24 s).
 - Changelogs numbered by build ("BUILD 9644 (2026-09-21)") are read, and an installed version is placed by its build (VirtualDJ's 8.5.9307 is build 9307), so only the builds after it show as new. Notes written as `-Fix …` lines read as bullets.
 - VirtualDJ's changelog is found at its own page, which neither the app nor its site links.
+- An update to a new major version keeps that version's own release notes: going from 7 to 8.3, the 8.x notes are no longer set aside as another product's (KeyboardCleanTool).
+- A homepage listing versions without the installed one (OnyX's table of the newest release for each macOS) gives way to the changelog it links when that has the installed version. Lines starting with a typed "•" read as bullets.
 - A beta of a new major version shows the previous major's release notes instead of bare version numbers, since its own aren't published yet (Little Snitch 7.0 beta shows 6.5's).
 - An app with no other known source is looked up as its copyright holder's GitHub project of the same name (Caffeinate, from Lennard Kittner, is LennardKittner/Caffeinate).
 

@@ -17,7 +17,18 @@ extension ChangelogResolver {
         // Versions of another product (a homepage listing the vendor's other app) don't stop the search.
         let fits = { (found: [ChangelogEntry]) in ChangelogVersion.sameLine(found, installed: installed) }
         // A homepage's own couple of versions (a "what's new" teaser) don't beat its changelog link.
-        if fits(entries), entries.count >= (isChangelogPage ? 2 : 3) || ChangelogDocument.isMeaningful(entries) && isChangelogPage { return entries }
+        if fits(entries), entries.count >= (isChangelogPage ? 2 : 3) || ChangelogDocument.isMeaningful(entries) && isChangelogPage {
+            // A homepage's versions without the installed one (OnyX's newest for each macOS) give
+            // way to a changelog it links that has it.
+            if !isChangelogPage, let installed, ChangelogVersion.installedIndex(in: entries, installed: installed) == nil {
+                for link in Self.changelogLinks(in: html, base: url).prefix(2) {
+                    guard let text = try? fetchText(link, resource: .changelogPage) else { continue }
+                    let linked = read(text, url: link, render: true)
+                    if fits(linked), ChangelogVersion.installedIndex(in: linked, installed: installed) != nil { return linked }
+                }
+            }
+            return entries
+        }
         // An index of years (Warp's /changelog links /changelog/2026, /changelog/2025): the newest two.
         if isChangelogPage, entries.count < 3 {
             let years = Self.yearSections(in: html, base: url)

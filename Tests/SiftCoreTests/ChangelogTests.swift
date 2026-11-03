@@ -264,6 +264,26 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(ChangelogVersion.installedIndex(in: entries, installed: "8.5.9307"), 2, "the build is the version's last part")
     }
 
+    func testAHomepageWithoutTheInstalledVersionGivesWayToItsLinkedChangelog() throws {
+        let database = try Database(url: url)
+        MetadataURLProtocol.handler = { request in
+            switch request.url!.absoluteString {
+            case "https://example.com/onyx.html":
+                // The newest version for each macOS, and a link to the release history.
+                let page = "<html><body><h2>macOS 26: 5.1.2</h2><p>x</p><h2>macOS 15: 5.0.6</h2><p>x</p><h2>macOS 14: 4.8.5</h2><p>x</p>"
+                    + "<a href=\"onyx_release.html\">Release notes</a></body></html>"
+                return (200, Data(page.utf8), [:])
+            case "https://example.com/onyx_release.html":
+                return (200, Data("<html><body><h3>5.1.2</h3><ul><li>Fix</li></ul><h3>5.1.1</h3><ul><li>Icons</li></ul><h3>5.1.0</h3><ul><li>New</li></ul></body></html>".utf8), [:])
+            default:
+                return (404, nil, [:])
+            }
+        }
+        let entries = try ChangelogResolver(client: mockedClient(database), environment: [:]).page(
+            URL(string: "https://example.com/onyx.html")!, name: "OnyX", installed: "5.1.1")
+        XCTAssertEqual(entries.map(\.version), ["5.1.2", "5.1.1", "5.1.0"])
+    }
+
     func testABetaOfTheNextMajorAcceptsThePreviousMajorsNotes() {
         let notes = ["6.5", "6.4.1", "6.4"].map { ChangelogEntry(version: $0, content: "- change") }
         XCTAssertTrue(ChangelogVersion.sameLine(notes, installed: "7.0 beta"))
