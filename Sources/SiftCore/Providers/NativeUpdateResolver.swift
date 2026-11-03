@@ -218,14 +218,10 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
 
     private func checkAppStore(_ application: NativeApplication) -> NativeUpdateOutcome {
         guard let bundleIdentifier = application.bundleIdentifier else { return .unchecked("The bundle has no identifier to look up.") }
-        var components = URLComponents(string: "https://itunes.apple.com/lookup")!
-        components.queryItems = [
-            URLQueryItem(name: "bundleId", value: bundleIdentifier), URLQueryItem(name: "country", value: storefront),
-            URLQueryItem(name: "entity", value: "macSoftware")
-        ]
+        let lookup = AppStoreListing.lookupURL(bundleIdentifier, storefront: storefront)
         let listing: AppStoreListing?
         do {
-            listing = try AppStoreListing.parse(metadataClient.fetch(components.url!, resource: .appStoreLookup).body, bundleIdentifier: bundleIdentifier)
+            listing = try AppStoreListing.parse(metadataClient.fetch(lookup, resource: .appStoreLookup).body, bundleIdentifier: bundleIdentifier)
         } catch {
             return .failed("App Store lookup for \(application.displayName): \(error.localizedDescription)")
         }
@@ -261,6 +257,16 @@ private final class OnceLoader<Value>: @unchecked Sendable {
 }
 
 struct AppStoreListing: Equatable {
+    /// The App Store's lookup of one Mac app in one storefront.
+    static func lookupURL(_ bundleIdentifier: String, storefront: String) -> URL {
+        var components = URLComponents(string: "https://itunes.apple.com/lookup")!
+        components.queryItems = [
+            URLQueryItem(name: "bundleId", value: bundleIdentifier), URLQueryItem(name: "country", value: storefront),
+            URLQueryItem(name: "entity", value: "macSoftware")
+        ]
+        return components.url!
+    }
+
     let version: String
     let releaseNotes: String?
     let storeURL: String?

@@ -259,53 +259,49 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             // ~19 MB of JSON (2 MB on the wire); cached compressed and revalidated with its ETag.
             return MetadataHTTPPolicy(
                 cacheKey: "homebrew-cask-catalog-v1", allowedHosts: ["formulae.brew.sh"], responseLimit: 64 * 1_048_576, accept: "application/json",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+                compressesCache: true, maxAge: 60 * 60)
         case let .electronUpdateFeed(host):
             return MetadataHTTPPolicy(
                 cacheKey: "electron-update-feed-v1", allowedHosts: [host.lowercased()], responseLimit: 1_048_576,
-                accept: "text/yaml, application/x-yaml, text/plain", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false,
-                rateLimitKey: nil, redirectsToPublicHosts: true, maxAge: 60 * 60)
+                accept: "text/yaml, application/x-yaml, text/plain", redirectsToPublicHosts: true, maxAge: 60 * 60)
         case .macPortsPort:
             return MetadataHTTPPolicy(
                 cacheKey: "macports-port-v1", allowedHosts: ["ports.macports.org"], responseLimit: 1_048_576, accept: "application/json",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 6 * 60 * 60)
+                compressesCache: true, maxAge: 6 * 60 * 60)
         case .cratesIndex:
             return MetadataHTTPPolicy(
                 cacheKey: "crates-index-v1", allowedHosts: ["index.crates.io"], responseLimit: 16 * 1_048_576, accept: "application/json, text/plain",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+                compressesCache: true, maxAge: 60 * 60)
         case .blackmagicDownloads:
             return MetadataHTTPPolicy(
                 cacheKey: "blackmagic-downloads-v1", allowedHosts: ["www.blackmagicdesign.com"], responseLimit: 8 * 1_048_576, accept: "application/json",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+                compressesCache: true, maxAge: 60 * 60)
         case .appStoreLookup:
             return MetadataHTTPPolicy(
                 cacheKey: "app-store-lookup-v1", allowedHosts: ["itunes.apple.com"], responseLimit: 1_048_576, accept: "application/json",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, maxAge: 60 * 60)
+                maxAge: 60 * 60)
         case let .sparkleAppcast(host):
             // Feeds commonly redirect to a CDN or object store (some go to S3), as Sparkle allows.
             return MetadataHTTPPolicy(
                 cacheKey: "sparkle-appcast-v1", allowedHosts: [host.lowercased()], responseLimit: 4_194_304,
-                accept: "application/rss+xml, application/xml, text/xml", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false,
-                rateLimitKey: nil, redirectsToPublicHosts: true, maxAge: 60 * 60)
+                accept: "application/rss+xml, application/xml, text/xml", redirectsToPublicHosts: true, maxAge: 60 * 60)
         case let .changelogPage(host):
             // Project sites move their changelogs behind redirects to docs hosts and CDNs.
             return MetadataHTTPPolicy(
                 cacheKey: "changelog-page-v1", allowedHosts: [host.lowercased()], responseLimit: 8 * 1_048_576,
-                accept: "text/html, text/markdown, text/plain;q=0.9, */*;q=0.5", headers: ["User-Agent": SiftVersion.userAgent], token: nil,
-                serialGitHub: false, rateLimitKey: nil, compressesCache: true, redirectsToPublicHosts: true)
+                accept: "text/html, text/markdown, text/plain;q=0.9, */*;q=0.5", compressesCache: true, redirectsToPublicHosts: true)
         case .packageRegistry:
             return MetadataHTTPPolicy(
                 cacheKey: "package-registry-v1", allowedHosts: ["registry.npmjs.org", "pypi.org", "crates.io", "formulae.brew.sh"],
-                responseLimit: 16 * 1_048_576, accept: "application/json", headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false,
-                rateLimitKey: nil, compressesCache: true, maxAge: 24 * 60 * 60)
+                responseLimit: 16 * 1_048_576, accept: "application/json", compressesCache: true, maxAge: 24 * 60 * 60)
         case .steamNews:
             return MetadataHTTPPolicy(
                 cacheKey: "steam-news-v1", allowedHosts: ["api.steampowered.com"], responseLimit: 16 * 1_048_576, accept: "application/json",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true, maxAge: 60 * 60)
+                compressesCache: true, maxAge: 60 * 60)
         case .appStorePage:
             return MetadataHTTPPolicy(
                 cacheKey: "app-store-page-v1", allowedHosts: ["apps.apple.com"], responseLimit: 8 * 1_048_576, accept: "text/html",
-                headers: ["User-Agent": SiftVersion.userAgent], token: nil, serialGitHub: false, rateLimitKey: nil, compressesCache: true)
+                compressesCache: true)
         case .githubChangelog:
             return MetadataHTTPPolicy(
                 cacheKey: "github-changelog-v2", allowedHosts: ["raw.githubusercontent.com"], responseLimit: 2_097_152, accept: "text/plain", headers: [:],
@@ -508,10 +504,10 @@ private struct MetadataHTTPPolicy: Sendable {
     let allowedHosts: Set<String>
     let responseLimit: Int
     let accept: String
-    let headers: [String: String]
-    let token: String?
-    let serialGitHub: Bool
-    let rateLimitKey: String?
+    var headers = ["User-Agent": SiftVersion.userAgent]
+    var token: String?
+    var serialGitHub = false
+    var rateLimitKey: String?
     var compressesCache = false
     /// Redirects may leave `allowedHosts` for any public HTTPS host (see `isPublicHTTPSURL`).
     var redirectsToPublicHosts = false

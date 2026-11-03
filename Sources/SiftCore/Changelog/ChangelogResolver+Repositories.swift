@@ -137,10 +137,13 @@ extension ChangelogResolver {
         let genericGroups = groups.filter { generic.contains($0.key) && (chosenPlatform == nil || !platforms.contains($0.key) || $0.key == chosenPlatform) }
             .values.flatMap { $0 }
         let kept = (best.map { groups[$0] ?? [] } ?? []) + (groups[""] ?? []) + (best == nil ? genericGroups : [])
-        return kept.sorted { left, right in
-            guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
-            return SparkleVersion.compare(a, b) == .orderedDescending
-        }
+        return kept.sorted(by: ChangelogVersion.isNewer)
+    }
+
+    /// Releases that go back a while, mostly with notes, need no changelog file to fill them in;
+    /// old releases without notes (kitty's) are filled from it.
+    private static func releasesSuffice(_ releases: [ChangelogEntry]) -> Bool {
+        releases.count >= 30 && releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count * 10 >= releases.count * 8
     }
 
     /// A repository's releases, with its changelog file filling in versions the releases don't
@@ -150,9 +153,7 @@ extension ChangelogResolver {
         let installedPrerelease = installed?.range(of: #"(?i)(alpha|beta|rc|preview|pre)"#, options: .regularExpression) != nil
         let releases = try githubReleases(repository, name: name, preferCLI: preferCLI, prereleases: installedPrerelease)
         let coversInstalled = installed.map { ChangelogVersion.installedIndex(in: releases, installed: $0) != nil } ?? true
-        // Old releases without notes (kitty's) are filled from the repository's changelog too.
-        let withText = releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
-        guard releases.count < 30 || !coversInstalled || withText * 10 < releases.count * 8 else { return releases }
+        if coversInstalled, Self.releasesSuffice(releases) { return releases }
         let file = (try? githubFile(repository)) ?? []
         guard !file.isEmpty else { return releases }
         return Self.merge(releases, file)
@@ -240,8 +241,7 @@ extension ChangelogResolver {
             }
         }
         releases = Self.ownProductReleases(releases, name: name)
-        let withText = releases.filter { !ChangelogDocument.isPlaceholder($0.content) }.count
-        if releases.count >= 30, withText * 10 >= releases.count * 8 { return releases }
+        if Self.releasesSuffice(releases) { return releases }
         let rawURL = { (file: String) in kind == .gitlab ? "https://\(host)/\(path)/-/raw/HEAD/\(file)" : "https://\(host)/\(path)/raw/branch/main/\(file)" }
         for (offset, file) in Self.repositoryChangelogPaths.enumerated() {
             let raw = rawURL(file)

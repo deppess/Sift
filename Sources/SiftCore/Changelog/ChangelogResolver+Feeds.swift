@@ -183,12 +183,7 @@ extension ChangelogResolver {
     // MARK: App Store
 
     func appStore(_ bundleIdentifier: String) throws -> [ChangelogEntry] {
-        var components = URLComponents(string: "https://itunes.apple.com/lookup")!
-        components.queryItems = [
-            URLQueryItem(name: "bundleId", value: bundleIdentifier), URLQueryItem(name: "country", value: storefront),
-            URLQueryItem(name: "entity", value: "macSoftware")
-        ]
-        let data = try client.fetch(components.url!, resource: .appStoreLookup).body
+        let data = try client.fetch(AppStoreListing.lookupURL(bundleIdentifier, storefront: storefront), resource: .appStoreLookup).body
         guard let document = try JSONSerialization.jsonObject(with: data) as? [String: Any], let results = document["results"] as? [[String: Any]],
             let listing = results.first(where: { $0["bundleId"] as? String == bundleIdentifier && $0["kind"] as? String == "mac-software" })
                 ?? results.first(where: { $0["bundleId"] as? String == bundleIdentifier })

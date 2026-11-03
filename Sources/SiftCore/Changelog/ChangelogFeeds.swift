@@ -140,10 +140,7 @@ enum ChangelogFeeds {
             walk(json, depth: 0)
         }
         guard entries.count >= 2 else { return [] }
-        return entries.sorted { left, right in
-            guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
-            return SparkleVersion.compare(a, b) == .orderedDescending
-        }
+        return entries.sorted(by: ChangelogVersion.isNewer)
     }
 
     /// A page with nothing to run and either text of its own (CleanShot's per-version notes) or

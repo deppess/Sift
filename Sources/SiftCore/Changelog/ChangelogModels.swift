@@ -118,6 +118,12 @@ enum ChangelogVersion {
         return nil
     }
 
+    /// Whether `left` is a newer version than `right`; an entry without a version orders as equal.
+    static func isNewer(_ left: ChangelogEntry, _ right: ChangelogEntry) -> Bool {
+        guard let a = token(in: left.version), let b = token(in: right.version) else { return false }
+        return SparkleVersion.compare(a, b) == .orderedDescending
+    }
+
     /// What an installed version is compared as: Homebrew's `_1` revision and a cask's `,build`
     /// suffix, and an app's "(build)", are dropped.
     static func normalized(_ installed: String) -> String {

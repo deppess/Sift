@@ -122,10 +122,7 @@ enum ChangelogDocument {
                         version: ChangelogVersion.token(in: lines[start]) ?? entry.version, date: date(in: lines[start]), content: tidy(text),
                         sourceURL: entry.sourceURL))
             }
-            return split.sorted { left, right in
-                guard let a = ChangelogVersion.token(in: left.version), let b = ChangelogVersion.token(in: right.version) else { return false }
-                return SparkleVersion.compare(a, b) == .orderedDescending
-            }
+            return split.sorted(by: ChangelogVersion.isNewer)
         }
         // A version repeated as its own entry's title ("1.9.8" then "1.9.8 · A Whole Glance")
         // is one entry.
