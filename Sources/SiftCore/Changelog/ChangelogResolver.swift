@@ -489,10 +489,9 @@ public struct ChangelogResolver: Sendable {
     /// As many requests at once as the HTTP client allows, so the reading that follows finds
     /// them cached: which result is used, and in what order, stays the reader's. A failure isn't
     /// cached and is met again there.
-    func warm(_ urls: [URL], resource: (URL) -> MetadataResource) {
-        let requests = urls.map { ($0, resource($0)) }
-        guard requests.count > 1 else { return }
-        DispatchQueue.concurrentPerform(iterations: requests.count) { index in _ = try? client.fetch(requests[index].0, resource: requests[index].1) }
+    func warm(_ urls: [URL], resource: MetadataResource) {
+        guard urls.count > 1 else { return }
+        DispatchQueue.concurrentPerform(iterations: urls.count) { index in _ = try? client.fetch(urls[index], resource: resource) }
     }
 
     /// Requests a loop may stop early in, warmed a few at a time: ahead of the loop, but not far ahead.

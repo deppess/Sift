@@ -31,7 +31,7 @@ extension ChangelogResolver {
                     // Out of API quota: the releases feed has the latest ten without spending any.
                     let feed = URL(string: "https://github.com/\(owner)/\(name)/releases.atom")!
                     // The feed lists pre-releases and drafts too; only versioned releases of this item stay.
-                    let items = ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage(host: "github.com")).body)
+                    let items = ChangelogFeeds.entries(fromFeed: try client.fetch(feed, resource: .changelogPage).body)
                         .filter {
                             ChangelogVersion.token(in: $0.version) == $0.version
                                 && $0.version.range(of: #"(?i)(alpha|beta|rc|pre|dev|nightly)"#, options: .regularExpression) == nil
@@ -183,7 +183,7 @@ extension ChangelogResolver {
             else { return nil }
             return URL(string: "https://api.github.com/repos/\(owner)/\(name)/compare/\(base)...\(head)")
         }
-        warm(compares.compactMap { $0 }) { _ in .githubReleaseList }
+        warm(compares.compactMap { $0 }, resource: .githubReleaseList)
         var entries: [ChangelogEntry] = []
         for (index, tag) in versioned.enumerated() {
             var content = ""
@@ -224,7 +224,7 @@ extension ChangelogResolver {
         let api =
             kind == .gitlab ? "https://\(host)/api/v4/projects/\(encoded)/releases?per_page=100" : "https://\(host)/api/v1/repos/\(path)/releases?limit=50"
         var releases: [ChangelogEntry] = []
-        if let url = URL(string: api), let data = try? client.fetch(url, resource: .changelogPage(host: host)).body,
+        if let url = URL(string: api), let data = try? client.fetch(url, resource: .changelogPage).body,
             let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         {
             for release in list
@@ -246,13 +246,11 @@ extension ChangelogResolver {
         for (offset, file) in Self.repositoryChangelogPaths.enumerated() {
             let raw = rawURL(file)
             if offset % Self.warmBatch == 0 {
-                warm(Self.repositoryChangelogPaths.dropFirst(offset).prefix(Self.warmBatch).compactMap { URL(string: rawURL($0)) }) { _ in
-                    .changelogPage(host: host)
-                }
+                warm(Self.repositoryChangelogPaths.dropFirst(offset).prefix(Self.warmBatch).compactMap { URL(string: rawURL($0)) }, resource: .changelogPage)
             }
             guard let url = URL(string: raw) else { continue }
             let text: String
-            do { text = try fetchText(url, resource: .changelogPage(host: host)) } catch MetadataHTTPError.notFound { continue } catch { break }
+            do { text = try fetchText(url, resource: .changelogPage) } catch MetadataHTTPError.notFound { continue } catch { break }
             // A missing file can come back as the forge's sign-in or error page.
             guard !text.lowercased().contains("<html") else { continue }
             let entries = ChangelogDocument.entries(fromMarkdown: text, sourceURL: raw)
@@ -278,7 +276,7 @@ extension ChangelogResolver {
             let url = rawURL(path)
             // Most spellings are missing, and each miss was a round trip of its own.
             if offset % Self.warmBatch == 0 {
-                warm(Self.repositoryChangelogPaths.dropFirst(offset).prefix(Self.warmBatch).map(rawURL)) { _ in .githubChangelog }
+                warm(Self.repositoryChangelogPaths.dropFirst(offset).prefix(Self.warmBatch).map(rawURL), resource: .githubChangelog)
             }
             let text: String
             do { text = try fetchText(url, resource: .githubChangelog) } catch MetadataHTTPError.notFound { continue }

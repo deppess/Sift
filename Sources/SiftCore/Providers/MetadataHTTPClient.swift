@@ -17,12 +17,14 @@ public enum MetadataResource: Equatable, Sendable {
     /// MacPorts' port database, for when the locally synced port index is stale.
     case macPortsPort
     case githubLatestRelease
-    /// An electron-builder `latest-mac.yml`; only the host the app's manifest names is allowed.
-    case electronUpdateFeed(host: String)
-    /// A Sparkle appcast; only the host the application's own bundle declares is allowed.
-    case sparkleAppcast(host: String)
+    /// An electron-builder `latest-mac.yml`, from the host the app's manifest names. For this
+    /// and the next two, the host allowed is the one in the URL fetched, which callers take from
+    /// the item's own bundle or package metadata.
+    case electronUpdateFeed
+    /// A Sparkle appcast, from the host the application's own bundle declares.
+    case sparkleAppcast
     /// A changelog or release-notes web page on the host its package or app names.
-    case changelogPage(host: String)
+    case changelogPage
     /// Package metadata naming a project's repository and homepage: npm, PyPI, crates.io, Homebrew.
     case packageRegistry
     /// A Steam game's announcements and patch notes.
@@ -110,11 +112,11 @@ public final class MetadataHTTPClient: @unchecked Sendable {
 
     /// GET, or with `body` a POST of that JSON (GitHub's GraphQL), cached by the URL and body.
     public func fetch(_ url: URL, resource: MetadataResource, body: Data? = nil) throws -> MetadataHTTPResponse {
-        guard debug else { return try perform(url, policy: policy(for: resource), body: body) }
+        guard debug else { return try perform(url, policy: policy(for: resource, url: url), body: body) }
         let method = body == nil ? "GET" : "POST"
         let started = Date()
         do {
-            let response = try perform(url, policy: policy(for: resource), body: body)
+            let response = try perform(url, policy: policy(for: resource, url: url), body: body)
             Self.trace("\(method) \(url.absoluteString) -> \(response.body.count) bytes in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
             return response
         } catch {
@@ -137,7 +139,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     /// one (same ETag, or the same download when the server sends none), the saved value is reused
     /// instead of deriving it again. Fetching works exactly as `fetch` does.
     public func fetch<Value: Codable>(_ url: URL, resource: MetadataResource, derivedAs name: String, _ derive: (Data) throws -> Value) throws -> Value {
-        let policy = policy(for: resource)
+        let policy = policy(for: resource, url: url)
         let derivedKind = "\(policy.cacheKey)-derived-\(name)"
         // The response a saved value was derived from: its ETag, or the download itself when the
         // server sends none.
@@ -253,16 +255,17 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         return MetadataHTTPResponse(body: data)
     }
 
-    private func policy(for resource: MetadataResource) -> MetadataHTTPPolicy {
+    private func policy(for resource: MetadataResource, url: URL) -> MetadataHTTPPolicy {
+        let host = url.host?.lowercased() ?? ""
         switch resource {
         case .homebrewCaskCatalog:
             // ~19 MB of JSON (2 MB on the wire); cached compressed and revalidated with its ETag.
             return MetadataHTTPPolicy(
                 cacheKey: "homebrew-cask-catalog-v1", allowedHosts: ["formulae.brew.sh"], responseLimit: 64 * 1_048_576, accept: "application/json",
                 compressesCache: true, maxAge: 60 * 60)
-        case let .electronUpdateFeed(host):
+        case .electronUpdateFeed:
             return MetadataHTTPPolicy(
-                cacheKey: "electron-update-feed-v1", allowedHosts: [host.lowercased()], responseLimit: 1_048_576,
+                cacheKey: "electron-update-feed-v1", allowedHosts: [host], responseLimit: 1_048_576,
                 accept: "text/yaml, application/x-yaml, text/plain", redirectsToPublicHosts: true, maxAge: 60 * 60)
         case .macPortsPort:
             return MetadataHTTPPolicy(
@@ -280,15 +283,15 @@ public final class MetadataHTTPClient: @unchecked Sendable {
             return MetadataHTTPPolicy(
                 cacheKey: "app-store-lookup-v1", allowedHosts: ["itunes.apple.com"], responseLimit: 1_048_576, accept: "application/json",
                 maxAge: 60 * 60)
-        case let .sparkleAppcast(host):
+        case .sparkleAppcast:
             // Feeds commonly redirect to a CDN or object store (some go to S3), as Sparkle allows.
             return MetadataHTTPPolicy(
-                cacheKey: "sparkle-appcast-v1", allowedHosts: [host.lowercased()], responseLimit: 4_194_304,
+                cacheKey: "sparkle-appcast-v1", allowedHosts: [host], responseLimit: 4_194_304,
                 accept: "application/rss+xml, application/xml, text/xml", redirectsToPublicHosts: true, maxAge: 60 * 60)
-        case let .changelogPage(host):
+        case .changelogPage:
             // Project sites move their changelogs behind redirects to docs hosts and CDNs.
             return MetadataHTTPPolicy(
-                cacheKey: "changelog-page-v1", allowedHosts: [host.lowercased()], responseLimit: 8 * 1_048_576,
+                cacheKey: "changelog-page-v1", allowedHosts: [host], responseLimit: 8 * 1_048_576,
                 accept: "text/html, text/markdown, text/plain;q=0.9, */*;q=0.5", compressesCache: true, redirectsToPublicHosts: true)
         case .packageRegistry:
             return MetadataHTTPPolicy(

@@ -8,8 +8,7 @@ extension ChangelogResolver {
     /// page is read as HTML, then through the feeds it advertises, then through the JSON it embeds
     /// for its scripts, and last rendered in WebKit when its content is built by scripts.
     func page(_ url: URL, name: String = "", installed: String? = nil, known: Bool = false) throws -> [ChangelogEntry] {
-        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
-        let html = try fetchText(url, resource: .changelogPage(host: host))
+        let html = try fetchText(url, resource: .changelogPage)
         let isChangelogPage = known || Self.looksLikeChangelogURL(url)
         // A homepage's own text, then its changelog links, and only then its feeds (often a
         // blog covering other products) and embedded data.
@@ -24,15 +23,15 @@ extension ChangelogResolver {
             let years = Self.yearSections(in: html, base: url)
             var found: [ChangelogEntry] = []
             for year in years.prefix(2) {
-                guard let yearHost = year.host?.lowercased(), let text = try? fetchText(year, resource: .changelogPage(host: yearHost)) else { continue }
+                guard let text = try? fetchText(year, resource: .changelogPage) else { continue }
                 found = Self.merge(found, read(text, url: year, render: true))
             }
             if ChangelogDocument.isMeaningful(found), found.count >= 3, fits(found) { return found }
         }
         // A changelog hub listing another product first (LM Studio's /changelog is Bionic's) links
         // the item's own section (/changelog/lmstudio).
-        if isChangelogPage, let section = Self.productSection(in: html, base: url, name: name), let sectionHost = section.host?.lowercased(),
-            let text = try? fetchText(section, resource: .changelogPage(host: sectionHost))
+        if isChangelogPage, let section = Self.productSection(in: html, base: url, name: name),
+            let text = try? fetchText(section, resource: .changelogPage)
         {
             let found = read(text, url: section, render: true)
             if ChangelogDocument.isMeaningful(found), fits(found) { return found }
@@ -58,10 +57,10 @@ extension ChangelogResolver {
             }
             if client.debug { MetadataHTTPClient.trace("following changelog link \(link.absoluteString)") }
             let linked: String
-            do { linked = try fetchText(link, resource: .changelogPage(host: linkHost)) } catch { linkError = linkError ?? error; continue }
+            do { linked = try fetchText(link, resource: .changelogPage) } catch { linkError = linkError ?? error; continue }
             var linkedEntries = read(linked, url: link, render: true)
             if !fits(linkedEntries), let section = Self.productSection(in: linked, base: link, name: name),
-                let text = try? fetchText(section, resource: .changelogPage(host: section.host?.lowercased() ?? linkHost))
+                let text = try? fetchText(section, resource: .changelogPage)
             {
                 let found = read(text, url: section, render: true)
                 if ChangelogDocument.isMeaningful(found), fits(found) { return found }
@@ -87,7 +86,7 @@ extension ChangelogResolver {
             // Of the top few, the one with the installed version, or else the most versions.
             var best: [ChangelogEntry] = []
             for candidate in discoverChangelogPages(near: url, name: name).prefix(6) {
-                guard let candidateHost = candidate.host?.lowercased(), let text = try? fetchText(candidate, resource: .changelogPage(host: candidateHost))
+                guard let text = try? fetchText(candidate, resource: .changelogPage)
                 else { continue }
                 var found = read(text, url: candidate, render: true)
                 // An index of editions ("/release-notes" listing Mac, Windows, Linux) leads to the Mac one.
@@ -95,7 +94,7 @@ extension ChangelogResolver {
                     let mac = HTMLMarkdown.links(in: text, base: candidate).map(\.url).first(where: { link in
                         link.host == candidate.host && link.path.hasPrefix(candidate.path) && link.path != candidate.path
                             && ["mac", "macos", "osx"].contains(link.lastPathComponent.lowercased())
-                    }), let macText = try? fetchText(mac, resource: .changelogPage(host: candidateHost))
+                    }), let macText = try? fetchText(mac, resource: .changelogPage)
                 {
                     found = read(macText, url: mac, render: true)
                 }
@@ -123,7 +122,7 @@ extension ChangelogResolver {
         // Two versions may be a teaser (Notion's two latest headlines over a full feed).
         if entries.count >= 3, ChangelogDocument.isMeaningful(entries) { return entries }
         for feed in ChangelogFeeds.advertisedFeeds(in: html, base: url).prefix(2) where isPublicHTTPSURL(feed) {
-            guard let feedHost = feed.host, let data = try? client.fetch(feed, resource: .changelogPage(host: feedHost)).body else { continue }
+            guard let data = try? client.fetch(feed, resource: .changelogPage).body else { continue }
             let items = ChangelogFeeds.entries(fromFeed: data)
             // A blog feed counts only when most of its posts are releases, and only those are kept.
             var releases = items.filter { ChangelogVersion.token(in: $0.version) == $0.version }
@@ -148,9 +147,9 @@ extension ChangelogResolver {
             }
         }
         // Docs sites (Mintlify and others) serve each page as Markdown at the same address plus ".md".
-        if entries.count < 3, url.pathExtension.isEmpty, url.path.count > 1, url.query == nil, let host = url.host?.lowercased(),
+        if entries.count < 3, url.pathExtension.isEmpty, url.path.count > 1, url.query == nil,
             let markdownURL = URL(string: url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + ".md"),
-            let markdown = try? fetchText(markdownURL, resource: .changelogPage(host: host)), markdown.range(of: "<html", options: .caseInsensitive) == nil
+            let markdown = try? fetchText(markdownURL, resource: .changelogPage), markdown.range(of: "<html", options: .caseInsensitive) == nil
         {
             let fromMarkdown = ChangelogDocument.entries(fromMarkdown: markdown, sourceURL: url.absoluteString)
             if fromMarkdown.count >= 3, ChangelogDocument.isMeaningful(fromMarkdown) {
@@ -216,11 +215,11 @@ extension ChangelogResolver {
         var candidates: [URL] = []
         // Subdomains that don't exist (most sites have no docs. or releases.) aren't guessed at further.
         var liveHosts = hosts
-        warm(hosts.compactMap { URL(string: "https://\($0)/robots.txt") }) { .changelogPage(host: $0.host ?? "") }
+        warm(hosts.compactMap { URL(string: "https://\($0)/robots.txt") }, resource: .changelogPage)
         for site in hosts {
             guard let robotsURL = URL(string: "https://\(site)/robots.txt") else { continue }
             let robots: String
-            do { robots = try fetchText(robotsURL, resource: .changelogPage(host: site)) } catch let error as MetadataHTTPError
+            do { robots = try fetchText(robotsURL, resource: .changelogPage) } catch let error as MetadataHTTPError
                 where site != host && error.isUnreachableHost
             { liveHosts.removeAll { $0 == site }; continue } catch { robots = "" }
             var maps = robots.matches(of: #/(?im)^sitemap:\s*(\S+)/#).compactMap { URL(string: String($0.1)) }
@@ -231,7 +230,7 @@ extension ChangelogResolver {
                 queue.removeFirst()
                 fetched += 1
                 guard let mapHost = map.host?.lowercased(), HomebrewCaskCatalog.vendorDomain(mapHost) == domain,
-                    let xml = try? fetchText(map, resource: .changelogPage(host: mapHost))
+                    let xml = try? fetchText(map, resource: .changelogPage)
                 else { continue }
                 for match in xml.matches(of: #/<loc>\s*([^<\s]+)\s*</loc>/#) {
                     guard let url = URL(string: HTMLText.decodeEntities(String(match.1))) else { continue }
@@ -257,11 +256,11 @@ extension ChangelogResolver {
         // The common paths are guesses: keep only those that answer with a page of their own. A
         // site that answers every address with its homepage (folivora.ai) has none of them, and
         // reading the homepage again under each address rendered it in WebKit every time.
-        warm(ranked.filter { guesses.contains($0.absoluteString) }) { .changelogPage(host: $0.host?.lowercased() ?? "") }
-        var bodies = Set([try? client.fetch(base, resource: .changelogPage(host: host)).body].compactMap { $0 })
+        warm(ranked.filter { guesses.contains($0.absoluteString) }, resource: .changelogPage)
+        var bodies = Set([try? client.fetch(base, resource: .changelogPage).body].compactMap { $0 })
         return ranked.filter { url in
             guard guesses.contains(url.absoluteString) else { return true }
-            guard let host = url.host?.lowercased(), let body = try? client.fetch(url, resource: .changelogPage(host: host)).body else { return false }
+            guard let body = try? client.fetch(url, resource: .changelogPage).body else { return false }
             return bodies.insert(body).inserted
         }
     }

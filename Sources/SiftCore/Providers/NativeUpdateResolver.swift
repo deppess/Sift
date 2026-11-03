@@ -150,9 +150,9 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
             }
         case let .generic(base):
             let url = base.appending(path: "latest-mac.yml")
-            guard isPublicHTTPSURL(url), let host = url.host?.lowercased() else { return .unchecked("The Electron update server is not a public HTTPS URL.") }
+            guard isPublicHTTPSURL(url) else { return .unchecked("The Electron update server is not a public HTTPS URL.") }
             do {
-                guard let version = ElectronUpdateManifest.version(inLatestYAML: try metadataClient.fetch(url, resource: .electronUpdateFeed(host: host)).body)
+                guard let version = ElectronUpdateManifest.version(inLatestYAML: try metadataClient.fetch(url, resource: .electronUpdateFeed).body)
                 else { return .unchecked("The Electron update feed lists no version.") }
                 return compare(version, with: application)
             } catch {
@@ -169,12 +169,12 @@ public struct NativeUpdateResolver: NativeUpdateResolving {
         guard let feed = application.sparkleFeedURL else {
             return .unchecked("The application configures its Sparkle feed at run time, so it can't be read from the bundle.")
         }
-        guard let url = URL(string: feed), isPublicHTTPSURL(url), let host = url.host?.lowercased() else {
+        guard let url = URL(string: feed), isPublicHTTPSURL(url) else {
             return .unchecked("The application's Sparkle feed is not a public HTTPS URL.")
         }
         let items: [SparkleAppcastItem]
         do {
-            items = try SparkleAppcastParser.parse(metadataClient.fetch(url, resource: .sparkleAppcast(host: host)).body)
+            items = try SparkleAppcastParser.parse(metadataClient.fetch(url, resource: .sparkleAppcast).body)
         } catch {
             return .failed("Sparkle feed for \(application.displayName): \(error.localizedDescription)")
         }

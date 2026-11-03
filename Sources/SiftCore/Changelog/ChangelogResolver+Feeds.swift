@@ -75,8 +75,7 @@ extension ChangelogResolver {
     // MARK: Sparkle
 
     func sparkle(_ url: URL, padding: Bool) throws -> [ChangelogEntry] {
-        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
-        let items = try SparkleAppcastParser.parse(client.fetch(url, resource: .sparkleAppcast(host: host)).body)
+        let items = try SparkleAppcastParser.parse(client.fetch(url, resource: .sparkleAppcast).body)
             .filter(\.isDefaultChannel)
             .sorted { SparkleVersion.compare($0.version, $1.version, padding: padding) == .orderedDescending }
         // Each item's own notes and, when those are a placeholder, the page they link to: the
@@ -145,15 +144,16 @@ extension ChangelogResolver {
                     content = own.content
                 }
             }
-            entries.append(ChangelogEntry(version: item.displayVersion, date: item.publishedAt.flatMap(ChangelogDocument.rfc822Date), content: content, sourceURL: source))
+            entries.append(
+                ChangelogEntry(version: item.displayVersion, date: item.publishedAt.flatMap(ChangelogDocument.rfc822Date), content: content, sourceURL: source))
         }
         // The notes page the feed links to usually covers every version (Cyberduck's,
         // Postman's): its older sections fill in the history the feed no longer lists.
         if let linkedSplit, linkedSplit.count > entries.count, ChangelogDocument.isMeaningful(linkedSplit) { entries = Self.merge(entries, linkedSplit) }
         // A full-history page fills in the versions the feed itself no longer lists.
         if let full = items.lazy.compactMap({ $0.fullReleaseNotesURL?.trimmingCharacters(in: .whitespacesAndNewlines) }).compactMap(URL.init(string:)).first,
-            isPublicHTTPSURL(full), let fullHost = full.host,
-            let text = try? fetchText(full, resource: .changelogPage(host: fullHost))
+            isPublicHTTPSURL(full),
+            let text = try? fetchText(full, resource: .changelogPage)
         {
             let history = read(text, url: full, render: true)
             if ChangelogDocument.isMeaningful(history) { return Self.merge(entries, history) }
@@ -168,7 +168,7 @@ extension ChangelogResolver {
     }
 
     private func readLinkedPage(_ link: URL) -> LinkedPage? {
-        guard let host = link.host, let html = try? fetchText(link, resource: .changelogPage(host: host)) else { return nil }
+        guard let html = try? fetchText(link, resource: .changelogPage) else { return nil }
         return LinkedPage(html: html, split: read(html, url: link, render: true))
     }
 
@@ -285,8 +285,7 @@ extension ChangelogResolver {
 
     /// A JSON update endpoint: the notes it carries, or the page its `notes` field links to.
     func updateFeed(_ url: URL, name: String) throws -> [ChangelogEntry] {
-        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
-        let feed = UpdateFeedJSON.read(try client.fetch(url, resource: .changelogPage(host: host)).body)
+        let feed = UpdateFeedJSON.read(try client.fetch(url, resource: .changelogPage).body)
         for link in feed.links.prefix(1) where isPublicHTTPSURL(link) {
             let linked = (try? page(link, name: name)) ?? []
             if ChangelogDocument.isMeaningful(linked) { return Self.merge(feed.entries, linked) }
@@ -295,8 +294,7 @@ extension ChangelogResolver {
     }
 
     func filteredFeed(_ url: URL, title: String) throws -> [ChangelogEntry] {
-        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
-        let items = ChangelogFeeds.entries(fromFeed: try client.fetch(url, resource: .changelogPage(host: host)).body)
+        let items = ChangelogFeeds.entries(fromFeed: try client.fetch(url, resource: .changelogPage).body)
         return items.compactMap { item in
             guard (item.title ?? item.version).localizedCaseInsensitiveContains(title),
                 var version = ChangelogVersion.token(in: String(item.content.prefix(600)))
@@ -319,7 +317,7 @@ extension ChangelogResolver {
     /// Several versions' pages read together, newest first; a page that isn't up yet (the latest
     /// version's, sometimes) is skipped.
     func versionPages(_ pages: [VersionedURL]) throws -> [ChangelogEntry] {
-        warm(pages.map(\.url)) { .changelogPage(host: $0.host?.lowercased() ?? "") }
+        warm(pages.map(\.url), resource: .changelogPage)
         var entries: [ChangelogEntry] = []
         var firstError: Error?
         for page in pages {
@@ -332,8 +330,7 @@ extension ChangelogResolver {
     /// A page for one version: its own entry when the page splits by version, or else the whole
     /// page as that version's notes.
     private func versionPage(_ url: URL, version: String) throws -> [ChangelogEntry] {
-        guard let host = url.host?.lowercased() else { throw MetadataHTTPError.unsupportedURL }
-        let html = try fetchText(url, resource: .changelogPage(host: host))
+        let html = try fetchText(url, resource: .changelogPage)
         let split = read(html, url: url, render: true)
         // Split only when the sections say something (not VS Code's monthly page, whose
         // sub-headings carry versions of extensions with no text of their own).
@@ -356,7 +353,7 @@ extension ChangelogResolver {
                     "https://api.adoptium.net/v3/info/release_names?version=%5B\(major)%2C\(major + 1)%29&release_type=ga&page_size=10&sort_order=DESC&vendor=eclipse&image_type=jdk"
             ),
             let list =
-                (try JSONSerialization.jsonObject(with: client.fetch(names, resource: .changelogPage(host: "api.adoptium.net")).body) as? [String: Any])?[
+                (try JSONSerialization.jsonObject(with: client.fetch(names, resource: .changelogPage).body) as? [String: Any])?[
                     "releases"] as? [String]
         else { throw MetadataHTTPError.invalidResponse }
         let notesURL = { (name: String) in
@@ -364,10 +361,10 @@ extension ChangelogResolver {
                 URL(string: "https://api.adoptium.net/v3/info/release_notes/\($0)")
             }
         }
-        warm(list.prefix(10).compactMap(notesURL)) { _ in .changelogPage(host: "api.adoptium.net") }
+        warm(list.prefix(10).compactMap(notesURL), resource: .changelogPage)
         return list.prefix(10).compactMap { name -> ChangelogEntry? in
             guard let url = notesURL(name),
-                let data = try? client.fetch(url, resource: .changelogPage(host: "api.adoptium.net")).body,
+                let data = try? client.fetch(url, resource: .changelogPage).body,
                 let notes = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["release_notes"] as? [[String: Any]]
             else { return nil }
             // jdk-21.0.13+9 is 21.0.13; jdk8u462-b08 is 8.0.462.
