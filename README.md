@@ -1,4 +1,4 @@
-# Sift
+# <img src="Assets/icon.png" alt="" width="64" align="center"> Sift
 
 Sift is a macOS-native command-line observer for installed software: what has an update, a log of every version change it has seen, and the changelog of any app, game, or package, read right in the terminal. It supports macOS 15 and later.
 
