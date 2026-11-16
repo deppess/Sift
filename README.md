@@ -102,6 +102,6 @@ swift run sift --database /tmp/sift.sqlite3
 
 ## License
 
-AGPL-3.0-or-later. See [LICENSE](LICENSE).
+PolyForm Strict License 1.0.0 (`SPDX-License-Identifier: PolyForm-Strict-1.0.0`). See [LICENSE](LICENSE).
 
 I ask that this code not be used to train AI models. This is a request, not a license term.

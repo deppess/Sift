@@ -1,4 +1,4 @@
-Sift is AGPL-3.0-or-later. Third-party components below keep their own licenses.
+Sift is PolyForm Strict License 1.0.0 (`SPDX-License-Identifier: PolyForm-Strict-1.0.0`). Third-party components below keep their own licenses.
 
 Sources/SiftCore/Providers/SparkleAppcast.swift (SparkleVersion) is a Swift port of
 Sparkle's version comparator, Sparkle/SUStandardVersionComparator.m, from
