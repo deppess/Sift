@@ -92,7 +92,7 @@ public enum DatabaseError: Error, LocalizedError {
 }
 
 public final class Database: @unchecked Sendable {
-    static let schemaVersion = 18
+    static let schemaVersion = 19
     /// The 1.0.0 schema every database starts from; later versions are applied as steps on top.
     static let baselineSchemaVersion = 15
     var handle: OpaquePointer?
@@ -367,6 +367,10 @@ public final class Database: @unchecked Sendable {
                 try execute(Self.schema18)
                 version = 18
             }
+            if version < 19 {
+                try execute(Self.schema19)
+                version = 19
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -443,6 +447,13 @@ public final class Database: @unchecked Sendable {
     static let schema18 = """
         ALTER TABLE changelog_state ADD COLUMN source_kind TEXT;
         INSERT INTO schema_migrations (version) VALUES (18);
+        """
+
+    /// A successful changelog lookup may not cover the installed version. Remember the exact
+    /// versions it checked so refresh does not retry the same incomplete source every time.
+    static let schema19 = """
+        ALTER TABLE changelog_state ADD COLUMN checked_versions TEXT;
+        INSERT INTO schema_migrations (version) VALUES (19);
         """
 
     private func createBaselineSchema() throws {

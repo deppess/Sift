@@ -34,24 +34,12 @@ extension Database {
             // scope explicitly "defaults dashboard output to requested formulae": a user can't act on
             // `readline` or `openssl@3` having an update independent of what depends on it, so it must
             // not inflate the count they see as needing their attention.
-            var homebrewAvailableUpdateCount = 0
-            var informationalUpdateCount = 0
-            try withStatement(
-                """
-                SELECT SUM(CASE WHEN auto_updates = 0 THEN 1 ELSE 0 END), SUM(CASE WHEN auto_updates = 1 THEN 1 ELSE 0 END)
-                FROM homebrew_packages
-                WHERE active = 1
-                  AND available_version IS NOT NULL
-                  AND available_version != installed_version
-                  AND target_status = 'resolved'
-                  AND target_for_installed_version = installed_version
-                  AND ownership IN ('explicitlyRequested', 'installedCask');
-                """
-            ) { statement in
-                guard sqlite3_step(statement) == SQLITE_ROW else { throw errorFromHandle() }
-                homebrewAvailableUpdateCount = Int(sqlite3_column_int64(statement, 0))
-                informationalUpdateCount = Int(sqlite3_column_int64(statement, 1))
-            }
+            // Use the same local cask-presence guard as `updates`, so an old Homebrew receipt
+            // cannot inflate the dashboard after its Caskroom installation has disappeared.
+            let homebrew = try homebrewUpdates(now: now, staleAfter: staleAfter)
+            let availableHomebrew = homebrew.filter { !$0.missingInstallation }
+            let homebrewAvailableUpdateCount = availableHomebrew.filter { !$0.autoUpdates }.count
+            var informationalUpdateCount = availableHomebrew.count - homebrewAvailableUpdateCount
             let managedCondition = "active = 1 AND requested = 1 AND available_version IS NOT NULL AND available_version != installed_version"
             let managedAvailableUpdateCount = try scalarInt("SELECT COUNT(*) FROM managed_packages WHERE \(managedCondition) AND self_updating = 0;")
             informationalUpdateCount += try scalarInt("SELECT COUNT(*) FROM managed_packages WHERE \(managedCondition) AND self_updating = 1;")
@@ -89,7 +77,8 @@ extension Database {
                 data: DashboardData(
                     availableUpdateCount: nativeAvailableUpdateCount + homebrewAvailableUpdateCount + managedAvailableUpdateCount,
                     informationalUpdateCount: informationalUpdateCount, recentTransitionCount: recentTransitionCount,
-                    partialProviderCount: partialProviderCount, failedProviderCount: failedProviderCount, providerResults: providerResults)
+                    partialProviderCount: partialProviderCount, failedProviderCount: failedProviderCount, providerResults: providerResults,
+                    homebrewCleanupCount: homebrew.count - availableHomebrew.count)
             )
         } catch {
             try? execute("ROLLBACK;")
@@ -101,6 +90,7 @@ extension Database {
         lock.lock()
         defer { lock.unlock() }
         var items = try nativeApplicationCatalogItems(includeAll: includeAll, excludeCaskOwnedApps: true, includeSystemClassification: false)
+        var caskPresence = HomebrewCaskPresence()
         // available_version is only surfaced when target_for_installed_version still matches the
         // package's current installed_version — same reasoning as homebrewUpdates()/the dashboard
         // count: a transient info/outdated mismatch can preserve a target resolved against a since-
@@ -121,15 +111,19 @@ extension Database {
                 let name = String(cString: sqlite3_column_text(statement, 1))
                 let fullName = String(cString: sqlite3_column_text(statement, 2))
                 let prefix = String(cString: sqlite3_column_text(statement, 3))
+                let installed = String(cString: sqlite3_column_text(statement, 6))
+                let present = kind != .cask || caskPresence.isPresent(prefix: prefix, name: name, version: installed)
                 let selector = "\(kind == .formula ? "formula" : "cask"):\(name)"
+                let reason = !present ? "Homebrew's cached receipt remains, but the Caskroom installation is missing." : nil
                 items.append(
                     CatalogItem(
                         selector: selector, aliases: [name, fullName], kind: kind == .formula ? .homebrewFormula : .homebrewCask, name: name,
-                        fullName: fullName, installedVersion: String(cString: sqlite3_column_text(statement, 6)),
-                        availableVersion: optionalText(statement, column: 7), active: sqlite3_column_int(statement, 9) == 1, bundleIdentifier: nil, path: nil,
+                        fullName: fullName, installedVersion: installed,
+                        availableVersion: present ? optionalText(statement, column: 7) : nil,
+                        active: present && sqlite3_column_int(statement, 9) == 1, bundleIdentifier: nil, path: nil,
                         prefix: prefix, tap: optionalText(statement, column: 4), ownership: String(cString: sqlite3_column_text(statement, 5)),
                         autoUpdates: sqlite3_column_int(statement, 8) == 1, observedAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 10)),
-                        updateSource: "homebrew"))
+                        updateSource: "homebrew", updateDetail: reason))
             }
         }
         // npm, uv, cargo, MacPorts, and Steam packages; dependency-only ports only with includeAll.
@@ -177,9 +171,13 @@ extension Database {
 
     public func updates(includeAll: Bool = false, now: Date = .now, staleAfter: TimeInterval = 24 * 60 * 60) throws -> [UnifiedUpdate] {
         let homebrew = try homebrewUpdates(includeAll: includeAll, now: now, staleAfter: staleAfter).map {
-            UnifiedUpdate(
+            let missing = $0.missingInstallation
+            return UnifiedUpdate(
                 provider: "homebrew", scope: $0.prefix, name: $0.name, installedVersion: $0.installedVersion, availableVersion: $0.availableVersion,
-                freshness: $0.freshness, dataAsOf: $0.dataAsOf, selfUpdating: $0.autoUpdates)
+                freshness: $0.freshness, dataAsOf: $0.dataAsOf, selfUpdating: !missing && $0.autoUpdates,
+                installationIssue: missing ? "Homebrew receipt cached; Caskroom installation missing." : nil,
+                suggestedCommand: missing ? HomebrewCaskPresence.uninstallCommand(prefix: $0.prefix, token: $0.name) : nil,
+                fallbackCommand: missing ? HomebrewCaskPresence.uninstallCommand(prefix: $0.prefix, token: $0.name, force: true) : nil)
         }
         lock.lock()
         defer { lock.unlock() }

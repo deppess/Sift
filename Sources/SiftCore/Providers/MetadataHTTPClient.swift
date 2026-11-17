@@ -54,6 +54,7 @@ public enum MetadataHTTPError: LocalizedError {
     case serverFailure(statusCode: Int)
     case invalidResponse
     case timedOut
+    case cancelled
     case responseTooLarge
     case transport(String)
 
@@ -73,6 +74,7 @@ public enum MetadataHTTPError: LocalizedError {
         case let .serverFailure(statusCode): "Metadata server returned HTTP \(statusCode)."
         case .invalidResponse: "Metadata server returned an invalid response."
         case .timedOut: "Metadata request timed out."
+        case .cancelled: "Metadata request was cancelled."
         case .responseTooLarge: "Metadata response exceeded the configured size limit."
         case let .transport(message): message
         }
@@ -98,6 +100,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     /// Addresses that timed out or couldn't connect this run: asking again (a read-ahead, then
     /// the reader) would only wait again, so the same error answers at once.
     private let failures = Mutex<[String: MetadataHTTPError]>([:])
+    private let cancellation = Mutex(false)
 
     public init(
         database: Database, configuration: URLSessionConfiguration = .ephemeral, environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -112,6 +115,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
 
     /// GET, or with `body` a POST of that JSON (GitHub's GraphQL), cached by the URL and body.
     public func fetch(_ url: URL, resource: MetadataResource, body: Data? = nil) throws -> MetadataHTTPResponse {
+        guard !isCancelled else { throw MetadataHTTPError.cancelled }
         guard debug else { return try perform(url, policy: policy(for: resource, url: url), body: body) }
         let method = body == nil ? "GET" : "POST"
         let started = Date()
@@ -131,6 +135,18 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     /// `SIFT_DEBUG=1` traces every metadata request and changelog decision to standard error.
     var debug: Bool { environment["SIFT_DEBUG"].map { !$0.isEmpty && $0 != "0" } ?? false }
 
+    /// Only used by an explicitly interrupted `sift fetch`. A cancelled client is never reused;
+    /// pending URLSession tasks complete with cancellation instead of waiting for their timeouts.
+    public func cancel() {
+        let first = cancellation.withLock { value -> Bool in
+            defer { value = true }
+            return !value
+        }
+        if first { session.invalidateAndCancel() }
+    }
+
+    var isCancelled: Bool { cancellation.withLock { $0 } }
+
     static func trace(_ message: String) {
         FileHandle.standardError.write(Data("sift: \(message.terminalInline)\n".utf8))
     }
@@ -139,6 +155,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     /// one (same ETag, or the same download when the server sends none), the saved value is reused
     /// instead of deriving it again. Fetching works exactly as `fetch` does.
     public func fetch<Value: Codable>(_ url: URL, resource: MetadataResource, derivedAs name: String, _ derive: (Data) throws -> Value) throws -> Value {
+        guard !isCancelled else { throw MetadataHTTPError.cancelled }
         let policy = policy(for: resource, url: url)
         let derivedKind = "\(policy.cacheKey)-derived-\(name)"
         // The response a saved value was derived from: its ETag, or the download itself when the
@@ -171,6 +188,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     }
 
     private func perform(_ url: URL, policy: MetadataHTTPPolicy, body: Data? = nil) throws -> MetadataHTTPResponse {
+        guard !isCancelled else { throw MetadataHTTPError.cancelled }
         // One URL answers many queries when they're posted: each body is a cache entry of its own.
         let key = body.map { url.absoluteString + "#" + fingerprint($0) } ?? url.absoluteString
         guard isAllowedMetadataURL(url, policy: policy) else { throw MetadataHTTPError.unsupportedURL }
@@ -186,12 +204,13 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         if let failure = failures.withLock({ $0[key] }) { throw failure }
         if policy.serialGitHub {
             let githubConcurrency = policy.token != nil ? Self.githubConcurrencyAuthenticated : Self.githubConcurrencyAnonymous
-            guard githubConcurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
+            try acquire(githubConcurrency, until: deadline)
             defer { githubConcurrency.signal() }
             if let retryAt = blockedUntil(for: policy) { throw MetadataHTTPError.rateLimited(retryAt: retryAt) }
         }
-        guard Self.concurrency.wait(timeout: deadline) == .success else { throw MetadataHTTPError.timedOut }
+        try acquire(Self.concurrency, until: deadline)
         defer { Self.concurrency.signal() }
+        guard !isCancelled else { throw MetadataHTTPError.cancelled }
         var request = URLRequest(url: url)
         if let body {
             request.httpMethod = "POST"
@@ -201,6 +220,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         request.timeoutInterval = min(policy.timeout, remaining(until: deadline))
         // A timeout after waiting in line for a slot says nothing about the address itself.
         let remember = { (failure: MetadataHTTPError) in
+            if case .cancelled = failure { return }
             if case .timedOut = failure, request.timeoutInterval < policy.timeout { return }
             self.failures.withLock { $0[key] = failure }
         }
@@ -443,6 +463,7 @@ public final class MetadataHTTPClient: @unchecked Sendable {
     private func normalizedTransportError(_ error: Error) -> MetadataHTTPError {
         if let error = error as? MetadataHTTPError { return error }
         guard let error = error as? URLError else { return .transport(error.localizedDescription) }
+        if error.code == .cancelled { return .cancelled }
         if error.code == .timedOut { return .timedOut }
         // An application firewall's prompt left unanswered typically surfaces as a lost or
         // refused connection, so name the host-level cause rather than a bare error code.
@@ -465,6 +486,15 @@ public final class MetadataHTTPClient: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         guard deadline.uptimeNanoseconds > now else { return 0.001 }
         return TimeInterval(deadline.uptimeNanoseconds - now) / 1_000_000_000
+    }
+
+    private func acquire(_ semaphore: DispatchSemaphore, until deadline: DispatchTime) throws {
+        while !isCancelled {
+            let next = DispatchTime.now() + min(0.1, remaining(until: deadline))
+            if semaphore.wait(timeout: next) == .success { return }
+            if DispatchTime.now().uptimeNanoseconds >= deadline.uptimeNanoseconds { throw MetadataHTTPError.timedOut }
+        }
+        throw MetadataHTTPError.cancelled
     }
 
     private func httpDate(_ value: String) -> Date? {

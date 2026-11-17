@@ -13,7 +13,8 @@ enum CompletionRenderer {
         case .fish:
             """
             complete -c sift -f
-            complete -c sift -n '__fish_use_subcommand' -a refresh -d 'Refresh native application inventory'
+            complete -c sift -n '__fish_use_subcommand' -a refresh -d 'Refresh apps and packages'
+            complete -c sift -n '__fish_use_subcommand' -a fetch -d 'Fetch changelogs for cached updates'
             complete -c sift -n '__fish_use_subcommand' -a apps -d 'Show cached applications'
             complete -c sift -n '__fish_use_subcommand' -a updates -d 'Show cached updates'
             complete -c sift -n '__fish_use_subcommand' -a log -d 'Show the log of observed updates'
@@ -44,17 +45,18 @@ enum CompletionRenderer {
                 subcommand=""
                 for ((i = 1; i < COMP_CWORD; i++)); do
                     case "${COMP_WORDS[i]}" in
-                        refresh|apps|updates|log|changelog|show|completions) subcommand="${COMP_WORDS[i]}"; break ;;
+                        refresh|fetch|apps|updates|log|changelog|show|completions) subcommand="${COMP_WORDS[i]}"; break ;;
                     esac
                 done
                 case "$subcommand" in
                     refresh) words="--update-homebrew --no-update-homebrew" ;;
+                    fetch) words="" ;;
                     apps|updates) words="--all" ;;
                     log) words="--all --since" ;;
                     show) words="--all --full" ;;
                     changelog) words="--all --full --fetch" ;;
                     completions) words="fish bash zsh" ;;
-                    *) words="refresh apps updates log changelog show completions --help -h --version" ;;
+                    *) words="refresh fetch apps updates log changelog show completions --help -h --version" ;;
                 esac
                 [[ "$subcommand" != completions ]] && words="$words --json --no-color --database"
                 if [[ "$previous" == "--database" ]]; then
@@ -93,7 +95,8 @@ enum CompletionRenderer {
             _sift() {
                 local -a commands common
                 commands=(
-                    'refresh:Refresh native application inventory'
+                    'refresh:Refresh apps and packages'
+                    'fetch:Fetch changelogs for cached updates'
                     'apps:Show cached applications'
                     'updates:Show cached updates'
                     'log:Show the log of observed updates'
@@ -111,11 +114,12 @@ enum CompletionRenderer {
                 local subcommand w
                 for w in $words[2,CURRENT-1]; do
                     case $w in
-                        refresh|apps|updates|log|changelog|show|completions) subcommand=$w; break ;;
+                        refresh|fetch|apps|updates|log|changelog|show|completions) subcommand=$w; break ;;
                     esac
                 done
                 case $subcommand in
                     refresh) _arguments $common '--update-homebrew[Update Homebrew metadata before refreshing]' '--no-update-homebrew[Skip updating Homebrew metadata before refreshing]' ;;
+                    fetch) _arguments $common ;;
                     apps) _arguments $common $all '*:application:{_sift_names apps}' ;;
                     updates) _arguments $common $all ;;
                     log) _arguments $common $all '--since=[Only log changes since a duration or date]:since:(12h 7d 30d 2w)' '*:name:{_sift_names log}' ;;

@@ -94,18 +94,29 @@ final class PageRenderer: NSObject, WKNavigationDelegate {
 }
 
 /// Each render is a WebKit process of its own; pages read together (several changelogs during
-/// refresh, a feed's linked pages) share a few at a time.
+/// fetch, a feed's linked pages) share a few at a time.
 private let renderSlots = DispatchSemaphore(value: 4)
 
 /// Renders a page through `sift __render` in a child process, for the changelog resolver.
-func renderPage(_ url: URL) -> String? {
+func renderPage(_ url: URL) -> String? { renderPage(url, cancelled: nil) }
+
+func renderPage(_ url: URL, cancelled: (@Sendable () -> Bool)?) -> String? {
     guard url.scheme?.lowercased() == "https", let executable = Bundle.main.executableURL else { return nil }
-    renderSlots.wait()
+    if let cancelled {
+        var acquired = false
+        while !acquired, !cancelled() {
+            acquired = renderSlots.wait(timeout: .now() + 0.1) == .success
+        }
+        guard acquired else { return nil }
+    } else {
+        renderSlots.wait()
+    }
     defer { renderSlots.signal() }
+    if cancelled?() == true { return nil }
     guard
         let result = try? CommandRunner().run(
             executable: executable, arguments: ["__render", url.absoluteString], environment: ProcessInfo.processInfo.environment, timeout: 30,
-            outputLimit: 16 * 1_048_576),
+            outputLimit: 16 * 1_048_576, cancelled: cancelled),
         result.status == 0
     else { return nil }
     return String(data: result.stdout, encoding: .utf8)

@@ -44,6 +44,9 @@ public struct ChangelogResolver: Sendable {
         self.storefront = storefront.count == 2 && storefront.allSatisfy(\.isLetter) ? storefront : "us"
     }
 
+    public func cancel() { client.cancel() }
+    var isCancelled: Bool { client.isCancelled }
+
     public func resolve(_ subject: ChangelogSubject, preferredSourceKind: String? = nil, preferredSourceURL: String? = nil) -> ChangelogResolution {
         let resolution = resolveFromSources(subject, preferredSourceKind: preferredSourceKind, preferredSourceURL: preferredSourceURL)
         guard case let .resolved(source, sourceURL, sourceKind, entries) = resolution else { return resolution }
@@ -92,6 +95,7 @@ public struct ChangelogResolver: Sendable {
         var extraTries = 0
         if client.debug { MetadataHTTPClient.trace("changelog sources for \(subject.item.selector): \(hints.sources.map(\.label).joined(separator: ", "))") }
         for source in hints.sources {
+            if client.isCancelled { return .failure("Changelog fetch interrupted.") }
             do {
                 let fetched = try fetch(source, hints: hints)
                 // The app's own feed counts with a single version: it records each release as it appears.

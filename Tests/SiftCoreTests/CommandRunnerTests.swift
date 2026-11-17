@@ -1,9 +1,24 @@
 import Darwin
 import Foundation
+import Synchronization
 import XCTest
 @testable import SiftCore
 
 final class CommandRunnerTests: XCTestCase {
+    func testCancellationStopsAChildWithoutWaitingForItsTimeout() {
+        let cancelled = Mutex(false)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { cancelled.withLock { $0 = true } }
+        let start = Date()
+        XCTAssertThrowsError(
+            try CommandRunner().run(
+                executable: URL(filePath: "/bin/sleep"), arguments: ["30"], environment: [:], timeout: 35,
+                cancelled: { cancelled.withLock { $0 } })
+        ) { error in
+            XCTAssertEqual((error as? CommandRunnerError)?.errorDescription, CommandRunnerError.cancelled(URL(filePath: "/bin/sleep")).errorDescription)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
+
     func testCommandRunnerStopsOversizedStreamingOutput() throws {
         let runner = CommandRunner()
         XCTAssertThrowsError(

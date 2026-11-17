@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `sift refresh` updates app and package data without waiting for changelog scraping; `sift fetch` warms changelogs separately from the cached inventory. Fresh successful lookups that omit the installed version are not repeated until the target changes or the cache expires.
+- Interactive terminal output uses a restrained blue-and-orange palette and a small list mark inspired by the app icon. Redirected text, `--no-color`, and JSON remain plain.
+- Ctrl+C during `sift fetch` stops new lookups, cancels active requests and page renderers, waits for in-flight transactions to finish, keeps completed changelogs, and exits with status 130.
+- Local app builds include the artwork in `Assets/icon.png` as the signed macOS app icon.
+
 ## 1.0.4 - 2026-11-02
 
 ### Changelogs found and read correctly

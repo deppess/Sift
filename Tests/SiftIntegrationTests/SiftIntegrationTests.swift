@@ -30,7 +30,7 @@ final class SiftIntegrationTests: XCTestCase {
         XCTAssertEqual(help.status, 0)
         XCTAssertEqual(
             help.stdout,
-            "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]\n"
+            "Usage: sift [refresh|fetch|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]\n"
         )
         XCTAssertEqual(help.stderr, "")
         XCTAssertFalse(FileManager.default.fileExists(atPath: database.path))

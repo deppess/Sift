@@ -119,14 +119,71 @@ public enum SiftCLI {
                 let progress = refreshProgress(invocation)
                 progress?("Refreshing…")
                 let summary = try RefreshCoordinator(database: database).refresh(homebrewUpdate: homebrewUpdate, progress: progress)
-                // Changelogs for what's new are fetched now, so `sift changelog` and `sift show`
-                // answer from the cache; a failure here never fails the refresh.
+                progress?("")
+                print(
+                    invocation.json
+                        ? try RefreshRenderer.json(summary)
+                        : RefreshRenderer.humanReadable(summary, style: TerminalStyle(enabled: colorEnabled(invocation))))
+                return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
+            }
+            if case .fetch = invocation.command {
+                // Install the handler before opening or migrating the database: Ctrl+C during
+                // startup must not cut off a SQLite transaction either.
+                let interrupted = Mutex(false)
+                let activeService = Mutex<ChangelogService?>(nil)
+                let previousHandler = Darwin.signal(SIGINT, SIG_IGN)
+                let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+                let progress = refreshProgress(invocation)
+                interruptSource.setEventHandler {
+                    let first = interrupted.withLock { value -> Bool in
+                        defer { value = true }
+                        return !value
+                    }
+                    if first {
+                        activeService.withLock { $0 }?.cancel()
+                        progress?("")
+                        FileHandle.standardError.write(Data("sift: Stopping changelog fetch safely…\n".utf8))
+                    }
+                }
+                interruptSource.resume()
+                defer {
+                    interruptSource.cancel()
+                    Darwin.signal(SIGINT, previousHandler)
+                }
+                let databaseURL = invocation.databaseURL ?? SiftApplication.existingDefaultDatabaseURL()
+                guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else {
+                    throw FetchError.missingCache
+                }
+                let database = try Database.writer(url: databaseURL)
+                if interrupted.withLock({ $0 }) { return 128 + SIGINT }
+                let service = ChangelogService(
+                    database: database,
+                    renderer: { url in renderPage(url, cancelled: { interrupted.withLock { $0 } }) })
+                activeService.withLock { $0 = service }
+                if interrupted.withLock({ $0 }) { service.cancel(); return 128 + SIGINT }
                 progress?("Fetching changelogs…")
-                _ = try? ChangelogService(database: database, renderer: renderPage).prefetch { done, total in progress?("Fetching changelogs \(done)/\(total)…")
+                let count: Int
+                do {
+                    count = try service.prefetch(
+                        cancelled: { interrupted.withLock { $0 } },
+                        progress: { done, total in
+                            if !interrupted.withLock({ $0 }) { progress?("Fetching changelogs \(done)/\(total)…") }
+                        })
+                } catch {
+                    progress?("")
+                    throw error
                 }
                 progress?("")
-                print(invocation.json ? try RefreshRenderer.json(summary) : RefreshRenderer.humanReadable(summary))
-                return summary.status == .success ? EXIT_SUCCESS : EXIT_FAILURE
+                if interrupted.withLock({ $0 }) {
+                    FileHandle.standardError.write(Data("sift: Changelog fetch interrupted; completed cache entries were kept.\n".utf8))
+                    return 128 + SIGINT
+                }
+                let style = TerminalStyle(enabled: colorEnabled(invocation))
+                print(
+                    invocation.json
+                        ? try JSONOutput.encode(["lookups": count])
+                        : "\(style.enabled ? style.brand("Sift fetch") + "\n" : "")Changelog lookups: \(style.accent(String(count)))")
+                return EXIT_SUCCESS
             }
             let databaseURL = invocation.databaseURL ?? SiftApplication.existingDefaultDatabaseURL()
             guard let databaseURL, FileManager.default.fileExists(atPath: databaseURL.path) else {
@@ -136,7 +193,10 @@ public enum SiftCLI {
             switch invocation.command {
             case .dashboard:
                 let dashboard = try database.dashboard()
-                print(invocation.json ? try DashboardRenderer.json(dashboard) : DashboardRenderer.humanReadable(dashboard))
+                print(
+                    invocation.json
+                        ? try DashboardRenderer.json(dashboard)
+                        : DashboardRenderer.humanReadable(dashboard, style: TerminalStyle(enabled: colorEnabled(invocation))))
                 return EXIT_SUCCESS
             case let .apps(selector):
                 let items = try database.nativeApplicationItems(includeAll: invocation.includeAll)
@@ -144,17 +204,24 @@ public enum SiftCLI {
                     switch items.resolveCatalogItem(selector) {
                     case let .item(item):
                         let notes = try releaseNotes(for: item, database: database)
-                        print(invocation.json ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: notes))
+                        print(
+                            invocation.json
+                                ? try CatalogRenderer.json(item)
+                                : CatalogRenderer.detail(item, notes: notes, style: TerminalStyle(enabled: colorEnabled(invocation))))
                     case .missing: throw InvocationError.missingCatalogItem(selector)
                     case let .ambiguous(matches): throw InvocationError.ambiguousSelector(selector, matches.map(\.selector))
                     }
                 } else {
-                    print(invocation.json ? try CatalogRenderer.json(items) : CatalogRenderer.list(items))
+                    print(
+                        invocation.json
+                            ? try CatalogRenderer.json(items) : CatalogRenderer.list(items, style: TerminalStyle(enabled: colorEnabled(invocation))))
                 }
                 return EXIT_SUCCESS
             case .updates:
                 let updates = try database.updates(includeAll: invocation.includeAll)
-                print(invocation.json ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates))
+                print(
+                    invocation.json
+                        ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates, style: TerminalStyle(enabled: colorEnabled(invocation))))
                 return EXIT_SUCCESS
             case let .log(selector):
                 var entries = try database.updateLog(since: invocation.since, includeAll: invocation.includeAll || selector != nil)
@@ -215,18 +282,24 @@ public enum SiftCLI {
                                 ? try CatalogRenderer.json(notes)
                                 : HomebrewRenderer.show(notes, full: invocation.full, style: TerminalStyle(enabled: colorEnabled(invocation))))
                     } else {
-                        let nativeNotes =
-                            try item.kind == .nativeApp && item.updateAvailable
-                            ? item.path.flatMap { try database.nativeReleaseNotes(path: $0, targetVersion: item.availableVersion!) } : nil
+                        let nativeNotes: NativeReleaseNotes?
+                        if item.kind == .nativeApp, item.updateAvailable, let path = item.path, let target = item.availableVersion {
+                            nativeNotes = try database.nativeReleaseNotes(path: path, targetVersion: target)
+                        } else {
+                            nativeNotes = nil
+                        }
                         print(
                             invocation.json
-                                ? try CatalogRenderer.json(item) : CatalogRenderer.detail(item, notes: nil, nativeNotes: nativeNotes, full: invocation.full))
+                                ? try CatalogRenderer.json(item)
+                                : CatalogRenderer.detail(
+                                    item, notes: nil, nativeNotes: nativeNotes, full: invocation.full,
+                                    style: TerminalStyle(enabled: colorEnabled(invocation))))
                     }
                 case .missing: throw InvocationError.missingCatalogItem(name)
                 case let .ambiguous(matches): throw InvocationError.ambiguousSelector(name, matches.map(\.selector))
                 }
                 return EXIT_SUCCESS
-            case .refresh:
+            case .refresh, .fetch:
                 return EXIT_FAILURE
             case .completions:
                 return EXIT_FAILURE
@@ -253,15 +326,22 @@ public enum SiftCLI {
                 latestRefreshStatus: .never,
                 data: DashboardData(availableUpdateCount: 0, recentTransitionCount: 0, failedProviderCount: 0)
             )
-            print(invocation.json ? try DashboardRenderer.json(dashboard) : DashboardRenderer.humanReadable(dashboard))
+            print(
+                invocation.json
+                    ? try DashboardRenderer.json(dashboard)
+                    : DashboardRenderer.humanReadable(dashboard, style: TerminalStyle(enabled: colorEnabled(invocation))))
             return EXIT_SUCCESS
         case .apps(nil):
             let items: [CatalogItem] = []
-            print(invocation.json ? try CatalogRenderer.json(items) : CatalogRenderer.list(items))
+            print(
+                invocation.json
+                    ? try CatalogRenderer.json(items) : CatalogRenderer.list(items, style: TerminalStyle(enabled: colorEnabled(invocation))))
             return EXIT_SUCCESS
         case .updates:
             let updates: [UnifiedUpdate] = []
-            print(invocation.json ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates))
+            print(
+                invocation.json
+                    ? try UpdatesRenderer.json(updates) : UpdatesRenderer.humanReadable(updates, style: TerminalStyle(enabled: colorEnabled(invocation))))
             return EXIT_SUCCESS
         case .log:
             let entries: [UpdateLogEntry] = []
@@ -269,7 +349,7 @@ public enum SiftCLI {
             return EXIT_SUCCESS
         case let .apps(.some(selector)), let .show(selector), let .changelog(selector):
             throw InvocationError.missingCatalogItem(selector)
-        case .refresh, .completions, .complete, .sweep:
+        case .refresh, .fetch, .completions, .complete, .sweep:
             return EXIT_FAILURE
         }
     }
@@ -312,12 +392,12 @@ extension String {
 
 struct Invocation {
     enum Command {
-        case dashboard, refresh, apps(String?), updates, log(String?), show(String), changelog(String), sweep(String?), completions(CompletionShell), complete(
-            String, String)
+        case dashboard, refresh, fetch, apps(String?), updates, log(String?), show(String), changelog(String), sweep(String?), completions(CompletionShell),
+            complete(String, String)
     }
 
     static let usage =
-        "Usage: sift [refresh|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
+        "Usage: sift [refresh|fetch|apps [name]|updates|log [name]|changelog <name>|show <name>|completions <fish|bash|zsh>] [--version] [--json] [--all] [--full] [--fetch] [--since <30d|2w|12h|YYYY-MM-DD>] [--no-color] [--update-homebrew|--no-update-homebrew] [--database <path>]"
 
     let command: Command
     let json: Bool
@@ -388,6 +468,10 @@ struct Invocation {
             case "refresh":
                 guard !hasCommand else { throw InvocationError.duplicateCommand }
                 command = .refresh
+                hasCommand = true
+            case "fetch":
+                guard !hasCommand else { throw InvocationError.duplicateCommand }
+                command = .fetch
                 hasCommand = true
             case "apps":
                 guard !hasCommand else { throw InvocationError.duplicateCommand }
@@ -522,11 +606,18 @@ enum InvocationError: LocalizedError {
     }
 }
 
+private enum FetchError: LocalizedError {
+    case missingCache
+
+    var errorDescription: String? { "No cached inventory to fetch changelogs for. Run 'sift refresh' first." }
+}
+
 private extension Invocation.Command {
     var description: String {
         switch self {
         case .dashboard: "the dashboard"
         case .refresh: "refresh"
+        case .fetch: "fetch"
         case .apps: "apps"
         case .updates: "updates"
         case .log: "log"
@@ -541,14 +632,14 @@ private extension Invocation.Command {
     var supportsIncludeAll: Bool {
         switch self {
         case .apps, .log, .show, .changelog, .complete, .updates, .sweep: true
-        case .dashboard, .refresh, .completions: false
+        case .dashboard, .refresh, .fetch, .completions: false
         }
     }
 
     var supportsFull: Bool {
         switch self {
         case .show, .changelog, .sweep: true
-        case .dashboard, .refresh, .apps, .updates, .log, .completions, .complete: false
+        case .dashboard, .refresh, .fetch, .apps, .updates, .log, .completions, .complete: false
         }
     }
 
@@ -567,7 +658,7 @@ private extension Invocation.Command {
     var supportsUpdateHomebrew: Bool {
         switch self {
         case .refresh: true
-        case .dashboard, .apps, .updates, .log, .show, .changelog, .sweep, .completions, .complete: false
+        case .dashboard, .fetch, .apps, .updates, .log, .show, .changelog, .sweep, .completions, .complete: false
         }
     }
 }

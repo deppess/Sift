@@ -2,7 +2,7 @@
 
 Sift is a macOS-native command-line observer for installed software: what has an update, a log of every version change it has seen, and the changelog of any app, game, or package, read right in the terminal. It supports macOS 15 and later.
 
-`sift refresh` collects everything. `sift changelog` fetches the one changelog you ask for when its cached copy is missing or old; every other command reads the cache instantly and never touches the network.
+`sift refresh` updates apps, packages, versions, and provider release notes. `sift fetch` fetches changelogs for cached updates and recently changed software without repeating the package refresh. `sift changelog` fetches the one changelog you ask for when its cached copy is missing or old; every other command reads cached provider results without touching the network. Cached Homebrew casks also get a quick, read-only check that their recorded Caskroom version still exists.
 
 Source: [Codeberg](https://codeberg.org/deppes/Sift) (primary) · [GitHub](https://github.com/deppess/Sift) (mirror)
 
@@ -16,6 +16,7 @@ cd Sift
 swift build -c release
 install "$(swift build -c release --show-bin-path)/sift" /usr/local/bin/sift
 sift refresh
+sift fetch
 ```
 
 ## What it tracks
@@ -37,7 +38,9 @@ For applications Sift asks the app's own updater first: its Sparkle feed (from I
 
 Sift looks, in order, for a changelog file the package or app bundle installed (CHANGELOG.md, NEWS, a Tor Browser-style ChangeLog.txt), the app's update feed (following its release-notes links), the App Store's version history, Steam's patch notes, Blackmagic's downloads feed, the project's GitHub releases merged with its repository changelog (or, for a repository with neither, its tags and commits), and finally the changelog on the project's website, found from the homepage its package metadata names. A website is read as HTML first, then through the RSS or Atom feed it advertises, then through the release data it embeds for its scripts, and last by rendering it in WebKit when its content is built by JavaScript; nothing on it runs outside WebKit's own sandbox. Helpers installed with another app (DaVinci Resolve's utilities) show that app's changelog. Text that only points somewhere else ("see our website", "please update your browser") doesn't count. Release notes organized by date rather than version (Claude's, Figma's, Zoom's) are shown as a dated log, and the entries after your copy was installed count as new. Sources that only cover part of the history are combined, and a page listing another product's versions is refused rather than shown. When nothing is found it lists where it looked. Sift identifies itself honestly and doesn't work around a site's bot checks, so a site that refuses anything but a mainstream browser (Affinity's help centre) can't be read.
 
-Every changelog Sift reads is kept: entries are stored per version and never removed when a source stops listing them, so a feed that only shows its latest release, or Steam's last hundred posts, builds into a complete history over time. Changelogs are fetched again after six hours (`--fetch` asks now), and `sift refresh` prefetches them for everything with a pending update or a change in the last week, so `sift show` can display what's new without the network.
+Every changelog Sift reads is kept: entries are stored per version and never removed when a source stops listing them, so a feed that only shows its latest release, or Steam's last hundred posts, builds into a complete history over time. Changelogs are fetched again after six hours (`sift changelog <name> --fetch` asks now). `sift fetch` warms changelogs for everything with a pending update or a change in the last week, so `sift show` can display what's new without the network. It uses the cached package inventory, not a new provider scan; run `sift refresh` first. A fresh successful lookup is reused even if the source omitted your installed version; a changed installed or available version is checked again.
+
+Ctrl+C during `sift fetch` stops scheduling new changelogs, cancels active HTTP requests and page-rendering helpers, and waits for active database writes to finish before exiting with status 130. Completed entries remain cached; a later `sift fetch` picks up what is still due. Individual changelog writes are transactional, so an interrupted run does not leave half-written entries.
 
 GitHub allows 60 anonymous API requests an hour, which a first look at many packages can use up (Sift then falls back to each project's releases feed, which has only the latest ten). With `GITHUB_TOKEN` or `GH_TOKEN` set, or the GitHub CLI logged in (`gh auth login`; set `SIFT_NO_GH_TOKEN=1` to stop Sift using it), the limit is 5,000. `SIFT_DEBUG=1` traces every request and source decision to standard error.
 
@@ -50,6 +53,8 @@ Every refresh records what changed since the previous one, for apps, Homebrew, n
 `sift --help` writes usage to standard output and exits successfully. Argument errors exit with status 2. Data is always standard output; diagnostics are always standard error. A custom database parent directory must already exist, be a real directory, and either be private to the current user or sticky; database files must be user-owned regular single-link files.
 
 `refresh` runs its providers concurrently, reads bundle metadata without launching applications, and never runs other tools' scripts. `sift refresh` exits nonzero when any provider is incomplete, while retaining successful provider data; the dashboard names the incomplete providers and why. Cached output is marked stale after 24 hours. A failed or partial refresh preserves prior cached data.
+
+If a cask's recorded installation disappears from an available Homebrew Caskroom between refreshes, Sift lists it as a **Homebrew cleanup** finding rather than a normal update, and marks its cached catalog record inactive. It suggests uninstalling with the owning Homebrew prefix; if that fails because an uninstall script is missing, it shows a `--force` fallback and warns that support files may remain. If Homebrew says the cask is already uninstalled, do not force it: run `sift refresh` to reconcile Sift's old snapshot. No command is executed automatically. Other cached update data may still be stale.
 
 `sift apps --all` adds system, CoreServices, inactive, auxiliary (helpers and build products), and launcher (Steam shortcut) records. Selectors match a bundle identifier, a name, or a unique name prefix (`sift show safari`). `sift refresh` runs `brew update` first only when that prefix's metadata is more than an hour old (or older than `HOMEBREW_AUTO_UPDATE_SECS` when set), judged from the timestamps Homebrew leaves on disk; `--update-homebrew` always updates and `--no-update-homebrew` never does. A failed update is a warning, and the refresh continues with the metadata already on disk. `--no-color` (or `NO_COLOR`) disables styled output.
 
@@ -66,6 +71,7 @@ An unrelated `sift` formula exists in Homebrew Core and provides a binary of the
 ```sh
 swift build
 swift run sift refresh
+swift run sift fetch  # warm changelogs separately from the package refresh
 swift run sift               # dashboard
 swift run sift updates       # everything with an update; --all adds dependencies
 swift run sift apps          # applications and where their updates come from
@@ -87,7 +93,7 @@ For a stable local application identity in macOS network monitors, build an ad-h
 sudo ./Scripts/install-local
 ```
 
-This installs `/Applications/Sift.app` and links `/usr/local/bin/sift` to its signed executable.
+This installs `/Applications/Sift.app` with the icon from `Assets/icon.png` and links `/usr/local/bin/sift` to its signed executable.
 `SIFT_INSTALL_ROOT` and `SIFT_BIN_DIRECTORY` can select user-owned locations while developing.
 Ad-hoc signing is local only: it does not establish publisher identity for another Mac. A Developer ID
 certificate is required for a distributable, persistently trusted identity across machines.

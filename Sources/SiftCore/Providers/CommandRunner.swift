@@ -11,12 +11,14 @@ public enum CommandRunnerError: LocalizedError {
     case notExecutable(URL)
     case timedOut(URL)
     case outputTooLarge(URL)
+    case cancelled(URL)
 
     public var errorDescription: String? {
         switch self {
         case let .notExecutable(url): "Executable is unavailable: \(url.path)"
         case let .timedOut(url): "Command timed out: \(url.path)"
         case let .outputTooLarge(url): "Command output exceeded the configured limit: \(url.path)"
+        case let .cancelled(url): "Command was interrupted: \(url.path)"
         }
     }
 }
@@ -57,7 +59,10 @@ func isRegularExecutable(_ url: URL) -> Bool {
 public struct CommandRunner: Sendable {
     public init() {}
 
-    public func run(executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024)
+    public func run(
+        executable: URL, arguments: [String], environment: [String: String], timeout: TimeInterval = 30, outputLimit: Int = 16 * 1_024 * 1_024,
+        cancelled: (@Sendable () -> Bool)? = nil
+    )
         throws -> CommandResult
     {
         guard executable.isFileURL, FileManager.default.isExecutableFile(atPath: executable.path) else { throw CommandRunnerError.notExecutable(executable) }
@@ -103,13 +108,24 @@ public struct CommandRunner: Sendable {
             }
             completed.signal()
         }
-        if completed.wait(timeout: .now() + timeout) == .timedOut {
+        let deadline = DispatchTime.now() + timeout
+        let finished: Bool
+        if let cancelled {
+            var done = false
+            while !done, !cancelled(), DispatchTime.now().uptimeNanoseconds < deadline.uptimeNanoseconds {
+                done = completed.wait(timeout: .now() + 0.1) == .success
+            }
+            finished = done
+        } else {
+            finished = completed.wait(timeout: deadline) == .success
+        }
+        if !finished {
             stopper.terminate()
             _ = completed.wait(timeout: .now() + 0.5)
             stopper.kill()
             _ = completed.wait(timeout: .now() + 0.5)
             Self.finishPipes(stdout, stderr, outputGroup: outputGroup)
-            throw CommandRunnerError.timedOut(executable)
+            throw cancelled?() == true ? CommandRunnerError.cancelled(executable) : CommandRunnerError.timedOut(executable)
         }
         if stdoutBox.exceededLimit || stderrBox.exceededLimit {
             stopper.terminate()

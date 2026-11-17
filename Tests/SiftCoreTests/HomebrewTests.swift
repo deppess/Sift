@@ -124,10 +124,12 @@ final class HomebrewTests: XCTestCase {
     }
 
     func testAutoUpdatingCaskIsPersistedWithUpdate() throws {
-        let url = temporaryDatabaseURL()
-        defer { removeDatabase(at: url) }
-        let database = try Database(url: url)
-        let cask = homebrewPackage(kind: .cask, name: "example", autoUpdates: true)
+        let root = try temporaryDatabaseDirectory(mode: 0o700)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try Database(url: root.appending(path: "sift.sqlite3"))
+        let cask = HomebrewPackage(
+            prefix: root.path, kind: .cask, name: "example", fullName: "example", tap: "homebrew/cask", ownership: .installedCask,
+            installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: true)
         let key = HomebrewPackageKey(cask)
         _ = try database.applyRefresh(
             refreshInput(
@@ -139,12 +141,83 @@ final class HomebrewTests: XCTestCase {
         XCTAssertEqual(try database.catalogItems().first?.autoUpdates, true)
     }
 
+    func testCachedCaskBecomesCleanupFindingWhenItsInstallationIsRemoved() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "sift-cask-presence-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root.appending(path: "Caskroom"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let installation = root.appending(path: "Caskroom/karabiner-elements/16.1.0")
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        let database = try Database(url: root.appending(path: "sift.sqlite3"))
+        let cask = HomebrewPackage(
+            prefix: root.path, kind: .cask, name: "karabiner-elements", fullName: "karabiner-elements", tap: "homebrew/cask",
+            ownership: .installedCask, installedVersion: "16.1.0", sourceURL: nil, artifactPaths: [], autoUpdates: true)
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: root.path, packages: [cask], complete: true, warnings: [])
+                ]), targetResults: [HomebrewPackageKey(cask): .resolved(HomebrewTarget(version: "16.3.0", sourceURL: nil))]))
+
+        XCTAssertEqual(try database.updates().map(\.name), ["karabiner-elements"])
+        try FileManager.default.removeItem(at: installation)
+        let finding = try XCTUnwrap(database.updates().first)
+        XCTAssertNotNil(finding.installationIssue)
+        XCTAssertEqual(finding.suggestedCommand, "'\(root.path)/bin/brew' uninstall --cask karabiner-elements")
+        XCTAssertEqual(finding.fallbackCommand, "'\(root.path)/bin/brew' uninstall --cask --force karabiner-elements")
+        let output = UpdatesRenderer.humanReadable([finding])
+        XCTAssertTrue(output.contains("Updates  0"))
+        XCTAssertTrue(output.contains("Homebrew cleanup  1"))
+        XCTAssertTrue(output.contains("If uninstall fails because its script is missing"))
+        XCTAssertTrue(output.contains("may leave support files behind"))
+        XCTAssertEqual(try database.dashboard().data.informationalUpdateCount, 0)
+        XCTAssertEqual(try database.dashboard().data.homebrewCleanupCount, 1)
+        let retained = try XCTUnwrap(database.catalogItems().first)
+        XCTAssertFalse(retained.active, "show the missing installation as inactive without changing stored history")
+        XCTAssertNil(retained.availableVersion)
+        XCTAssertTrue(CatalogRenderer.detail(retained, notes: nil).contains("uninstall --cask --force karabiner-elements"))
+
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        XCTAssertNil(try database.updates().first?.installationIssue)
+        XCTAssertEqual(try database.dashboard().data.homebrewCleanupCount, 0)
+    }
+
+    func testMissingCaskIsReportedEvenWithoutACachedUpdateTarget() throws {
+        let root = try temporaryDatabaseDirectory(mode: 0o700)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root.appending(path: "Caskroom"), withIntermediateDirectories: true)
+        let database = try Database(url: root.appending(path: "sift.sqlite3"))
+        let cask = HomebrewPackage(
+            prefix: root.path, kind: .cask, name: "orphan", fullName: "orphan", tap: "homebrew/cask", ownership: .installedCask,
+            installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: false)
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: root.path, packages: [cask], complete: true, warnings: [])
+                ]), targetResults: [HomebrewPackageKey(cask): .unavailable("No update.")]))
+        let finding = try XCTUnwrap(database.updates().first)
+        XCTAssertEqual(finding.availableVersion, "1.0")
+        XCTAssertNotNil(finding.installationIssue)
+        XCTAssertEqual(try database.dashboard().data.availableUpdateCount, 0)
+        XCTAssertEqual(try database.dashboard().data.homebrewCleanupCount, 1)
+    }
+
+    func testCaskCleanupCommandsQuoteThePrefixAndRejectMalformedTokens() {
+        XCTAssertEqual(
+            HomebrewCaskPresence.uninstallCommand(prefix: "/Applications/Package Manager's Brew", token: "example@beta", force: true),
+            #"'/Applications/Package Manager'\''s Brew/bin/brew' uninstall --cask --force example@beta"#)
+        XCTAssertNil(HomebrewCaskPresence.uninstallCommand(prefix: "/opt/homebrew", token: "example;rm -rf ~"))
+        XCTAssertNil(HomebrewCaskPresence.uninstallCommand(prefix: "/opt/homebrew", token: "--force"))
+    }
+
     func testDashboardCountsAutoUpdatingCasksSeparatelyFromUpdatesThatNeedAttention() throws {
-        let url = temporaryDatabaseURL()
-        defer { removeDatabase(at: url) }
-        let database = try Database(url: url)
+        let root = try temporaryDatabaseDirectory(mode: 0o700)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try Database(url: root.appending(path: "sift.sqlite3"))
         let formula = homebrewPackage(kind: .formula, name: "formula")
-        let cask = homebrewPackage(kind: .cask, name: "cask", autoUpdates: true)
+        let cask = HomebrewPackage(
+            prefix: root.path, kind: .cask, name: "cask", fullName: "cask", tap: "homebrew/cask", ownership: .installedCask,
+            installedVersion: "1.0", sourceURL: nil, artifactPaths: [], autoUpdates: true)
         let packages = [formula, cask]
         let targets = Dictionary(
             uniqueKeysWithValues: packages.map { package in
@@ -154,7 +227,8 @@ final class HomebrewTests: XCTestCase {
             refreshInput(
                 at: Date(timeIntervalSince1970: 1_000),
                 homebrewInventory: HomebrewInventory(prefixes: [
-                    HomebrewPrefixInventory(prefix: formula.prefix, packages: packages, complete: true, warnings: [])
+                    HomebrewPrefixInventory(prefix: formula.prefix, packages: [formula], complete: true, warnings: []),
+                    HomebrewPrefixInventory(prefix: cask.prefix, packages: [cask], complete: true, warnings: [])
                 ]), targetResults: targets))
 
         // An auto-updating cask doesn't need the user's attention, so it must not inflate the

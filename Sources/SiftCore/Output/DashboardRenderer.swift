@@ -1,11 +1,11 @@
 import Foundation
 
 public enum DashboardRenderer {
-    public static func humanReadable(_ dashboard: Dashboard) -> String {
-        var lines = ["Sift"]
+    public static func humanReadable(_ dashboard: Dashboard, style: TerminalStyle = TerminalStyle(enabled: false)) -> String {
+        var lines = [style.brand("Sift")]
 
         if let dataAsOf = dashboard.dataAsOf {
-            lines.append("Data as of \(relativeTimestamp(dataAsOf, relativeTo: dashboard.generatedAt))")
+            lines.append("\(style.label("Data as of")) \(relativeTimestamp(dataAsOf, relativeTo: dashboard.generatedAt))")
         } else {
             lines.append("Data has never been refreshed")
         }
@@ -15,13 +15,18 @@ public enum DashboardRenderer {
         }
 
         lines.append("")
-        lines.append("Available updates: \(dashboard.data.availableUpdateCount)")
+        lines.append("\(style.label("Available updates:")) \(style.accent(String(dashboard.data.availableUpdateCount)))")
         if dashboard.data.informationalUpdateCount > 0 {
-            lines.append("Self-updating casks: \(dashboard.data.informationalUpdateCount)")
+            lines.append("\(style.label("Self-updating casks:")) \(dashboard.data.informationalUpdateCount)")
         }
-        lines.append("Changed in last 7 days: \(dashboard.data.recentTransitionCount)")
+        if dashboard.data.homebrewCleanupCount > 0 {
+            lines.append(
+                "\(style.warning("Homebrew cleanup:")) \(style.warning(String(dashboard.data.homebrewCleanupCount))) (see 'sift updates' for commands)")
+        }
+        lines.append("\(style.label("Changed in last 7 days:")) \(dashboard.data.recentTransitionCount)")
         lines.append("")
-        lines.append(message(for: dashboard))
+        let message = message(for: dashboard)
+        lines.append(dashboard.freshness == .stale || dashboard.latestRefreshStatus == .failure ? style.warning(message) : message)
         return lines.joined(separator: "\n")
     }
 

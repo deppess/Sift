@@ -5,6 +5,21 @@ import XCTest
 @testable import SiftCore
 
 final class MetadataAndReleaseNotesTests: XCTestCase {
+    func testCancelledClientDoesNotFetchOrReturnCachedMetadata() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        let database = try Database(url: url)
+        let requestURL = URL(string: "https://itunes.apple.com/lookup?bundleId=example")!
+        try database.storeMetadataResponse(
+            url: requestURL.absoluteString, resourceKind: "app-store-lookup-v1", statusCode: 200, body: Data("cached".utf8), etag: nil,
+            lastModified: nil, validatedAt: .now)
+        let client = MetadataHTTPClient(database: database)
+        client.cancel()
+        XCTAssertThrowsError(try client.fetch(requestURL, resource: .appStoreLookup)) { error in
+            guard case MetadataHTTPError.cancelled = error else { return XCTFail("Expected cancellation, got \(error)") }
+        }
+    }
+
     func testFreshMetadataCacheAvoidsNetworkAndPreservesPayload() throws {
         let url = temporaryDatabaseURL()
         defer { removeDatabase(at: url) }

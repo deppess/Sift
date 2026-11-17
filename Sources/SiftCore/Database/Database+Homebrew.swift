@@ -95,6 +95,7 @@ extension Database {
         lock.lock()
         defer { lock.unlock() }
         var updates: [HomebrewUpdate] = []
+        var caskPresence = HomebrewCaskPresence()
         let providerStatus = try homebrewProviderStatuses()
         // target_for_installed_version = installed_version guards against the same stale-preserved-
         // target case documented on the dashboard's equivalent count above: without it, a target
@@ -108,16 +109,26 @@ extension Database {
             SELECT kind, name, full_name, prefix, installed_version, available_version, source_url, auto_updates, ownership, last_seen_at, target_last_success_at, target_status
             FROM homebrew_packages
             WHERE active = 1
-              AND available_version IS NOT NULL
-              AND available_version != installed_version
-              AND target_status = 'resolved'
-              AND target_for_installed_version = installed_version
+              AND ((available_version IS NOT NULL
+                    AND available_version != installed_version
+                    AND target_status = 'resolved'
+                    AND target_for_installed_version = installed_version)
+                   OR kind = 'cask')
               AND (? = 1 OR ownership IN ('explicitlyRequested', 'installedCask'))
             ORDER BY name COLLATE NOCASE;
             """
         ) { statement in
             try bind(statement, [.int(includeAll ? 1 : 0)])
             while try stepRow(statement) {
+                let kind = HomebrewPackageKind(rawValue: String(cString: sqlite3_column_text(statement, 0))) ?? .formula
+                let name = String(cString: sqlite3_column_text(statement, 1))
+                let prefix = String(cString: sqlite3_column_text(statement, 3))
+                let installed = String(cString: sqlite3_column_text(statement, 4))
+                let missingInstallation = kind == .cask && !caskPresence.isPresent(prefix: prefix, name: name, version: installed)
+                let available = optionalText(statement, column: 5)
+                // A cask without an update is included only when it needs cleanup. A missing
+                // cask with no target is still a useful finding, not an available update.
+                if !missingInstallation, available == nil || available == installed || optionalText(statement, column: 11) != "resolved" { continue }
                 let inventoryAsOf = sqlite3_column_type(statement, 9) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 9))
                 let targetAsOf = sqlite3_column_type(statement, 10) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 10))
                 let dataAsOf = [inventoryAsOf, targetAsOf].compactMap { $0 }.min()
@@ -134,13 +145,13 @@ extension Database {
                 }
                 updates.append(
                     HomebrewUpdate(
-                        kind: HomebrewPackageKind(rawValue: String(cString: sqlite3_column_text(statement, 0))) ?? .formula,
-                        name: String(cString: sqlite3_column_text(statement, 1)), fullName: String(cString: sqlite3_column_text(statement, 2)),
-                        prefix: String(cString: sqlite3_column_text(statement, 3)), installedVersion: String(cString: sqlite3_column_text(statement, 4)),
-                        availableVersion: String(cString: sqlite3_column_text(statement, 5)), sourceURL: optionalText(statement, column: 6),
+                        kind: kind,
+                        name: name, fullName: String(cString: sqlite3_column_text(statement, 2)),
+                        prefix: prefix, installedVersion: installed,
+                        availableVersion: available ?? installed, sourceURL: optionalText(statement, column: 6),
                         autoUpdates: sqlite3_column_int(statement, 7) == 1,
                         ownership: HomebrewOwnership(rawValue: String(cString: sqlite3_column_text(statement, 8))) ?? .dependency, freshness: freshness,
-                        dataAsOf: dataAsOf))
+                        dataAsOf: dataAsOf, missingInstallation: missingInstallation))
             }
         }
         return updates

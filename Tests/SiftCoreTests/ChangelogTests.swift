@@ -617,6 +617,22 @@ final class ChangelogTests: XCTestCase {
         XCTAssertEqual(pages.map(\.absoluteString), ["https://example.com/releases"], "every other address is the homepage again")
     }
 
+    func testDiscoveryBoundsGuessedWebPageRequests() throws {
+        let database = try Database(url: url)
+        let lock = NSLock()
+        var guesses = Set<String>()
+        MetadataURLProtocol.handler = { request in
+            let url = request.url!
+            if url.path != "/", !url.path.hasSuffix(".txt"), !url.path.hasSuffix(".xml") {
+                lock.withLock { _ = guesses.insert(url.absoluteString) }
+            }
+            return (404, nil, [:])
+        }
+        let resolver = ChangelogResolver(client: mockedClient(database), environment: [:])
+        _ = resolver.discoverChangelogPages(near: URL(string: "https://example.com/")!, name: "Example")
+        XCTAssertLessThanOrEqual(lock.withLock { guesses.count }, ChangelogResolver.maximumDiscoveryProbes)
+    }
+
     func testServiceCachesAndFallsBackToTheLastGoodCopy() throws {
         let database = try Database(url: url)
         let package = HomebrewPackage(
@@ -661,6 +677,67 @@ final class ChangelogTests: XCTestCase {
         XCTAssertNotNil(stale.staleReason)
         XCTAssertEqual(try ChangelogService.cached(for: item, database: database)?.source, "GitHub releases (cli/cli)")
         XCTAssertEqual(try database.changelogState(selector: item.selector)?.sourceKind, "github-releases")
+    }
+
+    func testPrefetchReusesFreshPartialChangelogUntilTheTargetChanges() throws {
+        let database = try Database(url: url)
+        let package = HomebrewPackage(
+            prefix: "/nonexistent-prefix", kind: .formula, name: "gh", fullName: "gh", tap: "homebrew/core", ownership: .explicitlyRequested,
+            installedVersion: "1.0", sourceURL: "https://github.com/cli/cli/archive/refs/tags/v1.0.tar.gz", artifactPaths: [], autoUpdates: false)
+        func refresh(target: String, at time: TimeInterval) throws {
+            _ = try database.applyRefresh(
+                refreshInput(
+                    at: Date(timeIntervalSince1970: time),
+                    homebrewInventory: HomebrewInventory(prefixes: [
+                        HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])
+                    ]), targetResults: [HomebrewPackageKey(package): .resolved(HomebrewTarget(version: target, sourceURL: package.sourceURL))]))
+        }
+        try refresh(target: "2.0", at: 1_000)
+        let item = try XCTUnwrap(database.catalogItems().first { $0.name == "gh" })
+        let checked = ChangelogService.checkedVersions(for: item)
+        try database.storeChangelog(
+            selector: item.selector, source: "GitHub releases (cli/cli)", sourceURL: "https://github.com/cli/cli/releases",
+            sourceKind: "github-releases", entries: [ChangelogEntry(version: "2.0", content: "- New, but no 1.0 history")],
+            fetchedAt: Date(timeIntervalSince1970: 1_010), checkedVersions: checked)
+        let state = try XCTUnwrap(database.changelogState(selector: item.selector))
+        XCTAssertEqual(state.checkedVersions, checked)
+        var requests = 0
+        MetadataURLProtocol.handler = { request in
+            requests += 1
+            guard request.url?.absoluteString.hasPrefix("https://api.github.com/repos/cli/cli/releases") == true else { return (404, nil, [:]) }
+            let releases = [
+                ["tag_name": "v3.0", "body": "- Third"], ["tag_name": "v2.0", "body": "- Second"],
+                ["tag_name": "v1.0", "body": "- First"]
+            ]
+            return (200, try! JSONSerialization.data(withJSONObject: releases), [:])
+        }
+        let service = ChangelogService(
+            database: database, resolver: ChangelogResolver(client: mockedClient(database), environment: [:]))
+        XCTAssertEqual(try service.prefetch(now: Date(timeIntervalSince1970: 1_020)), 0)
+        XCTAssertEqual(requests, 0, "an uncovered version was already checked recently")
+
+        try refresh(target: "3.0", at: 1_030)
+        XCTAssertEqual(try service.prefetch(now: Date(timeIntervalSince1970: 1_040)), 1)
+        XCTAssertGreaterThan(requests, 0, "a new target must not be hidden by the prior cache decision")
+        let updated = try XCTUnwrap(database.catalogItems().first { $0.name == "gh" })
+        XCTAssertEqual(try database.changelogState(selector: item.selector)?.checkedVersions, ChangelogService.checkedVersions(for: updated))
+    }
+
+    func testCancelledPrefetchDoesNotStartLookupsOrChangeTheCache() throws {
+        let database = try Database(url: url)
+        let package = HomebrewPackage(
+            prefix: "/nonexistent-prefix", kind: .formula, name: "gh", fullName: "gh", tap: "homebrew/core", ownership: .explicitlyRequested,
+            installedVersion: "1.0", sourceURL: "https://github.com/cli/cli", artifactPaths: [], autoUpdates: false)
+        _ = try database.applyRefresh(
+            refreshInput(
+                at: Date(timeIntervalSince1970: 1_000),
+                homebrewInventory: HomebrewInventory(prefixes: [
+                    HomebrewPrefixInventory(prefix: package.prefix, packages: [package], complete: true, warnings: [])
+                ]), targetResults: [HomebrewPackageKey(package): .resolved(HomebrewTarget(version: "2.0", sourceURL: package.sourceURL))]))
+        let item = try XCTUnwrap(database.catalogItems().first { $0.name == "gh" })
+        let service = ChangelogService(database: database, resolver: ChangelogResolver(client: mockedClient(database), environment: [:]))
+        XCTAssertEqual(try service.prefetch(now: Date(timeIntervalSince1970: 1_010), cancelled: { true }), 0)
+        XCTAssertNil(try database.changelogState(selector: item.selector))
     }
 
     func testHistoryAccumulatesAcrossFetchesAndKeepsRealTextOverPlaceholders() throws {

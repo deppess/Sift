@@ -257,12 +257,20 @@ public struct UnifiedUpdate: Codable, Equatable, Sendable {
     /// The software updates itself (an auto-updating cask); listed for completeness, but counted
     /// separately from updates that need the user to act.
     public let selfUpdating: Bool
+    /// A locally missing installation retained in the package-manager cache for diagnosis.
+    public let installationIssue: String?
+    public let suggestedCommand: String?
+    /// Only try this after the normal command fails because the cask's uninstall script is gone.
+    public let fallbackCommand: String?
 
     public init(
         provider: String, scope: String, name: String, installedVersion: String, availableVersion: String, freshness: Freshness, dataAsOf: Date?,
-        selfUpdating: Bool = false
+        selfUpdating: Bool = false, installationIssue: String? = nil, suggestedCommand: String? = nil, fallbackCommand: String? = nil
     ) {
         self.selfUpdating = selfUpdating
+        self.installationIssue = installationIssue
+        self.suggestedCommand = suggestedCommand
+        self.fallbackCommand = fallbackCommand
         self.provider = provider
         self.scope = scope
         self.name = name

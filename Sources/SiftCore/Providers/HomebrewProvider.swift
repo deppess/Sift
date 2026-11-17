@@ -87,10 +87,13 @@ public struct HomebrewUpdate: Codable, Equatable, Sendable {
     public let ownership: HomebrewOwnership
     public let freshness: Freshness
     public let dataAsOf: Date?
+    /// The cached receipt exists, but the recorded cask version is no longer in Caskroom.
+    public let missingInstallation: Bool
 
     public init(
         kind: HomebrewPackageKind, name: String, fullName: String, prefix: String, installedVersion: String, availableVersion: String, sourceURL: String?,
-        autoUpdates: Bool, ownership: HomebrewOwnership = .explicitlyRequested, freshness: Freshness = .unknown, dataAsOf: Date? = nil
+        autoUpdates: Bool, ownership: HomebrewOwnership = .explicitlyRequested, freshness: Freshness = .unknown, dataAsOf: Date? = nil,
+        missingInstallation: Bool = false
     ) {
         self.kind = kind
         self.name = name
@@ -103,6 +106,7 @@ public struct HomebrewUpdate: Codable, Equatable, Sendable {
         self.ownership = ownership
         self.freshness = freshness
         self.dataAsOf = dataAsOf
+        self.missingInstallation = missingInstallation
     }
 }
 

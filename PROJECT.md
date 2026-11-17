@@ -13,8 +13,8 @@ Sift is an observer. It does not install updates, run in the background, inspect
 - Target macOS 15 and later. macOS 26 is the primary development platform.
 - Use Swift 6 and Swift Package Manager.
 - Persist state in SQLite at `~/Library/Application Support/Sift/sift.sqlite3` by default.
-- `sift`, `apps`, `updates`, `log`, `show`, and dynamic completion lookups read only cached state. They never run providers, make network requests, or write the database (beyond upgrading an earlier 1.x schema in place).
-- `sift refresh` is the only command allowed to discover software or run provider commands. It and `sift changelog` are the only commands that fetch metadata: `changelog` fetches only the requested item's changelog, and only when its cached copy is missing or more than six hours old (or `--fetch` is given).
+- `sift`, `apps`, `updates`, `log`, `show`, and dynamic completion lookups read cached provider state. They never run providers, make network requests, or write the database (beyond upgrading an earlier 1.x schema in place). A local, read-only Caskroom existence check reports a missing cask installation separately as a cleanup finding, without treating its old cached target as an active update.
+- `sift refresh` is the only command allowed to discover software or run provider commands. `sift fetch` warms changelogs for cached updates and recent changes without running providers; `sift changelog` fetches only the requested item's changelog when its cached copy is missing or more than six hours old (or `--fetch` is given).
 - Cached dashboard and Homebrew update output mark data stale after 24 hours; no command refreshes implicitly. Failed or partial refreshes preserve cached data and surface their incomplete status.
 - Human-readable output is compact. Detailed provenance and changelogs belong in detail commands.
 - Version 1.0.0 is the first public release. Its JSON output is stable across 1.x: fields may be added, but none are renamed or removed.
@@ -107,13 +107,13 @@ Sources are tried in order, and the first with real content for the installed ve
 
 Documents are split at their version headings: Markdown and setext headings, plain-text NEWS formats (GNU `* Noteworthy changes in release X`, FFmpeg `version X:`, tmux `CHANGES FROM X TO Y`, Bash's `This document details the changes…`, and a version at the margin with indented text below when used consistently), and a lone version line followed by a date on converted pages. A page is read as HTML, then through an advertised RSS/Atom feed (only its release posts, when there are at least three), then through release records in JSON it embeds for its scripts (`__NEXT_DATA__`, `ld+json`), and last, when its content is built by scripts, rendered by WebKit in a separate `sift __render` process with a 30-second limit, no persistent storage, no downloads, HTTPS only, and WebKit's own user agent with Sift's name added. Page scripts run only inside WebKit's sandbox. Sift identifies itself honestly and does not work around bot checks, so a site that refuses anything but a mainstream browser is reported as giving no changelog. Placeholder text (links elsewhere, "update your browser", "enable JavaScript") never counts. A source with versions and dates but no text is used as a version history when nothing better exists.
 
-History is cumulative (`changelog_history`, keyed by item and version): versions a source stops listing are kept, a placeholder never replaces real text, and placeholder or unversioned leftovers are dropped once a versioned changelog replaces them. `changelog_state` records the latest lookup. `refresh` prefetches the changelogs of pending updates and of anything that changed in the last week. GitHub requests use `GITHUB_TOKEN`, `GH_TOKEN`, or the GitHub CLI's login (`gh auth token`, unless `SIFT_NO_GH_TOKEN` is set); when rate-limited, release lists fall back to the repository's `releases.atom`.
+History is cumulative (`changelog_history`, keyed by item and version): versions a source stops listing are kept, a placeholder never replaces real text, and placeholder or unversioned leftovers are dropped once a versioned changelog replaces them. `changelog_state` records the latest lookup and the versions it checked. `refresh` updates provider data only; `fetch` uses that cached inventory to prefetch changelogs of pending updates and of anything that changed in the last week. Ctrl+C stops new lookups, cancels active HTTP/render work, lets in-flight transactional writes finish, and exits 130. GitHub requests use `GITHUB_TOKEN`, `GH_TOKEN`, or the GitHub CLI's login (`gh auth token`, unless `SIFT_NO_GH_TOKEN` is set); when rate-limited, release lists fall back to the repository's `releases.atom`.
 
 The 1.0 per-update notes (`homebrew_release_notes`, `release_notes`) are still collected by `refresh` and shown by `sift show` when no changelog is cached.
 
 ## Persistence
 
-Sift 1.0.0 creates its schema (version 15) directly as a clean baseline; it does not carry forward the incremental pre-release migration history, and pre-release caches, including development builds of version 15, are intentionally unsupported. Later versions are steps applied on top of the baseline in one transaction, so a 1.x cache keeps its history: version 16 adds `package_transitions` (version history for Homebrew and managed packages), `managed_packages.identifier` (a Steam app ID), and `changelog_state`; version 17 replaces 16's per-fetch `changelog_entries` with the cumulative `changelog_history`; version 18 records the successful changelog source type so stale lookups retry it before rediscovery. A cache-only command that finds an older 1.x schema upgrades it in place first. Its core tables include:
+Sift 1.0.0 creates its schema (version 15) directly as a clean baseline; it does not carry forward the incremental pre-release migration history, and pre-release caches, including development builds of version 15, are intentionally unsupported. Later versions are steps applied on top of the baseline in one transaction, so a 1.x cache keeps its history: version 16 adds `package_transitions` (version history for Homebrew and managed packages), `managed_packages.identifier` (a Steam app ID), and `changelog_state`; version 17 replaces 16's per-fetch `changelog_entries` with the cumulative `changelog_history`; version 18 records the successful changelog source type so stale lookups retry it before rediscovery; version 19 records the versions checked by a successful changelog lookup. A cache-only command that finds an older 1.x schema upgrades it in place first. Its core tables include:
 
 - `schema_migrations`
 - `settings`
@@ -142,6 +142,7 @@ Implemented commands:
 ```text
 sift
 sift refresh
+sift fetch
 sift show <software>
 sift apps
 sift updates
@@ -164,7 +165,7 @@ Initial global options:
 --database <path>
 ```
 
-`refresh` scans standard native application roots, Spotlight candidates, and symlinked bundles, reads `Info.plist` metadata without executing applications, inventories detected Homebrew prefixes (running `brew update` first when a prefix's metadata is over an hour old), npm globals, uv tools, cargo crates, MacPorts, and Steam libraries, resolves Homebrew targets, checks native applications against their update authority, and warms changelogs for pending/recent changes for at most 45 seconds. Providers run concurrently. Cache-reading commands do not scan, invoke providers, fetch metadata, or write the database. Dynamic completion reads the existing cache when present and otherwise returns no matches.
+`refresh` scans standard native application roots, Spotlight candidates, and symlinked bundles, reads `Info.plist` metadata without executing applications, inventories detected Homebrew prefixes (running `brew update` first when a prefix's metadata is over an hour old), npm globals, uv tools, cargo crates, MacPorts, and Steam libraries, resolves Homebrew targets, and checks native applications against their update authority. Providers run concurrently. `fetch` separately warms changelogs for pending/recent changes with a 45-second launch budget. Cache-reading commands do not scan, invoke providers, fetch metadata, or write the database. Dynamic completion reads the existing cache when present and otherwise returns no matches.
 
 `--json` writes the dashboard as this envelope:
 

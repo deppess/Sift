@@ -14,11 +14,11 @@ public struct ChangelogService: Sendable {
     public static let maxAge: TimeInterval = 6 * 60 * 60
     /// How long "nothing found" stands before looking again.
     public static let missMaxAge: TimeInterval = 24 * 60 * 60
-    /// Changelog resolution can render pages and write the shared SQLite cache. Keep refresh
-    /// prefetch bounded instead of starting one worker per installed update.
+    /// Changelog resolution can render pages and write the shared SQLite cache. Keep fetch
+    /// bounded instead of starting one worker per installed update.
     private static let prefetchParallelism = 4
-    /// Refresh is primarily an inventory/update operation. Warming changelogs must not turn a
-    /// large first refresh into an unbounded sequence of vendor-page renders.
+    /// Warming changelogs must not turn a large first fetch into an unbounded sequence of
+    /// vendor-page renders.
     public static let prefetchTimeLimit: TimeInterval = 45
 
     private let database: Database
@@ -32,6 +32,8 @@ public struct ChangelogService: Sendable {
     public init(database: Database, renderer: (@Sendable (URL) -> String?)? = nil) {
         self.init(database: database, resolver: ChangelogResolver(client: MetadataHTTPClient(database: database), renderer: renderer))
     }
+
+    public func cancel() { resolver.cancel() }
 
     /// The cached changelog only; never fetches. Used by `sift show`.
     public static func cached(for item: CatalogItem, database: Database) throws -> Changelog? {
@@ -75,14 +77,17 @@ public struct ChangelogService: Sendable {
                 }
             default: nil
             }
-        switch resolver.resolve(
+        let resolution = resolver.resolve(
             ChangelogSubject(item: target, homebrewSourceURL: homebrewSource), preferredSourceKind: state?.sourceKind,
             preferredSourceURL: state?.sourceURL)
-        {
+        // A canceled lookup is not a miss: keep any prior successful state unchanged.
+        if resolver.isCancelled { return .unavailable(name: item.name, tried: ["Interrupted."]) }
+        switch resolution {
         case let .resolved(resolvedSource, sourceURL, sourceKind, entries):
             let source = parent.map { "\(resolvedSource), for \($0.name)" } ?? resolvedSource
             try database.storeChangelog(
-                selector: item.selector, source: source, sourceURL: sourceURL, sourceKind: sourceKind, entries: entries, fetchedAt: now)
+                selector: item.selector, source: source, sourceURL: sourceURL, sourceKind: sourceKind, entries: entries, fetchedAt: now,
+                checkedVersions: Self.checkedVersions(for: item))
             // The whole stored history, in version order, not just this fetch.
             let history = try database.changelogEntries(selector: item.selector)
             var changelog = Changelog(
@@ -108,22 +113,34 @@ public struct ChangelogService: Sendable {
         }
     }
 
-    /// Fetches the changelogs `refresh` makes instant: everything with a pending update and
+    /// Use both sides: changing an installed version or a pending target should get new notes.
+    /// A length prefix avoids ambiguity even when version strings contain punctuation.
+    static func checkedVersions(for item: CatalogItem) -> String {
+        let installed = item.installedVersion ?? ""
+        return "\(installed.utf8.count):\(installed)\(item.availableVersion ?? "")"
+    }
+
+    /// Fetches the changelogs `fetch` makes instant: everything with a pending update and
     /// everything that changed in the last week, skipping copies that are still fresh. It launches
-    /// no additional work after `timeLimit` has elapsed; anything left is fetched on demand or by
-    /// the next refresh. Returns the number of lookups launched.
+    /// no additional work after `timeLimit` or cancellation; in-flight lookups stop cooperatively
+    /// before returning, so SQLite writes can commit or roll back normally. Anything left is fetched
+    /// on demand or by the next `fetch`. Returns the number of lookups launched.
     @discardableResult
     public func prefetch(
-        now: Date = .now, timeLimit: TimeInterval = Self.prefetchTimeLimit, progress: (@Sendable (Int, Int) -> Void)? = nil
+        now: Date = .now, timeLimit: TimeInterval = Self.prefetchTimeLimit, cancelled: @escaping @Sendable () -> Bool = { false },
+        progress: (@Sendable (Int, Int) -> Void)? = nil
     ) throws -> Int {
         let items = try database.catalogItems()
         let recent = Set(try database.updateLog(since: now.addingTimeInterval(-7 * 24 * 60 * 60)).map(\.selector))
         var due: [CatalogItem] = []
         for item in items where item.updateAvailable || recent.contains(String(item.selector.prefix { $0 != "@" })) {
+            if cancelled() { break }
             if let state = try database.changelogState(selector: item.selector),
-                now.timeIntervalSince(state.fetchedAt) < (state.status == "unavailable" ? Self.missMaxAge : Self.maxAge)
+                case let age = now.timeIntervalSince(state.fetchedAt), age >= 0,
+                age < (state.status == "unavailable" ? Self.missMaxAge : Self.maxAge)
             {
                 guard state.status == "resolved" else { continue }
+                if state.checkedVersions == Self.checkedVersions(for: item) { continue }
                 if let cached = try Self.cached(for: item, state: state, database: database), covers(cached, item) { continue }
             }
             due.append(item)
@@ -139,7 +156,7 @@ public struct ChangelogService: Sendable {
         let next = Mutex(0)
         DispatchQueue.concurrentPerform(iterations: min(Self.prefetchParallelism, dueItems.count)) { _ in
             while let index = next.withLock({ value -> Int? in
-                guard value < dueItems.count, Date() < deadline else { return nil }
+                guard !cancelled(), value < dueItems.count, Date() < deadline else { return nil }
                 value += 1
                 return value - 1
             }) {

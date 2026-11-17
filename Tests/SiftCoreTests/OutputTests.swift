@@ -4,6 +4,35 @@ import XCTest
 @testable import SiftCore
 
 final class OutputTests: XCTestCase {
+    func testTerminalThemeEchoesIconButPlainOutputStaysUnchanged() {
+        let plain = TerminalStyle(enabled: false)
+        let themed = TerminalStyle(enabled: true)
+        XCTAssertEqual(plain.brand("Sift"), "Sift")
+        XCTAssertEqual(plain.warning("Warning"), "Warning")
+        XCTAssertTrue(themed.brand("Sift").contains("▤"))
+        XCTAssertTrue(themed.brand("Sift").contains("\u{1B}[38;5;209m"))
+        XCTAssertTrue(themed.title("Sift").contains("\u{1B}[1;38;5;75m"))
+    }
+
+    func testStyledDashboardAndUpdatesKeepPlainTextAndJSONSeparate() throws {
+        let dashboard = Dashboard(
+            generatedAt: Date(timeIntervalSince1970: 1_000), lastAttemptAt: nil, dataAsOf: nil, freshness: .unknown, latestRefreshStatus: .never,
+            data: DashboardData(availableUpdateCount: 2, recentTransitionCount: 0, failedProviderCount: 0))
+        let style = TerminalStyle(enabled: true)
+        XCTAssertTrue(DashboardRenderer.humanReadable(dashboard, style: style).contains("▤"))
+        XCTAssertFalse(DashboardRenderer.humanReadable(dashboard).contains("\u{1B}"))
+        XCTAssertFalse(try DashboardRenderer.json(dashboard).contains("\u{1B}"))
+
+        let update = UnifiedUpdate(
+            provider: "homebrew", scope: "/opt/homebrew", name: "example", installedVersion: "1.0", availableVersion: "2.0",
+            freshness: .current, dataAsOf: nil)
+        let output = UpdatesRenderer.humanReadable([update], style: style)
+        XCTAssertTrue(output.contains("\u{1B}[1;38;5;75mUpdates  1"))
+        XCTAssertTrue(output.contains("example  1.0 -> 2.0"))
+        XCTAssertFalse(UpdatesRenderer.humanReadable([update]).contains("\u{1B}"))
+        XCTAssertFalse(try UpdatesRenderer.json([update]).contains("\u{1B}"))
+    }
+
     func testJSONIsDecodableAndContainsExplicitNulls() throws {
         let dashboard = Dashboard(
             generatedAt: Date(timeIntervalSince1970: 1_000), lastAttemptAt: nil, dataAsOf: nil, freshness: .unknown, latestRefreshStatus: .never,
@@ -26,6 +55,21 @@ final class OutputTests: XCTestCase {
             provider: "homebrew", scope: "/opt/homebrew", name: "example", installedVersion: "1.0", availableVersion: "2.0", freshness: .current,
             dataAsOf: Date(timeIntervalSince1970: 1_000))
         XCTAssertFalse(UpdatesRenderer.humanReadable([current]).contains("Snapshot is stale"))
+    }
+
+    func testCleanupFindingIsNotCountedAsAnUpdateAndIncludesCommandsInJSON() throws {
+        let finding = UnifiedUpdate(
+            provider: "homebrew", scope: "/opt/homebrew", name: "orphan", installedVersion: "1.0", availableVersion: "2.0",
+            freshness: .stale, dataAsOf: Date(timeIntervalSince1970: 1_000), installationIssue: "Caskroom installation missing.",
+            suggestedCommand: "'/opt/homebrew/bin/brew' uninstall --cask orphan",
+            fallbackCommand: "'/opt/homebrew/bin/brew' uninstall --cask --force orphan")
+        let text = UpdatesRenderer.humanReadable([finding])
+        XCTAssertTrue(text.contains("Updates  0"))
+        XCTAssertTrue(text.contains("Homebrew cleanup  1"))
+        XCTAssertTrue(text.contains("uninstall --cask --force orphan"))
+        let json = try UpdatesRenderer.json([finding])
+        XCTAssertTrue(json.contains("\"installationIssue\""))
+        XCTAssertTrue(json.contains("\"fallbackCommand\""))
     }
 
     func testHumanReadableOutputStripsTerminalControlSequences() {
@@ -92,6 +136,10 @@ final class OutputTests: XCTestCase {
         XCTAssertEqual(providerLines.count, 2)
         let statusOffsets = providerLines.map { $0.range(of: "success")!.lowerBound.utf16Offset(in: $0) }
         XCTAssertEqual(statusOffsets[0], statusOffsets[1])
+        let themed = RefreshRenderer.humanReadable(summary, style: TerminalStyle(enabled: true))
+        XCTAssertTrue(themed.contains("▤"))
+        XCTAssertTrue(themed.contains("\u{1B}[32msuccess\u{1B}[0m"))
+        XCTAssertFalse(RefreshRenderer.humanReadable(summary).contains("\u{1B}"))
     }
 
     func testTableFormatterDoesNotPadTheLastColumn() {

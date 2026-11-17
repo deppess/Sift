@@ -4,6 +4,28 @@ import XCTest
 @testable import SiftCore
 
 final class SiftCLITests: XCTestCase {
+    func testFetchIsASeparateCommandWithRefreshOnlyFlagsRejected() throws {
+        if case .fetch = try Invocation(arguments: ["fetch"]).command {} else { XCTFail("expected fetch") }
+        XCTAssertThrowsError(try Invocation(arguments: ["refresh", "fetch"]))
+        XCTAssertThrowsError(try Invocation(arguments: ["fetch", "--no-update-homebrew"]))
+        XCTAssertThrowsError(try Invocation(arguments: ["fetch", "--fetch"]))
+        XCTAssertThrowsError(try Invocation(arguments: ["refresh", "--no-prefetch-changelogs"]))
+    }
+
+    func testFetchRequiresAnExistingCacheAndDoesNotRunProviders() throws {
+        let url = temporaryDatabaseURL()
+        defer { removeDatabase(at: url) }
+        XCTAssertEqual(SiftCLI.run(arguments: ["fetch", "--database", url.path]), EXIT_FAILURE)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        let database = try Database(url: url)
+        _ = try database.applyRefresh(refreshInput(nativeInventory: NativeInventoryResult(applications: [])))
+        let before = try database.scalarInt("SELECT COUNT(*) FROM refresh_sessions;")
+        let (status, output) = captureStdout { SiftCLI.run(arguments: ["fetch", "--json", "--database", url.path]) }
+        XCTAssertEqual(status, EXIT_SUCCESS)
+        let object = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any]
+        XCTAssertEqual(object?["lookups"] as? Int, 0)
+        XCTAssertEqual(try database.scalarInt("SELECT COUNT(*) FROM refresh_sessions;"), before)
+    }
 
     func testEmptyCompletionPrefixMatchesCatalogCandidates() {
         XCTAssertTrue("ffmpeg".localizedCaseInsensitiveHasPrefix(""))
@@ -98,6 +120,9 @@ final class SiftCLITests: XCTestCase {
         let zsh = CompletionRenderer.script(for: .zsh)
         XCTAssertTrue(zsh.contains("{_sift_names changelog}"))
         XCTAssertTrue(zsh.contains("completions) _values shell fish bash zsh"))
+        XCTAssertTrue(fish.contains("-a fetch -d 'Fetch changelogs"))
+        XCTAssertTrue(bash.contains("refresh fetch apps updates"))
+        XCTAssertTrue(zsh.contains("'fetch:Fetch changelogs"))
     }
 
     func testAppsJSONRendersCachedNativeApplication() throws {

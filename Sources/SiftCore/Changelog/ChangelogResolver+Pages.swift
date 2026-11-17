@@ -215,6 +215,9 @@ extension ChangelogResolver {
         "changelog", "release-notes", "releasenotes", "releases", "whats-new", "updates", "docs/changelog", "docs/release-notes", "support/changelog",
         "help/release-notes"
     ]
+    /// Discovery is a last resort. Do not turn one missing changelog into a probe of every
+    /// guessed path on three hosts (each of which may take a full network timeout).
+    static let maximumDiscoveryProbes = 12
 
     /// Changelog pages on the vendor's own site the homepage doesn't link plainly: those its
     /// sitemaps list (from robots.txt, on the site and its docs subdomain), then common paths,
@@ -263,13 +266,15 @@ extension ChangelogResolver {
         let unique = candidates.filter {
             isPublicHTTPSURL($0) && seen.insert($0.absoluteString.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))).inserted
         }
-        let ranked = unique.map { ($0, Self.discoveryScore($0, name: name)) }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
+        // Prefer the host the app actually named before probing guessed docs/release subdomains.
+        let ranked = unique.map { ($0, Self.discoveryScore($0, name: name) + ($0.host?.lowercased() == host ? 20 : 0)) }
+            .filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }.map(\.0)
         // The common paths are guesses: keep only those that answer with a page of their own. A
         // site that answers every address with its homepage (folivora.ai) has none of them, and
         // reading the homepage again under each address rendered it in WebKit every time.
-        warm(ranked.filter { guesses.contains($0.absoluteString) }, resource: .changelogPage)
+        warm(ranked.prefix(Self.maximumDiscoveryProbes).filter { guesses.contains($0.absoluteString) }, resource: .changelogPage)
         var bodies = Set([try? client.fetch(base, resource: .changelogPage).body].compactMap { $0 })
-        return ranked.filter { url in
+        return ranked.prefix(Self.maximumDiscoveryProbes).filter { url in
             guard guesses.contains(url.absoluteString) else { return true }
             guard let body = try? client.fetch(url, resource: .changelogPage).body else { return false }
             return bodies.insert(body).inserted
